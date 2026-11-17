@@ -71,11 +71,29 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                             }
                         });
                     }
+                    if app.ui.view == ViewMode::Detail {
+                        // the face boxes' switch, with the line about who is in the photo drawn to its right
+                        if left_rect.width() >= 270.0 {
+                            ui.add_space(10.0);
+                            let (sep, _) = ui.allocate_exact_size(vec2(1.0, 22.0), Sense::hover());
+                            ui.painter().rect_filled(sep, 0.0, t.button_border);
+                            ui.add_space(10.0);
+                        }
+                        if icon_button(ui, "faceBoxes", Icon::FaceBox, vec2(30.0, 30.0), app.ui.face_boxes, true, "Face boxes").clicked() {
+                            let _ = app.run("view.faceBoxes", json!({}));
+                        }
+                    }
                 })
                 .response
                 .rect
                 .right();
-            centre(app, ui, full, left_end + 12.0, right_start - 12.0);
+            // the centre group keeps its place whatever the line says; the line gets what is left before it
+            let centre_start = centre(app, ui, full, left_end + 12.0, right_start - 12.0);
+            if app.ui.view == ViewMode::Detail {
+                face_summary(app, ui, full, left_end + 6.0, centre_start);
+            } else {
+                app.ui.face_summary.clear();
+            }
         });
 }
 
@@ -85,7 +103,7 @@ const PILL_W: f32 = 208.0;
 
 /// The rating/flag pill and copy/paste settings, between `from` and `to` (the side groups): the
 /// copy buttons go first when there is no room (they are in the Edit menu too), then the pill.
-fn centre(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect, from: f32, to: f32) {
+fn centre(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect, from: f32, to: f32) -> f32 {
     let t = Tokens::get(ui.ctx());
     let has_clip = app.session.clipboard.is_some();
     let label = crate::i18n::tr(if has_clip { "Paste Edit Settings" } else { "Copy Edit Settings" });
@@ -93,7 +111,7 @@ fn centre(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect, from: f32, to:
     let centre_width = PILL_W + 10.0 + copy_width + 4.0 + 30.0;
     let room = to - from;
     if room < PILL_W {
-        return;
+        return to;
     }
     let with_copy = room >= centre_width;
     let w = if with_copy { centre_width } else { PILL_W };
@@ -144,7 +162,7 @@ fn centre(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect, from: f32, to:
     }
     // copy / paste settings
     if !with_copy {
-        return;
+        return left - 12.0;
     }
     let copy_r = Rect::from_min_size(pos2(pill.right() + 10.0, pill.top()), vec2(copy_width, 30.0));
     let cresp = ui.interact(copy_r, egui::Id::unique("copy-settings"), Sense::click());
@@ -165,6 +183,33 @@ fn centre(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect, from: f32, to:
     paint(ui.painter(), gear_r.shrink(7.0), Icon::Gear, t.icon);
     if gresp.clicked() {
         let _ = app.run("dialog.copySettings", json!({}));
+    }
+    left - 12.0
+}
+
+/// The loupe's line saying who is in the photo, left-aligned in the free room `from..to` right of the face-boxes
+/// button (it takes no room from anything else and goes before anything would overlap), shortened with an ellipsis to fit (the tooltip has it whole). A click does what the button does.
+fn face_summary(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect, from: f32, to: f32) {
+    let who = app.session.active().and_then(|id| app.session.catalog.photo(id)).map(|p| crate::panels::face_summary::who(&p.meta.regions));
+    let text = who.as_ref().and_then(crate::panels::face_summary::text).unwrap_or_default();
+    app.ui.face_summary.clone_from(&text);
+    let room = to - from;
+    if text.is_empty() || room < 24.0 {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let mut job = egui::text::LayoutJob::simple(text.clone(), t.font(13.0), t.text_label, room);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('…');
+    let galley = ui.painter().layout_job(job);
+    let rect = Rect::from_min_size(pos2(from, full.center().y - 15.0), vec2(galley.size().x, 30.0));
+    let resp = ui.interact(rect, egui::Id::unique("face-summary"), Sense::click());
+    crate::widgets::announce(&resp, text.clone());
+    register(ui, "faceSummary", rect);
+    ui.painter().galley(pos2(rect.left(), rect.center().y - galley.size().y / 2.0), galley, t.text_label);
+    if resp.on_hover_text(text).clicked() {
+        let _ = app.run("view.faceBoxes", json!({}));
     }
 }
 
@@ -198,11 +243,6 @@ fn right_side(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect, compact_zo
             .clicked()
         {
             let _ = app.run("view.beforeAfter", json!({}));
-        }
-        if app.ui.view == ViewMode::Detail
-            && icon_button(&mut child, "faceBoxes", Icon::FaceBox, vec2(30.0, 30.0), app.ui.face_boxes, true, "Face boxes").clicked()
-        {
-            let _ = app.run("view.faceBoxes", json!({}));
         }
         if icon_button(&mut child, "filmstrip", Icon::Filmstrip, vec2(30.0, 30.0), app.ui.filmstrip, true, "Filmstrip (/)").clicked() {
             let _ = app.run("view.filmstrip", json!({}));
