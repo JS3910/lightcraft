@@ -23,10 +23,11 @@ use crate::widgets::register;
 pub mod rules;
 pub use rules::Offer;
 
-/// What the box is for this frame: its widget id, the closest people to the face, everyone named, the name the face has.
+/// What the box is for this frame: its widget id, the ranking of the people against the face, everyone named, the name the face has.
 pub struct NameBox<'a> {
     pub id: &'a str,
-    /// The closest few people the engine returned for the face, best first, with their similarity.
+    /// Every named person ranked against the face (`faces.rank`), best first, with their similarity; empty when the face
+    /// has no embedding or recognition is off (the names are then offered alphabetically).
     pub candidates: &'a [(String, f32)],
     /// Every named person (the names completion and the list draw on).
     pub people: &'a [String],

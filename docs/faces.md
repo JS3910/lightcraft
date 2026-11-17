@@ -248,8 +248,12 @@ suggest names for the ones you have not:
   opens the box on it the same way. Clearing the box of a named face and pressing Enter removes the name.
 - **The name box** completes what you type from the people you have already named, in the box itself with the completed
   part selected: Backspace removes it, so a new name that begins like an existing one can still be typed. A short list of
-  matching names (at most seven; names that begin with what you typed before names where a later word does, the closest
-  people to the face first, then alphabetical) sits below; Up and Down walk it, a click picks one. Enter saves (the listed
+  matching names (at most seven; names that begin with what you typed before names where a later word does) sits below,
+  best match first: within each group the people the face looks most like come first, each with its similarity as a
+  percentage, and the box completes to the first one (`faces.rank` gives the ranking of every named person for a face;
+  it uses only what the background scan has already embedded and never embeds anything). A face the scan has not looked
+  at, or recognition being off, gets the matching names alphabetically, without percentages. Up and Down walk the list, a
+  click picks one. Enter saves (the listed
   name, else the text), Esc cancels and restores what was there, a click outside saves text you changed and otherwise just
   closes the box. Tab and Shift-Tab save what you typed and move to the next or previous face of the photo; they never
   confirm a suggestion you did not touch. A name that differs from an existing person only in capitalization is stored
@@ -393,7 +397,7 @@ reuses the pictures of its step instead of rendering every face again.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, look-alikes together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, look-alikes together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 

@@ -738,3 +738,65 @@ fn many_faces_are_named_each_with_its_own_name_in_one_undo_step() {
     assert_eq!(name(&s, a, 1), None);
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn the_ranking_of_one_face_lists_every_named_person_best_first_and_never_embeds() {
+    let d = temp("rank");
+    let (mut s, _) = fresh_library(&d, 64);
+    let (a, b, c) = import_three_photos(&mut s, &d);
+    set_regions(&mut s, a, vec![region(0.1, Some("Ann")), region(0.5, Some("Bob"))]);
+    set_regions(&mut s, c, vec![region(0.1, Some("Cy")), region(0.5, Some("Dee"))]);
+    set_regions(&mut s, b, vec![region(0.1, None), region(0.5, Some("Ann"))]);
+    // nothing is embedded yet: the ranking is empty, and asking does not start any embedding
+    let r = s.execute("faces.rank", &json!({"id": b.0, "index": 0})).unwrap();
+    assert_eq!(r["ranking"], json!([]), "{r}");
+    assert_eq!(s.faces.index.len(), 0, "a ranking never embeds");
+    s.execute("faces.index", &json!({"budgetMs": 60_000})).unwrap();
+    let r = s.execute("faces.rank", &json!({"id": b.0, "index": 0})).unwrap();
+    let ranking = r["ranking"].as_array().unwrap();
+    let names: Vec<&str> = ranking.iter().map(|x| x["name"].as_str().unwrap()).collect();
+    assert_eq!(names.len(), 4, "every named person, once: {r}");
+    for n in ["Ann", "Bob", "Cy", "Dee"] {
+        assert!(names.contains(&n), "{n} missing: {r}");
+    }
+    let scores: Vec<f64> = ranking.iter().map(|x| x["score"].as_f64().unwrap()).collect();
+    assert!(scores.windows(2).all(|w| w[0] >= w[1]), "best first: {r}");
+    // the closest few are exactly what suggestions report
+    let sg = s.execute("faces.suggest", &json!({"ids": [b.0], "budgetMs": 0})).unwrap();
+    let top3: Vec<(String, f64)> = sg["photos"][0]["faces"][0]["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| (x["name"].as_str().unwrap().to_string(), x["score"].as_f64().unwrap()))
+        .collect();
+    let mine: Vec<(String, f64)> = ranking.iter().take(3).map(|x| (x["name"].as_str().unwrap().to_string(), x["score"].as_f64().unwrap())).collect();
+    assert_eq!(mine, top3);
+    // a named face is ranked without itself in the gallery
+    let r = s.execute("faces.rank", &json!({"id": b.0, "index": 1})).unwrap();
+    assert!(r["ranking"].as_array().unwrap().iter().all(|x| x["score"].as_f64().unwrap() < 0.9999), "a face is not compared with itself: {r}");
+    // a face the scan has not embedded has no ranking
+    set_regions(&mut s, b, vec![region(0.1, None), region(0.5, Some("Ann")), region(0.3, None)]);
+    let r = s.execute("faces.rank", &json!({"id": b.0, "index": 2})).unwrap();
+    assert_eq!(r["ranking"], json!([]), "{r}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn the_ranking_query_refuses_hostile_arguments_without_panicking() {
+    let d = temp("rankbad");
+    let (mut s, _) = fresh_library(&d, 64);
+    let (a, _, _) = import_three_photos(&mut s, &d);
+    set_regions(&mut s, a, vec![region(0.1, None)]);
+    for p in [
+        json!({"id": 999_999, "index": 0}),
+        json!({"id": a.0, "index": 1}),
+        json!({"id": a.0, "index": u64::MAX}),
+        json!({"id": a.0, "index": -1}),
+        json!({"id": a.0}),
+        json!({"id": "x", "index": 0}),
+        json!({"index": "0"}),
+    ] {
+        assert!(s.execute("faces.rank", &p).is_err(), "{p}");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}

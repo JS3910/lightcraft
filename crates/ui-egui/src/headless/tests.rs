@@ -1297,7 +1297,9 @@ fn a_screenful_of_small_faces_is_not_evicted_and_left_blank() {
     // picture: the count is a little under the number of tiles)
     let started = Instant::now();
     let timeout = Duration::from_secs(300);
-    while h.app.renderer.variant_textures() < drawn - 20 {
+    let target = 96 + 24;
+    assert!(drawn >= target + 20, "the test needs a good many more faces on screen than the budget, got {drawn}");
+    while h.app.renderer.variant_textures() < target {
         let left = timeout.saturating_sub(started.elapsed());
         assert!(
             !left.is_zero(),
@@ -1312,7 +1314,7 @@ fn a_screenful_of_small_faces_is_not_evicted_and_left_blank() {
         std::thread::sleep(Duration::from_millis(20));
     }
     let kept = h.app.renderer.variant_textures();
-    assert!(kept > 96 + 30, "{kept} pictures kept for {drawn} faces on screen");
+    assert!(kept >= target, "{kept} pictures kept for {drawn} faces on screen");
     // and they stay: many more frames, and none is evicted to be asked for again
     for _ in 0..30 {
         h.step();

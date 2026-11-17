@@ -277,3 +277,62 @@ fn the_box_closes_without_effect_when_its_face_is_no_longer_shown() {
     assert!(h.app.ui.name_edit.is_none());
     assert_eq!(names(&h, id), [None, None, None]);
 }
+
+/// Names listed by the open box, top to bottom.
+fn listed(h: &mut Headless) -> Vec<String> {
+    let r = h.request("ui.widgets", json!({"filter": "faceName:pick:"}), T);
+    let mut items: Vec<(f64, String)> = r["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|w| Some((w["rect"][1].as_f64()?, w["id"].as_str()?.strip_prefix("faceName:pick:")?.to_string())))
+        .collect();
+    items.sort_by(|a, b| a.0.total_cmp(&b.0));
+    items.into_iter().map(|(_, n)| n).collect()
+}
+
+fn more_people(h: &mut Headless, id: PhotoId) {
+    let other = h.app.session.catalog.photos().map(|p| p.id).find(|p| *p != id).unwrap();
+    let mut regions = h.app.session.catalog.photo(other).unwrap().meta.regions.clone();
+    regions.push(region(0.0, Some("Anders Bo")));
+    regions.push(region(0.05, Some("Anna Fox")));
+    set_regions(h, other, regions);
+}
+
+#[test]
+fn the_name_that_looks_most_like_the_face_is_completed_and_listed_first() {
+    let (mut h, id) = loupe([None, None, None]);
+    more_people(&mut h, id);
+    // the whole ranking (five people), not the closest three: the best match among those that begin with "an" is
+    // Anna Fox, though two other people look more like the face and Anders comes first alphabetically
+    suggest(&mut h, id, &[(0, None, &[("Bob Ray", 0.9), ("Anna Fox", 0.8), ("Joanna Ann", 0.7), ("Ann Lee", 0.5), ("Anders Bo", 0.31)])]);
+    open(&mut h, 0);
+    type_text(&mut h, "an");
+    assert_eq!(shown(&h), "Anna Fox");
+    assert_eq!(listed(&mut h), ["Anna Fox", "Ann Lee", "Anders Bo", "Joanna Ann"]);
+    key(&mut h, "enter");
+    assert_eq!(names(&h, id)[0], n("Anna Fox"));
+}
+
+#[test]
+fn a_face_with_no_ranking_gets_matching_names_alphabetically() {
+    let (mut h, id) = loupe([None, None, None]);
+    more_people(&mut h, id);
+    suggest(&mut h, id, &[]);
+    open(&mut h, 0);
+    type_text(&mut h, "an");
+    assert_eq!(shown(&h), "Anders Bo");
+    assert_eq!(listed(&mut h), ["Anders Bo", "Ann Lee", "Anna Fox", "Joanna Ann"]);
+}
+
+#[test]
+fn opening_the_box_starts_no_embedding() {
+    let (mut h, id) = loupe([None, None, None]);
+    h.app.caches.faces_active = true;
+    h.app.caches.faces_next_pump = f64::MAX;
+    open(&mut h, 0);
+    type_text(&mut h, "a");
+    assert!(h.app.ui.name_edit.is_some());
+    assert!(h.app.session.activity.list().is_empty(), "no task for the box: {:?}", h.app.session.activity.list());
+    let _ = id;
+}

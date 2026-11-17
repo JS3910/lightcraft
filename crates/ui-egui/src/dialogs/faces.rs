@@ -585,7 +585,8 @@ pub fn install(app: &mut LightcraftApp, path: &str, info: &Value, accepted: bool
 // ---------------------------------------------------------------------------------------------------
 // Naming faces in the loupe
 
-/// A suggestion for one unnamed face: the best guess (when it passes the bar) and the closest few people.
+/// What recognition says about one face: the best guess for an unnamed one (when it passes the bar) and every named
+/// person ranked by likeness (`faces.rank`), best first.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Hint {
     pub suggestion: Option<(String, f32)>,
@@ -619,6 +620,20 @@ pub fn hints_for(app: &mut LightcraftApp, photo: u64) -> Option<std::sync::Arc<H
             index,
             Hint { suggestion: pair(&f["suggestion"]), candidates: f["candidates"].as_array().into_iter().flatten().filter_map(pair).collect() },
         );
+    }
+    // who each face (named or not) looks like, every named person ranked: the name box lists and completes by it
+    let faces: Vec<usize> = app
+        .session
+        .catalog
+        .photo(lightcraft_catalog::PhotoId(photo))
+        .map(|p| p.meta.regions.iter().enumerate().filter(|(_, r)| r.kind == lightcraft_meta::RegionKind::Face).map(|(i, _)| i).collect())
+        .unwrap_or_default();
+    for index in faces {
+        let Ok(ranked) = app.session.execute("faces.rank", &json!({"id": photo, "index": index})) else { continue };
+        let candidates: Vec<(String, f32)> = ranked["ranking"].as_array().into_iter().flatten().filter_map(pair).collect();
+        if !candidates.is_empty() {
+            hints.by_index.entry(index).or_default().candidates = candidates;
+        }
     }
     let hints = std::sync::Arc::new(hints);
     app.caches.face_hints = Some((photo, rev, indexed, hints.clone()));
