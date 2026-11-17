@@ -28,8 +28,8 @@ use frame::{
     DIALOG_CHROME_GUESS, DIALOG_MIN_BODY, DIALOG_SCREEN_MARGIN, choices, clicked_backdrop, dialog_body, dialog_field, field, just_opened, num,
     only_shows, return_confirms, trailing_button_row,
 };
-pub(crate) use rename::rename_preview;
 use rename::{RENAME_PREVIEW_ROWS, person_rename_plan};
+pub(crate) use rename::{person_faces, rename_preview};
 pub(crate) use sam_model::show_model_folder;
 use sam_model::{sam_by_hand, sam_model_body};
 use slideshow_export::slideshow_export_body;
@@ -446,6 +446,7 @@ fn dialog_title(app: &LightcraftApp, dlg: &Dialog) -> String {
         Dialog::CaptureTime { .. } => "Edit Capture Time",
         Dialog::RenameKeyword { .. } => "Rename Keyword",
         Dialog::RenamePerson { .. } => "Rename Person",
+        Dialog::CombinePeople { .. } => "Combine People",
         Dialog::KeywordTag { editing: None, .. } => "Create Keyword Tag",
         Dialog::KeywordTag { .. } => "Edit Keyword Tag",
         Dialog::DeleteKeyword { .. } => "Delete Keyword",
@@ -610,6 +611,7 @@ fn fixed_ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> &'s
         Dialog::SynchronizeFolder { .. } => "Synchronize",
         Dialog::RenamePerson { from, to, .. } if person_rename_plan(&app.session.catalog, from, to).needs_merge => "Merge",
         Dialog::RenamePerson { .. } => "Rename",
+        Dialog::CombinePeople { .. } => "Combine",
         // the dialogs that only show something, or a model file that can't be used
         Dialog::About
         | Dialog::Shortcuts
@@ -1271,6 +1273,25 @@ fn rename_person_body(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, co
         let r = ui.checkbox(merge, crate::i18n::tr("Combine with the existing person"));
         crate::widgets::register(ui, "check:personMerge", r.rect);
     }
+}
+
+/// The body of the Combine People dialog: both names and how many faces each has.
+fn combine_people_body(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens, dlg: &Dialog) {
+    let Dialog::CombinePeople { from, to } = dlg else { return };
+    let faces = |name: &str| {
+        let n = person_faces(&app.session.catalog, name);
+        crate::i18n::tr_format!("{n} face{}", if n == 1 { "" } else { "s" }, n = n)
+    };
+    ui.label(egui::RichText::new(crate::i18n::tr_format!("“{to}” is already a person.", to = to)).color(t.text));
+    ui.add_space(4.0);
+    for name in [from, to] {
+        ui.label(egui::RichText::new(format!("{name}: {}", faces(name))).color(t.text_label));
+    }
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(crate::i18n::tr("Combining them makes one person; Undo separates them again. The files are not changed."))
+            .color(t.text_dim),
+    );
 }
 
 /// The body of the RenameKeyword dialog.
@@ -2093,6 +2114,7 @@ fn dialog_content(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, body_m
         Dialog::LabelNames { .. } => label_names_body(app, ui, t, dlg),
         Dialog::Rename { .. } => rename_body(app, ui, t, dlg),
         Dialog::RenamePerson { .. } => rename_person_body(app, ui, t, confirm, dlg),
+        Dialog::CombinePeople { .. } => combine_people_body(app, ui, t, dlg),
         Dialog::RenameKeyword { .. } => rename_keyword_body(app, ui, t, confirm, dlg),
         Dialog::MergeKeywords { .. } => merge_keywords_body(app, ui, t, confirm, dlg),
         Dialog::TextPrompt { value, hint, .. } => {

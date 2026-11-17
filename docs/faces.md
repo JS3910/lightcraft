@@ -326,6 +326,13 @@ selected face its own suggestion and leaves selected faces without one alone. A 
 names that face only and leaves the selection as it is. Each is one undo step. Selecting names nothing; there is no
 naming bar above the faces.
 
+Click the name under a person's card to rename them in place: the shared name box opens there with the name selected
+and offers the people already named (no face to rank them by, so no suggestions). A name nobody has renames every face
+of that person at once, as one undo step; a change of capitalization alone counts. The name of another person asks
+first: a confirmation that states both names and how many faces each has, with **Combine** and **Cancel**. Combine makes
+one person in one undo step (Undo separates them again); Cancel and Esc leave everything as it was. A click on the
+picture still opens the person's page.
+
 Right-click a person's card, or use **Rename Person…** on their page, to rename every face of that person in the library
 at once (`faces.renamePerson`). The name is matched the way the cards are grouped (trimmed, ignoring capitalization) and
 every matching face is stored with the exact new spelling, so a change of capitalization alone updates them all. The

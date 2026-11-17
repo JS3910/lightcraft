@@ -295,6 +295,9 @@ impl LightcraftApp {
         if self.ui.name_edit.as_ref().is_some_and(|e| e.input.is_stale(pass)) {
             self.ui.name_edit = None;
         }
+        if self.ui.card_name.as_ref().is_some_and(|e| e.input.is_stale(pass)) {
+            self.ui.card_name = None;
+        }
         if self.fonts_ready && !updates_ui::blocks_input(self) {
             shortcuts::handle(self, ctx);
         }

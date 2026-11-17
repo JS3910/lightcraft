@@ -79,6 +79,9 @@ pub struct NameBoxState {
     age: u32,
     /// The egui pass the box was last drawn in: a box not drawn for a while has lost its face (see [`Self::is_stale`]).
     drawn: u64,
+    /// The egui pass the box was opened in: the box is not yet drawn for real in it (the press that opened it may still
+    /// take the focus away from the field).
+    opened: u64,
 }
 
 impl NameBoxState {
@@ -86,7 +89,7 @@ impl NameBoxState {
     /// (`ctx.cumulative_pass_nr()`).
     pub fn open(text: impl Into<String>, pass: u64) -> Self {
         let text = text.into();
-        NameBoxState { typed: text.clone(), text, edited: false, picked: None, age: 0, drawn: pass }
+        NameBoxState { typed: text.clone(), text, edited: false, picked: None, age: 0, drawn: pass, opened: pass }
     }
 
     /// The user changed the text or chose a listed name.
@@ -110,6 +113,7 @@ impl NameBoxState {
 pub fn show(ctx: &egui::Context, at: Pos2, state: &mut NameBoxState, spec: &NameBox) -> Outcome {
     let t = Tokens::get(ctx);
     let opening = state.age == 0;
+    let early = ctx.cumulative_pass_nr() == state.opened;
     state.drawn = ctx.cumulative_pass_nr();
     // keys are read before the field sees them; the frame that opens the box ignores them (they were meant for what
     // came before: Tab that moved here, the Enter that named the last face)
@@ -136,9 +140,9 @@ pub fn show(ctx: &egui::Context, at: Pos2, state: &mut NameBoxState, spec: &Name
                 let r = TextField::singleline(&field, &mut state.text)
                     .hint(crate::i18n::tr("Name"))
                     .width(220.0)
-                    .begin_edit(opening && !ui.is_sizing_pass())
+                    .begin_edit(opening && !ui.is_sizing_pass() && !early)
                     .show(ui);
-                real = !ui.is_sizing_pass();
+                real = !ui.is_sizing_pass() && !early;
                 track(ui.ctx(), state, spec, &field, before, r.response.changed());
                 let listed = rules::offered(state.query(), spec.candidates, spec.people);
                 for (i, offer) in listed.iter().enumerate() {

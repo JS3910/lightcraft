@@ -184,9 +184,13 @@ fn photo_count_text(count: usize) -> String {
 fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, person: &Person, r: Rect, edge: f32, ppp: f32, selected: bool) {
     let t = Tokens::get(ui.ctx());
     let face = Rect::from_min_size(r.min, vec2(edge, edge));
-    let resp = ui.interact(r, egui::Id::unique(("person-card", &person.name)), Sense::click());
+    let name_rect = Rect::from_min_max(pos2(r.left(), face.bottom()), r.max);
+    let resp = ui.interact(face, egui::Id::unique(("person-card", &person.name)), Sense::click());
     crate::widgets::announce(&resp, format!("{}, {}", person.name, photo_count_text(person.count)));
-    register(ui, format!("person:{}", person.name), r);
+    register(ui, format!("person:{}", person.name), face);
+    // the name under the picture: a click edits it in place
+    let name_resp = ui.interact(name_rect, egui::Id::unique(("person-card-name", &person.name)), Sense::click());
+    register(ui, format!("personName:{}", person.name), name_rect);
     let view = app.session.face_view(person.photo, person.face);
     let p = ui.painter();
     p.rect_filled(face, 3.0, t.canvas);
@@ -212,16 +216,73 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, person: &Person, r: Rect, ed
     let name = fit(p, &person.name, t.semibold(13.0), edge);
     p.text(pos2(r.left() + 2.0, face.bottom() + 14.0), Align2::LEFT_CENTER, name, t.semibold(13.0), t.text);
     let resp = resp.on_hover_text(crate::i18n::tr_format!("{} — show their photos", person.name));
-    let full = person.name.clone();
-    crate::widgets::context_menu(&resp, |ui| {
-        let r = ui.button(crate::i18n::tr("Rename Person…"));
-        register(ui, "personMenu:rename", r.rect);
-        if r.clicked() {
-            open_rename(app, &full);
-        }
-    });
+    let name_resp = name_resp.on_hover_text(crate::i18n::tr("Rename"));
+    let (mut rename, mut editing) = (false, app.ui.card_name.as_ref().is_some_and(|e| e.from == person.name));
+    for r in [&resp, &name_resp] {
+        crate::widgets::context_menu(r, |ui| {
+            let r = ui.button(crate::i18n::tr("Rename Person…"));
+            register(ui, "personMenu:rename", r.rect);
+            rename |= r.clicked();
+        });
+    }
+    if rename {
+        open_rename(app, &person.name);
+    }
+    if name_resp.clicked() && !editing {
+        // one name box at a time: a box open on an unnamed tile closes
+        app.ui.name_edit = None;
+        let input = crate::name_box::NameBoxState::open(person.name.clone(), ui.ctx().cumulative_pass_nr());
+        app.ui.card_name = Some(crate::state::CardNameEdit { from: person.name.clone(), input });
+        editing = true;
+    }
+    if editing {
+        name_box(app, ui, person, pos2(r.left(), name_rect.bottom() + 2.0));
+    }
     if resp.clicked() {
         let _ = app.run("view.person", json!({"name": person.name}));
+    }
+}
+
+/// The name box under a card being renamed. It offers the people's names only: a card has no face to rank them by.
+fn name_box(app: &mut LightcraftApp, ui: &egui::Ui, person: &Person, at: egui::Pos2) {
+    let people = app.caches.person_names(&app.session.catalog);
+    let Some(edit) = app.ui.card_name.as_mut() else { return };
+    let spec = crate::name_box::NameBox {
+        id: "cardName",
+        candidates: &[],
+        people: &people,
+        current: Some(&person.name),
+        setup: super::faces::Setup::Running,
+    };
+    use crate::name_box::Outcome;
+    match crate::name_box::show(ui.ctx(), at, &mut edit.input, &spec) {
+        Outcome::Open => {}
+        Outcome::Save(name) => {
+            app.ui.card_name = None;
+            rename_to(app, &person.name, &name);
+        }
+        Outcome::Move { save, .. } => {
+            app.ui.card_name = None;
+            if let Some(name) = save {
+                rename_to(app, &person.name, &name);
+            }
+        }
+        Outcome::Cancel | Outcome::Untouched | Outcome::Setup => app.ui.card_name = None,
+    }
+}
+
+/// A name typed for a person: a new name renames every face; another person's asks before combining. An empty name or
+/// the name the card shows changes nothing.
+fn rename_to(app: &mut LightcraftApp, from: &str, to: &str) {
+    let to = to.trim();
+    if to.is_empty() || to == from {
+        return;
+    }
+    let other = from.to_lowercase() != to.to_lowercase() && app.session.catalog.people().iter().any(|p| p.name.to_lowercase() == to.to_lowercase());
+    if other {
+        app.ui.dialog = Some(crate::state::Dialog::CombinePeople { from: from.to_string(), to: to.to_string() });
+    } else {
+        let _ = app.run("faces.renamePerson", json!({"from": from, "to": to}));
     }
 }
 

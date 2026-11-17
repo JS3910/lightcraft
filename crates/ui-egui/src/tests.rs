@@ -23,6 +23,7 @@ mod button;
 mod canvas_keys;
 mod canvas_pan;
 mod capture_time;
+mod card_rename;
 mod carried_right_click;
 mod carried_text_field_menu;
 mod compare;

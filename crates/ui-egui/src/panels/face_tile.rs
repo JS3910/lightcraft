@@ -157,6 +157,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect, tile: &FaceTile
 /// Open the name box on `entry`: its suggestion selected, or empty.
 pub fn open(app: &mut LightcraftApp, ctx: &egui::Context, entry: &Entry) {
     let input = NameBoxState::open(entry.suggestion.clone().unwrap_or_default(), ctx.cumulative_pass_nr());
+    // one name box at a time: a box open on a Named People card closes
+    app.ui.card_name = None;
     app.ui.name_edit = Some(NameEdit { photo: entry.key.0, index: entry.key.1, current: None, input });
 }
 

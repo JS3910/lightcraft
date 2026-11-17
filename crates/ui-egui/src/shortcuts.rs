@@ -381,11 +381,15 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     if app.ui.dialog.is_some() || crate::panels::notices::blocks_input(app) || crate::panels::library_problem::blocks_dialog_input(app) {
         return;
     }
-    if app.recording_shortcut.is_none() && app.ui.name_edit.is_none() && crate::panels::person::handle_bulk_key(app, ctx) {
+    if app.recording_shortcut.is_none()
+        && app.ui.name_edit.is_none()
+        && app.ui.card_name.is_none()
+        && crate::panels::person::handle_bulk_key(app, ctx)
+    {
         return;
     }
     // don't steal keys from text fields or from the keymap editor recording a shortcut
-    if keyboard_owned(app, ctx) || app.recording_shortcut.is_some() || app.ui.name_edit.is_some() {
+    if keyboard_owned(app, ctx) || app.recording_shortcut.is_some() || app.ui.name_edit.is_some() || app.ui.card_name.is_some() {
         return;
     }
     let (mut fire, aliased, h_press) = pressed_commands(app, ctx);

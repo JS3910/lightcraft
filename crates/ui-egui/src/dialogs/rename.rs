@@ -94,3 +94,16 @@ pub(super) fn person_rename_plan(cat: &lightcraft_catalog::Catalog, from: &str, 
     // a case-only change is the same person, not a merge
     PersonRenamePlan { faces, needs_merge: needs_merge && from_key != to_key, block }
 }
+
+/// How many faces in the library are named `name` (trimmed, any capitalization).
+pub(crate) fn person_faces(cat: &lightcraft_catalog::Catalog, name: &str) -> usize {
+    let key = name.trim().to_lowercase();
+    if key.is_empty() {
+        return 0;
+    }
+    cat.photos()
+        .filter(|p| p.in_library())
+        .flat_map(|p| p.meta.regions.iter())
+        .filter(|r| r.kind == lightcraft_meta::RegionKind::Face && r.name.as_deref().is_some_and(|n| n.trim().to_lowercase() == key))
+        .count()
+}

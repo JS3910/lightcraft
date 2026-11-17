@@ -232,3 +232,14 @@ fn select_all_selects_every_unnamed_face_and_a_box_on_one_names_them_all() {
     key(&mut h, "enter");
     assert_eq!((names(&h, p1), names(&h, p2)), (vec![n("Everyone"), n("Everyone")], vec![n("Everyone")]));
 }
+
+#[test]
+fn only_one_name_box_is_open_in_the_people_view() {
+    let (mut h, [_, p1, _]) = people();
+    ok(&mut h, "ui.clickWidget", json!({"id": strip(p1, 0)}));
+    assert!(h.app.ui.name_edit.is_some() && h.app.ui.card_name.is_none());
+    ok(&mut h, "ui.clickWidget", json!({"id": "personName:Ann Lee"}));
+    assert!(h.app.ui.card_name.is_some() && h.app.ui.name_edit.is_none(), "the card's box replaced the tile's");
+    ok(&mut h, "ui.clickWidget", json!({"id": strip(p1, 1)}));
+    assert!(h.app.ui.name_edit.is_some() && h.app.ui.card_name.is_none(), "and the tile's replaced the card's");
+}
