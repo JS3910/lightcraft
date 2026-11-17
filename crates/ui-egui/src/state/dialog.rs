@@ -23,6 +23,14 @@ pub struct NameEdit {
     pub input: crate::name_box::NameBoxState,
 }
 
+/// The name under a person card being typed: whose card, and the name box's state.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CardNameEdit {
+    /// The name the card had when the box opened.
+    pub from: String,
+    pub input: crate::name_box::NameBoxState,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Dialog {
@@ -103,6 +111,12 @@ pub enum Dialog {
         from: String,
         to: String,
         merge: bool,
+    },
+    /// A name typed under a person card is another person's: combine the two (`from` takes the name `to`, spelled as that
+    /// person has it), or leave everything as it was.
+    CombinePeople {
+        from: String,
+        to: String,
     },
     /// Create a keyword, or edit one (`editing`): Lightroom Classic's Create / Edit Keyword Tag.
     KeywordTag {

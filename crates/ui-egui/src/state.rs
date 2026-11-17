@@ -6,7 +6,7 @@ mod dialog;
 mod settings;
 mod view;
 
-pub use dialog::{Dialog, NameEdit, SyncCounts, default_preset_groups};
+pub use dialog::{CardNameEdit, Dialog, NameEdit, SyncCounts, default_preset_groups};
 pub use settings::{
     AppSettings, AppearanceMode, DarkTheme, EditFile, EditFormat, EditSpace, GridBadges, HOT_PIXEL_LIMIT_DEFAULT, HOT_PIXEL_LIMITS, KeywordChips,
     LOUPE_EDGE_CEILING, LOUPE_EDGE_STEP, LaunchLibrary, LightTheme, LightroomImport, MIN_TEXTURE_SIDE, PHOTOCRAFT, PREVIEW_LIMITS, RECENT_LIBRARIES,
@@ -132,6 +132,9 @@ pub struct UiState {
     /// A face's name being typed in the loupe.
     #[serde(skip)]
     pub name_edit: Option<NameEdit>,
+    /// The name under a Named People card being edited in place.
+    #[serde(skip)]
+    pub card_name: Option<CardNameEdit>,
     /// The person whose page the People view shows (their faces and the faces that look like them); `None`: everyone.
     #[serde(skip)]
     pub person_page: Option<String>,
@@ -446,6 +449,7 @@ impl Default for UiState {
             sidebar: Default::default(),
             collapsed_sidebar: Vec::new(),
             name_edit: None,
+            card_name: None,
             person_page: None,
             person_from: None,
             last_person: None,

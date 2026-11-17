@@ -94,6 +94,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::Rename { template, start } => app.run("photo.rename", json!({"template": template, "start": start})),
         Dialog::RenameKeyword { from, to } => app.run("keyword.rename", json!({"from": from, "to": to})),
         Dialog::RenamePerson { from, to, merge } => app.run("faces.renamePerson", json!({"from": from, "to": to.trim(), "merge": merge})),
+        Dialog::CombinePeople { from, to } => app.run("faces.renamePerson", json!({"from": from, "to": to, "merge": true})),
         Dialog::KeywordTag {
             editing,
             name,
