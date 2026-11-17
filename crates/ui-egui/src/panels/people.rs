@@ -85,8 +85,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // the filters narrowing the list (a date, a keyword…), removable here
     let chips = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog);
     super::chips::show(app, ui, &chips);
-    // what is selected below, and the box to name it with
-    super::unnamed::naming_bar(app, ui);
+    // Esc with no name box open drops the selection
+    clear_selection_on_escape(app, ui.ctx());
     let unnamed = super::unnamed::faces(app, now);
     if people.is_empty() && unnamed.faces.is_empty() {
         let (title, body) = if chips.is_empty() {
@@ -106,7 +106,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let row_h = edge + NAME_H + GAP;
         let rows = people.len().div_ceil(cols);
         let named_h = if people.is_empty() { 40.0 } else { PAD + rows as f32 * row_h };
-        let (tile_cols, tile_row) = (columns(width, tile), tile + GAP);
+        let (tile_cols, tile_row) = (columns(width, tile), tile + super::face_tile::STRIP_H + GAP);
         let tile_rows = unnamed.faces.len().div_ceil(tile_cols);
         let section_top = named_h + 6.0;
         let (area, _) = ui.allocate_exact_size(vec2(width, section_top + SECTION_H + tile_rows as f32 * tile_row + PAD), Sense::hover());
@@ -139,18 +139,36 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ui.painter().line_segment([pos2(area.left() + PAD, top), pos2(area.right() - PAD, top)], Stroke::new(1.0, t.button_border));
         super::unnamed::section_header(app, ui, &unnamed, pos2(area.left() + PAD, top + 14.0), area.right() - PAD);
         let grid_top = section_top + SECTION_H;
+        // Tab moved the name box to a tile that may be off screen
+        if let Some(key) = app.ui.unnamed_scroll.take()
+            && let Some(i) = unnamed.faces.iter().position(|f| (f.photo, f.index) == key)
+        {
+            let min = area.min + vec2(PAD + (i % tile_cols) as f32 * (tile + GAP), grid_top + (i / tile_cols) as f32 * tile_row);
+            ui.scroll_to_rect(Rect::from_min_size(min, vec2(tile, tile_row)), None);
+        }
         for row in visible(grid_top, tile_rows, tile_row) {
             for col in 0..tile_cols {
                 let i = row * tile_cols + col;
                 let Some(face) = unnamed.faces.get(i) else { break };
                 shown += 1;
                 let min = area.min + vec2(PAD + col as f32 * (tile + GAP), grid_top + row as f32 * tile_row);
-                super::unnamed::tile(app, ui, &unnamed, i, Rect::from_min_size(min, vec2(tile, tile)), face, ppp);
+                let r = Rect::from_min_size(min, vec2(tile, tile + super::face_tile::STRIP_H));
+                if let Some(to) = super::unnamed::tile(app, ui, &unnamed, i, r, face, ppp) {
+                    app.ui.unnamed_scroll = Some(to);
+                }
             }
         }
         // the picture cache keeps all of them (a fixed budget would evict and re-request the same few every frame)
         app.renderer.want_variants(shown);
     });
+}
+
+/// Esc with no name box open drops the selected unnamed faces (with a box open, Esc only closes the box).
+fn clear_selection_on_escape(app: &mut LightcraftApp, ctx: &egui::Context) {
+    if app.ui.name_edit.is_none() && app.ui.dialog.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        app.ui.unnamed_selected.clear();
+        app.ui.unnamed_anchor = None;
+    }
 }
 
 /// The badge on a person's picture: the full number of photos (the app has no digit-grouping helper, so counts elsewhere are plain too).

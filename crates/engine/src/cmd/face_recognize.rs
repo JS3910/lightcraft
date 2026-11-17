@@ -15,7 +15,12 @@ use crate::{Result, Session};
 
 /// The `name` parameter of the naming commands: a name, or none (`null`, empty) to clear it.
 fn name_param(p: &Value, c: &str) -> Result<Option<String>> {
-    let name = match p.get("name") {
+    name_value(p.get("name"), c)
+}
+
+/// A name value as [`name_param`] reads it (`None`: nothing given).
+fn name_value(v: Option<&Value>, c: &str) -> Result<Option<String>> {
+    let name = match v {
         None | Some(Value::Null) => None,
         Some(v) => Some(v.as_str().ok_or_else(|| bad(c, "`name` must be text or null"))?.trim().to_string()).filter(|n| !n.is_empty()),
     };
@@ -35,34 +40,40 @@ fn apply_name(region: &mut lightcraft_meta::Region, name: &Option<String>) {
     }
 }
 
-/// `faces.nameFaces {faces: [{photo, index}], name}`: name (or clear) many face regions at once, as one undo step: what
-/// naming a group of look-alikes does.
+/// `faces.nameFaces {faces: [{photo, index, name?}], name?}`: name (or clear) many face regions at once, as one undo
+/// step: what naming a group of look-alikes does. An entry's own `name` wins; an entry without one takes the top-level
+/// `name` (none: clears it). Every name is checked before anything changes.
 fn name_faces(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "faces.nameFaces";
-    let name = name_param(p, C)?;
+    let default = name_param(p, C)?;
     let list = p.get("faces").and_then(Value::as_array).ok_or_else(|| bad(C, "missing `faces`"))?;
     if list.len() > 5000 {
         return Err(bad(C, "at most 5000 faces at a time"));
     }
-    let mut by_photo: std::collections::BTreeMap<u64, Vec<usize>> = std::collections::BTreeMap::new();
+    let mut by_photo: std::collections::BTreeMap<u64, Vec<(usize, Option<String>)>> = std::collections::BTreeMap::new();
     for f in list {
         let (Some(photo), Some(index)) =
             (f.get("photo").and_then(Value::as_u64), f.get("index").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()))
         else {
             return Err(bad(C, "each face needs a `photo` and an `index`"));
         };
-        by_photo.entry(photo).or_default().push(index);
+        let name = match f.get("name") {
+            Some(own) => name_value(Some(own), C)?,
+            None => default.clone(),
+        };
+        by_photo.entry(photo).or_default().push((index, name));
     }
-    let (mut ops, mut named) = (Vec::new(), 0usize);
-    for (photo, indexes) in by_photo {
+    let (mut ops, mut named, mut cleared) = (Vec::new(), 0usize, 0usize);
+    for (photo, faces) in by_photo {
         let id = lightcraft_catalog::PhotoId(photo);
         let Some(photo) = s.catalog.photo(id) else { continue };
         let mut meta = photo.meta.clone();
         let before = named;
-        for i in indexes {
+        for (i, name) in faces {
             if let Some(region) = meta.regions.get_mut(i).filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
                 apply_name(region, &name);
                 named += 1;
+                cleared += usize::from(name.is_none());
             }
         }
         if named > before {
@@ -73,9 +84,9 @@ fn name_faces(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, "none of those faces exist"));
     }
     let photos = ops.len();
-    s.commit(if name.is_some() { "Name Faces" } else { "Clear Face Names" }, Op::Batch { ops })?;
+    s.commit(if cleared == named { "Clear Face Names" } else { "Name Faces" }, Op::Batch { ops })?;
     s.skip_auto_write = true;
-    Ok(json!({"named": named, "photos": photos, "name": name}))
+    Ok(json!({"named": named, "photos": photos, "name": default}))
 }
 
 /// `faces.setName {id?, index, name}`: name (or, with `null` or an empty name, un-name) one face region. Naming
@@ -1181,7 +1192,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Name Faces",
             [],
             None,
-            "{faces: [{photo, index}], name} → {named, photos} — name (or, with a null or empty name, clear) many face regions as one undoable step; the sidecar is not touched",
+            "{faces: [{photo, index, name?}], name?} → {named, photos} — name (or, with a null or empty name, clear) many face regions as one undoable step; a face's own `name` wins over the top-level one, so each face can get its own; the sidecar is not touched",
             super::always,
             name_faces
         ),

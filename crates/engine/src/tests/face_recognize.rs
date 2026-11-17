@@ -691,3 +691,50 @@ fn rename_person_covers_more_than_the_person_query_and_rejects_bad_input() {
     assert_eq!(s.catalog.photo(a).unwrap().meta.regions[0].name.as_deref(), Some("Bea"));
     assert_eq!(s.catalog.photo(local).unwrap().meta.regions[0].name.as_deref(), Some("Ada"));
 }
+
+#[test]
+fn many_faces_are_named_each_with_its_own_name_in_one_undo_step() {
+    let d = temp("nameeach");
+    let (mut s, _) = setup(&d, 64);
+    let (a, b) = two_photos(&s);
+    set_regions(&mut s, a, vec![region(0.1, None), region(0.5, None)]);
+    set_regions(&mut s, b, vec![region(0.3, Some("Old"))]);
+    let undo = s.undo.len();
+    let r = s
+        .execute(
+            "faces.nameFaces",
+            &json!({"faces": [
+                {"photo": a.0, "index": 0, "name": " Ann "},
+                {"photo": a.0, "index": 1},
+                {"photo": b.0, "index": 0, "name": "Bob"},
+            ], "name": "Cy"}),
+        )
+        .unwrap();
+    assert_eq!(r["named"], 3);
+    assert_eq!(s.undo.len(), undo + 1, "one step for the whole list");
+    let name = |s: &Session, id, i: usize| s.catalog.photo(id).unwrap().meta.regions[i].name.clone();
+    assert_eq!(name(&s, a, 0).as_deref(), Some("Ann"));
+    assert_eq!(name(&s, a, 1).as_deref(), Some("Cy"), "an entry without a name takes the default");
+    assert_eq!(name(&s, b, 0).as_deref(), Some("Bob"));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!((name(&s, a, 0), name(&s, a, 1), name(&s, b, 0).as_deref().map(str::to_string)), (None, None, Some("Old".to_string())));
+    // an entry with an empty or null name and no default clears it; a name each, no default needed
+    s.execute("faces.nameFaces", &json!({"faces": [{"photo": a.0, "index": 0, "name": "Ann"}, {"photo": b.0, "index": 0, "name": ""}]})).unwrap();
+    assert_eq!((name(&s, a, 0).as_deref().map(str::to_string), name(&s, b, 0)), (Some("Ann".to_string()), None));
+    // hostile input is an error and changes nothing
+    let undo = s.undo.len();
+    for bad in [
+        json!({"faces": [{"photo": a.0, "index": 0, "name": 7}]}),
+        json!({"faces": [{"photo": a.0, "index": 0, "name": "bad\u{7}"}]}),
+        json!({"faces": [{"photo": a.0, "index": 0, "name": "x".repeat(201)}]}),
+        json!({"faces": [{"photo": a.0, "index": 1, "name": "Ok"}, {"photo": a.0, "index": 0, "name": ["x"]}]}),
+        json!({"faces": [{"photo": 987_654, "index": 0, "name": "x"}, {"photo": a.0, "index": 99, "name": "x"}]}),
+        json!({"faces": [{"photo": a.0, "index": -1, "name": "x"}]}),
+        json!({"faces": vec![json!({"photo": a.0, "index": 0, "name": "x"}); 5001]}),
+    ] {
+        assert!(s.execute("faces.nameFaces", &bad).is_err(), "{bad}");
+    }
+    assert_eq!(s.undo.len(), undo);
+    assert_eq!(name(&s, a, 1), None);
+    let _ = std::fs::remove_dir_all(&d);
+}

@@ -311,10 +311,16 @@ does a person's page.
 **People** shows a card for each named person (their face, with the number of photos they are in on the picture) and, below
 a line, the **Unnamed faces**: every face nobody has named, as cropped pictures. With recognition running, faces that look
 alike are next to each other (put in order by looking at every pair, for up to the first 1,500 embedded faces), and a face
-the named ones recognise carries the name they suggest along its bottom edge; click that name to accept it for that face.
-To name a group: click faces to select them (Shift-click selects a range, **Select all** takes every one listed), type a
-name in the bar that appears (people already named complete as you type), press Enter: all of them are named at once, as
-one undo step. Selecting names nothing.
+the named ones recognise carries the name they suggest on its name strip. Every tile has that strip under its picture, always
+shown: the suggested name followed by a question mark (**Jane Doe?**), or a lone **?** when there is no suggestion. Faces are
+named in place: click a strip and the shared name box opens on that tile (a suggestion is filled in and selected, so the
+first letter you type replaces it); Tab and Shift-Tab move the box to the next and previous tile without confirming
+untouched suggestions. Click a picture to select it (Shift-click selects a range, **Select all** takes every one listed;
+Esc with no box open clears the selection), double-click to open the photo. With faces selected, the box on a selected
+tile acts on all of them: type a name and Enter names every selected face, and Enter on an untouched box gives each
+selected face its own suggestion and leaves selected faces without one alone. A box on a tile outside the selection
+names that face only and leaves the selection as it is. Each is one undo step. Selecting names nothing; there is no
+naming bar above the faces.
 
 Right-click a person's card, or use **Rename Person…** on their page, to rename every face of that person in the library
 at once (`faces.renamePerson`). The name is matched the way the cards are grouped (trimmed, ignoring capitalization) and
@@ -387,7 +393,7 @@ reuses the pictures of its step instead of rendering every face again.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, look-alikes together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index}], name}` (name many at once, one undo step), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, look-alikes together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 

@@ -1127,7 +1127,7 @@ fn unnamed_faces_are_selected_and_named_together() {
     h.step();
     h.step();
     assert_eq!(tiles(&mut h), 4);
-    // select two (nothing is named by selecting), and the naming bar appears
+    // select two (nothing is named by selecting)
     for (id, i) in [(ids[1], 0), (ids[2], 0)] {
         let r = h.request("ui.clickWidget", json!({"id": format!("unnamed-face:{}:{i}", id.0)}), t);
         assert_eq!(r["ok"], true, "{r}");
@@ -1135,9 +1135,12 @@ fn unnamed_faces_are_selected_and_named_together() {
         h.step();
     }
     assert_eq!(h.app.ui.unnamed_selected.len(), 2);
-    let bar = h.request("ui.widgets", json!({"filter": "unnamed:"}), t).to_string();
-    assert!(bar.contains("unnamed:name") && bar.contains("unnamed:clear"), "{bar}");
-    assert!(h.request("ui.widgets", json!({"filter": "field:unnamedName"}), t).to_string().contains("field:unnamedName"));
+    // the naming bar is gone; a click on a selected tile's name strip opens the name box on it
+    assert!(h.request("ui.widgets", json!({"filter": "unnamed:name"}), t)["result"].as_array().is_some_and(Vec::is_empty));
+    let r = h.request("ui.clickWidget", json!({"id": format!("unnamed-name:{}:0", ids[1].0)}), t);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    h.step();
     // type a name and press Enter: both faces are named, in one undo step, and the selection is gone
     let undo = h.app.session.undo.len();
     h.request("ui.text", json!({"text": "Ann Example"}), t);
@@ -1149,7 +1152,7 @@ fn unnamed_faces_are_selected_and_named_together() {
     assert_eq!((named(&h, ids[1], 0), named(&h, ids[2], 0)), (Some("Ann Example".to_string()), Some("Ann Example".to_string())));
     assert_eq!(named(&h, ids[1], 1), None, "a face that was not selected stays unnamed");
     assert_eq!(h.app.session.undo.len(), undo + 1, "one step for both");
-    assert!(h.app.ui.unnamed_selected.is_empty() && h.app.ui.unnamed_name.is_empty());
+    assert!(h.app.ui.unnamed_selected.is_empty() && h.app.ui.name_edit.is_none());
     h.settle(SETTLE);
     h.step();
     assert_eq!(tiles(&mut h), 2, "the named faces left the unnamed list");
@@ -1159,7 +1162,7 @@ fn unnamed_faces_are_selected_and_named_together() {
     h.step();
     h.step();
     assert_eq!(h.app.ui.unnamed_selected.len(), 2);
-    h.request("ui.clickWidget", json!({"id": "unnamed:clear"}), t);
+    h.request("ui.key", json!({"key": "escape"}), t);
     h.step();
     assert!(h.app.ui.unnamed_selected.is_empty());
     // undo gives the two faces back
@@ -1200,7 +1203,7 @@ fn double_clicking_an_unnamed_face_opens_its_photo() {
     h.step();
     assert_eq!((h.app.ui.view, h.app.session.active()), (ViewMode::People, Some(ids[0])));
     assert_eq!(h.app.ui.unnamed_selected.len(), 1);
-    h.request("ui.clickWidget", json!({"id": "unnamed:clear"}), t);
+    h.request("ui.key", json!({"key": "escape"}), t);
     // half a second of frames, so egui does not count the next two clicks as the third and fourth of one burst
     for _ in 0..30 {
         h.step();
@@ -1218,10 +1221,10 @@ fn double_clicking_an_unnamed_face_opens_its_photo() {
     assert_eq!((h.app.ui.view, h.app.ui.person_page.clone()), (ViewMode::People, None));
 }
 
-/// The name field under the unnamed faces is a shared text field: right-click ▸ Paste puts the
-/// clipboard's name in, and Esc leaves the field and clears the selection, as Clear does.
+/// The name box on an unnamed face is a shared text field: right-click ▸ Paste puts the clipboard's name in, and Esc
+/// closes the box first, then clears the selection.
 #[test]
-fn the_unnamed_faces_name_field_pastes_and_escape_clears() {
+fn the_unnamed_faces_name_box_pastes_and_escape_closes_it_then_clears_the_selection() {
     use lightcraft_catalog::Op;
     let mut h = demo([1400.0, 900.0]);
     let t = Duration::from_secs(10);
@@ -1239,9 +1242,9 @@ fn the_unnamed_faces_name_field_pastes_and_escape_clears() {
     h.view.clipboard = "Wedding Guest".into();
     for (widget, button) in [
         (format!("unnamed-face:{}:0", id.0), "left"),
-        ("field:unnamedName".to_string(), "left"),
-        ("field:unnamedName".to_string(), "right"),
-        ("field:unnamedName:paste".to_string(), "left"),
+        (format!("unnamed-name:{}:0", id.0), "left"),
+        ("field:tileName".to_string(), "right"),
+        ("field:tileName:paste".to_string(), "left"),
     ] {
         let r = h.request("ui.clickWidget", json!({"id": widget, "button": button}), t);
         assert_eq!(r["ok"], true, "{widget}: {r}");
@@ -1249,12 +1252,14 @@ fn the_unnamed_faces_name_field_pastes_and_escape_clears() {
         h.step();
         h.step();
     }
-    assert_eq!(h.app.ui.unnamed_name, "Wedding Guest");
+    assert_eq!(h.app.ui.name_edit.as_ref().map(|e| e.input.text.clone()).as_deref(), Some("Wedding Guest"));
     assert_eq!(h.app.ui.unnamed_selected.len(), 1, "still naming");
-    h.request("ui.key", json!({"key": "Escape"}), t);
-    h.step();
-    h.step();
-    assert!(h.app.ui.unnamed_selected.is_empty() && h.app.ui.unnamed_name.is_empty(), "Esc cleared the selection and the name");
+    for (box_open, selected) in [(false, 1), (false, 0)] {
+        h.request("ui.key", json!({"key": "Escape"}), t);
+        h.step();
+        h.step();
+        assert_eq!((h.app.ui.name_edit.is_some(), h.app.ui.unnamed_selected.len()), (box_open, selected));
+    }
 }
 
 /// A screenful of faces larger than the picture cache's usual budget (96) is all kept: with a fixed budget the same few

@@ -185,7 +185,9 @@ pub fn show(ctx: &egui::Context, at: Pos2, state: &mut NameBoxState, spec: &Name
         return Outcome::Save(chosen(state, spec));
     }
     // a press anywhere else closes it (not the press that opened it, which is the frame before)
-    let outside = ctx.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !shown.response.rect.contains(p)));
+    // (a press on the field's own context menu, which is its own area, is not a press outside)
+    let menu = egui::Popup::is_any_open(ctx);
+    let outside = !menu && ctx.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !shown.response.rect.contains(p)));
     match (outside, state.touched()) {
         (true, true) => Outcome::Save(chosen(state, spec)),
         (true, false) => Outcome::Untouched,

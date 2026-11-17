@@ -10,6 +10,7 @@ pub mod detail;
 pub mod edit;
 pub mod empty_library;
 pub mod face_summary;
+pub mod face_tile;
 pub mod filterbar;
 pub mod grid;
 pub mod histogram;
