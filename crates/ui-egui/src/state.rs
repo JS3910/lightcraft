@@ -158,6 +158,9 @@ pub struct UiState {
     pub unnamed_selected: std::collections::HashSet<(u64, usize)>,
     #[serde(skip)]
     pub unnamed_anchor: Option<usize>,
+    /// The gallery the selection is in (`face_tile::Gallery`): a selection lives in one at a time.
+    #[serde(skip)]
+    pub face_gallery: Option<crate::panels::face_tile::Gallery>,
     #[serde(skip)]
     pub unnamed_scroll: Option<(u64, usize)>,
     /// Local sidebar locations hidden with “Remove from Local” (folders on disk are untouched).
@@ -455,6 +458,7 @@ impl Default for UiState {
             dismissed_faces: Default::default(),
             unnamed_selected: Default::default(),
             unnamed_anchor: None,
+            face_gallery: None,
             unnamed_scroll: None,
             hidden_locations: Vec::new(),
             dragging_control: None,

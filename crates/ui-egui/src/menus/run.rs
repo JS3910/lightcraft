@@ -1518,6 +1518,9 @@ fn view_back_command(app: &mut LightcraftApp, ctx: &egui::Context) -> Result<Val
     } else if app.ui.right == RightPanel::Crop && app.ui.view == ViewMode::Detail {
         // Esc leaves the crop tool (the crop stays), as C does; the next Esc goes back
         panel(app, ctx, RightPanel::Crop, "Crop, Rotate, Geometry");
+    } else if app.ui.view == ViewMode::People && crate::panels::face_tile::selection_on_page(app) {
+        // a selection on a person's page goes first; the next Esc leaves the page
+        crate::panels::face_tile::clear_selection(app);
     } else if app.ui.view == ViewMode::People && app.ui.person_page.is_some() {
         app.ui.person_page = None;
     } else if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey | ViewMode::Reference) {

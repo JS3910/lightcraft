@@ -166,8 +166,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 /// Esc with no name box open drops the selected unnamed faces (with a box open, Esc only closes the box).
 fn clear_selection_on_escape(app: &mut LightcraftApp, ctx: &egui::Context) {
     if app.ui.name_edit.is_none() && app.ui.dialog.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        app.ui.unnamed_selected.clear();
-        app.ui.unnamed_anchor = None;
+        super::face_tile::clear_selection(app);
     }
 }
 

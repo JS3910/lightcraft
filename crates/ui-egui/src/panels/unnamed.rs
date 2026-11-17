@@ -11,7 +11,7 @@ use std::sync::Arc;
 use egui::{Align2, Rect, pos2, vec2};
 use serde_json::{Value, json};
 
-use super::face_tile::{self, Entry, FaceKey, FaceTile, TileEvent};
+use super::face_tile::{self, Entry, FaceKey, FaceTile, Gallery, Listing, TileEvent};
 use crate::LightcraftApp;
 use crate::theme::Tokens;
 use crate::widgets::register;
@@ -74,7 +74,7 @@ pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
     let list = Arc::new(parse(&v));
     // what was selected and has since been named (or removed) is no longer selected
     let present: std::collections::HashSet<(u64, usize)> = list.faces.iter().map(|f| (f.photo, f.index)).collect();
-    app.ui.unnamed_selected.retain(|k| present.contains(k));
+    face_tile::retain_present(app, &Gallery::Unnamed, &present);
     app.caches.unnamed = Some((rev, indexed, now, list.clone()));
     list
 }
@@ -107,13 +107,14 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
         }
     } else if !list.faces.is_empty() {
         let r = Rect::from_min_size(pos2(right - 130.0, at.y + 12.0), vec2(130.0, 22.0));
-        let all = app.ui.unnamed_selected.len() == list.faces.len();
+        let all = !list.faces.is_empty() && face_tile::selection(app, &Gallery::Unnamed).len() == list.faces.len();
         let b = ui.put(r, egui::Button::new(crate::i18n::tr(if all { "Select none" } else { "Select all" })));
         register(ui, "unnamed:selectAll", b.rect);
         if b.clicked() {
-            app.ui.unnamed_selected.clear();
-            if !all {
-                app.ui.unnamed_selected.extend(list.faces.iter().map(|f| (f.photo, f.index)));
+            if all {
+                face_tile::clear_selection(app);
+            } else {
+                face_tile::select_all(app, &Gallery::Unnamed, list.faces.iter().map(|f| (f.photo, f.index)));
             }
         }
     }
@@ -128,11 +129,11 @@ pub fn entries(list: &Unnamed) -> Vec<Entry> {
 /// to, so the view can scroll to it.
 pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize, r: Rect, f: &UnnamedFace, ppp: f32) -> Option<FaceKey> {
     let key = (f.photo, f.index);
-    let selected = app.ui.unnamed_selected.contains(&key);
-    let spec = FaceTile { key, view: f.view, suggestion: f.suggestion.as_deref(), prefix: "unnamed", position: i };
+    let selected = face_tile::is_selected(app, &Gallery::Unnamed, key);
+    let spec = FaceTile { key, view: f.view, suggestion: f.suggestion.as_deref(), named: false, prefix: "unnamed", hover: None };
     match face_tile::show(app, ui, r, &spec, selected, ppp) {
         TileEvent::Name => face_tile::open(app, ui.ctx(), &Entry { key, suggestion: f.suggestion.clone() }),
-        TileEvent::Click { shift } => face_tile::click(app, &entries(list), i, shift),
+        TileEvent::Click { shift } => face_tile::click(app, &Gallery::Unnamed, &entries(list), i, shift),
         // a double click opens the photo, as in the grid; its second click must not undo the first one's selection
         TileEvent::Open => {
             let _ = app.run("library.select", json!({"ids": [f.photo], "active": f.photo}));
@@ -140,10 +141,11 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
             // Escape comes back to the faces
             app.ui.person_from = Some((None, f.photo));
         }
-        TileEvent::None => {}
+        TileEvent::None | TileEvent::Confirm | TileEvent::ConfirmAbove | TileEvent::Hide => {}
     }
     if app.ui.name_edit.as_ref().is_some_and(|e| (e.photo, e.index) == key) {
-        return face_tile::name_box_for(app, ui.ctx(), r, &entries(list), i);
+        let order = entries(list);
+        return face_tile::name_box_for(app, ui.ctx(), r, &Listing { gallery: &Gallery::Unnamed, order: &order, at: i });
     }
     None
 }

@@ -348,9 +348,16 @@ by its own box.
 ### A person's page
 
 In **People**, a click on a person opens their page: **only cropped faces**, never whole photos. First the faces named
-with their name (a click opens that photo), then **More**: the unnamed faces that look like them, most alike first. Click one
-to confirm it (that names the face, as one undo step, and it moves up into their faces), or × to hide it for this session.
-The `↑` control at the top left of a suggested face confirms that face and every currently shown, non-hidden suggestion
+with their name, then **More**: the unnamed faces that look like them, most alike first. Both use the same tile as the
+Unnamed faces: a picture with a name strip under it that is always shown (their name on a confirmed face, their name and a
+question mark on a More face). A click on the strip opens the name box: on a More face, type another person's name and press
+Enter to give the face to them (it leaves this person's More), or press Enter on the untouched box to confirm it as this
+person; on a confirmed face it corrects that one face's name, and emptying the box removes the name. A click on a picture
+selects it (Shift-click a range; a double click opens the photo, Escape comes back to the page; Escape with faces selected
+clears the selection first), and the box on a selected tile names the whole selection in one undo step. A selection belongs
+to one gallery at a time: the Unnamed faces, this person's faces or their More; selecting in another replaces it.
+On a More face the hover buttons are unchanged: the check confirms it (one undo step, it moves up into their faces), `×`
+hides it for this session. The `↑` control at the top right of a suggested face confirms that face and every currently shown, non-hidden suggestion
 with an equal or higher similarity score. Its tooltip names the person and shows the number of faces before you act.
 Hover a suggestion or focus it with the keyboard and press `A` for the same action. The batch is one undo step;
 suggestions below that score, previously confirmed faces and hidden suggestions stay as they were. Nothing is named

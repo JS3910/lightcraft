@@ -6,9 +6,10 @@
 
 use std::sync::Arc;
 
-use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
+use egui::{Align2, Pos2, Rect, RichText, Sense, pos2, vec2};
 use serde_json::{Value, json};
 
+use super::face_tile::{self, Entry, FaceTile, Gallery, Hover, Listing, STRIP_H, TileEvent};
 use crate::LightcraftApp;
 use crate::theme::Tokens;
 use crate::widgets::register;
@@ -78,15 +79,6 @@ fn page_for(app: &mut LightcraftApp, name: &str, now: f64) -> Arc<PersonPage> {
     page
 }
 
-#[derive(PartialEq)]
-enum Hit {
-    Nothing,
-    Open,
-    Confirm,
-    ConfirmAbove,
-    Dismiss,
-}
-
 /// The current, session-visible candidates at or above the selected score. The score, not the tile position, is the
 /// boundary: a later tile with an equal score belongs to the batch too.
 fn at_or_above(more: &[&Face], score: f32) -> Vec<(u64, usize)> {
@@ -129,8 +121,8 @@ pub(crate) fn handle_bulk_key(app: &mut LightcraftApp, ctx: &egui::Context) -> b
         .or_else(|| {
             page.more.iter().filter(|f| !app.ui.dismissed_faces.contains(&(f.photo, f.index))).find(|f| {
                 ctx.memory(|m| {
-                    m.has_focus(egui::Id::unique(("more-face", f.photo, f.index)))
-                        || m.has_focus(egui::Id::unique(("more-face-above", f.photo, f.index)))
+                    m.has_focus(face_tile::widget_id("more", "face", (f.photo, f.index)))
+                        || m.has_focus(face_tile::widget_id("more", "above", (f.photo, f.index)))
                 })
             })
         });
@@ -200,40 +192,36 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
     };
     let ppp = ui.ctx().pixels_per_point();
     let edge = super::people::tile_edge(app.ui.thumb_size);
-    let mut hit: Option<(Hit, Face)> = None;
+    let tile_h = edge + STRIP_H;
+    let (confirmed_gallery, more_gallery) = (Gallery::Confirmed(shown_name.clone()), Gallery::More(shown_name.clone()));
+    let entry = |f: &Face| Entry { key: (f.photo, f.index), suggestion: Some(shown_name.clone()) };
+    let confirmed_entries: Vec<Entry> = page.confirmed.iter().map(entry).collect();
+    let more_entries: Vec<Entry> = more.iter().map(|f| entry(f)).collect();
+    // what was selected and has since been named, hidden or removed is no longer selected
+    face_tile::retain_present(app, &confirmed_gallery, &confirmed_entries.iter().map(|e| e.key).collect());
+    face_tile::retain_present(app, &more_gallery, &more_entries.iter().map(|e| e.key).collect());
+    let mut hit: Option<(TileEvent, Face)> = None;
     egui::ScrollArea::vertical().auto_shrink(false).show_viewport(ui, |ui, viewport| {
         let width = ui.available_width();
         let cols = super::people::columns(width, edge);
-        let row_h = edge + super::people::TILE_GAP;
+        let row_h = tile_h + super::people::TILE_GAP;
         let confirmed_rows = page.confirmed.len().div_ceil(cols);
         let more_rows = more.len().div_ceil(cols);
         let more_top = PAD + confirmed_rows as f32 * row_h + 12.0;
         let total_h = more_top + SECTION_H + more_rows as f32 * row_h + PAD;
         let (area, _) = ui.allocate_exact_size(vec2(width, total_h), Sense::hover());
-        let visible = |top: f32, rows: usize| {
-            let first = ((viewport.top() - top) / row_h).floor().max(0.0) as usize;
-            let last = (((viewport.bottom() - top) / row_h).ceil().max(0.0) as usize).min(rows);
-            first..last
-        };
-        let mut shown = 0;
-        for row in visible(PAD, confirmed_rows) {
-            for col in 0..cols {
-                let Some(f) = page.confirmed.get(row * cols + col) else { break };
-                shown += 1;
-                let min = area.min + vec2(PAD + col as f32 * (edge + super::people::TILE_GAP), PAD + row as f32 * row_h);
-                if let Hit::Open =
-                    tile(app, ui, &TileSpec { r: Rect::from_min_size(min, vec2(edge, edge)), f, ppp, more: false, name: &shown_name, above_count: 0 })
-                {
-                    hit = Some((Hit::Open, f.clone()));
-                }
-            }
-        }
+        let layout = Layout { name: &shown_name, viewport, cols, edge, ppp };
+        let origin = |top: f32| area.min + vec2(PAD, top);
+        let confirmed: Vec<&Face> = page.confirmed.iter().collect();
+        let mut shown = draw_grid(app, ui, &Grid { gallery: &confirmed_gallery, faces: &confirmed, entries: &confirmed_entries, origin: origin(PAD), layout: &layout }, &mut hit);
         // the "More" section
         let heading = pos2(area.left() + PAD, area.top() + more_top + 14.0);
         ui.painter().text(heading, Align2::LEFT_CENTER, "More", t.semibold(15.0), t.text);
         let sub = match &note {
             Some(n) => n.clone(),
-            None => format!("Faces that look like {shown_name}. Click to confirm one, ↑ for all above, or × to hide."),
+            None => format!(
+                "Faces that look like {shown_name}. Click one to select it, use the check to confirm, ↑ for all above or × to hide; click a name to give the face to someone else."
+            ),
         };
         ui.painter().text(pos2(area.left() + PAD, area.top() + more_top + 36.0), Align2::LEFT_CENTER, sub, t.font(12.0), t.text_dim);
         if !recognising {
@@ -249,27 +237,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
                 }
             }
         }
-        let grid_top = more_top + SECTION_H;
-        for row in visible(grid_top, more_rows) {
-            for col in 0..cols {
-                let Some(f) = more.get(row * cols + col) else { break };
-                shown += 1;
-                let min = area.min + vec2(PAD + col as f32 * (edge + super::people::TILE_GAP), grid_top + row as f32 * row_h);
-                let above_count = more.iter().filter(|candidate| candidate.score >= f.score).count();
-                match tile(app, ui, &TileSpec { r: Rect::from_min_size(min, vec2(edge, edge)), f, ppp, more: true, name: &shown_name, above_count }) {
-                    Hit::Confirm => hit = Some((Hit::Confirm, (*f).clone())),
-                    Hit::ConfirmAbove => hit = Some((Hit::ConfirmAbove, (*f).clone())),
-                    Hit::Dismiss => hit = Some((Hit::Dismiss, (*f).clone())),
-                    _ => {}
-                }
-            }
-        }
+        shown += draw_grid(app, ui, &Grid { gallery: &more_gallery, faces: &more, entries: &more_entries, origin: origin(more_top + SECTION_H), layout: &layout }, &mut hit);
         // the picture cache keeps every face on screen
         app.renderer.want_variants(shown);
     });
     if let Some((what, f)) = hit {
         match what {
-            Hit::Open => {
+            TileEvent::Open => {
                 let _ = app.run("library.select", json!({"ids": [f.photo], "active": f.photo}));
                 let _ = app.run("view.detail", json!({}));
                 // Escape comes back to this page; the People button to everyone, with this person next to its title
@@ -277,103 +251,103 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
                 app.ui.last_person = Some(shown_name.clone());
                 app.ui.person_page = None;
             }
-            Hit::Confirm => {
+            TileEvent::Confirm => {
                 let _ = app.run("faces.setName", json!({"id": f.photo, "index": f.index, "name": shown_name}));
             }
-            Hit::ConfirmAbove => confirm_above(app, ui.ctx(), &shown_name, &more, f.score),
-            Hit::Dismiss => {
+            TileEvent::ConfirmAbove => confirm_above(app, ui.ctx(), &shown_name, &more, f.score),
+            TileEvent::Hide => {
                 app.ui.dismissed_faces.insert((f.photo, f.index));
             }
-            Hit::Nothing => {}
+            _ => {}
         }
     }
 }
 
-/// What one face tile shows.
-struct TileSpec<'a> {
-    /// where it is drawn
-    r: Rect,
-    f: &'a Face,
-    /// pixels per point, for the size of the face picture
-    ppp: f32,
-    /// a "More" tile (a face that looks like the person) rather than a confirmed one
-    more: bool,
-    /// the person's name
+/// One of the page's galleries, laid out from `origin` (its top left, in the scroll area) in rows of `cols` tiles.
+struct Grid<'a> {
+    gallery: &'a Gallery,
+    faces: &'a [&'a Face],
+    /// The same faces as the shared tile's list, the name on each strip being the person's.
+    entries: &'a [Entry],
+    origin: Pos2,
+    layout: &'a Layout<'a>,
+}
+
+/// What the page's galleries have in common.
+struct Layout<'a> {
+    /// The person's name.
     name: &'a str,
-    /// how many shown faces look at least as much like the person (for a "More" tile)
-    above_count: usize,
+    viewport: Rect,
+    cols: usize,
+    /// A tile's picture edge, and pixels per point (for the size of the face picture).
+    edge: f32,
+    ppp: f32,
 }
 
-/// One face tile. A confirmed one opens its photo when clicked; a "More" one is confirmed when clicked, and has a × that
-/// hides it.
-fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, spec: &TileSpec) -> Hit {
-    let TileSpec { r, f, ppp, more, name, above_count } = *spec;
-    let t = Tokens::get(ui.ctx());
-    let salt = if more { "more-face" } else { "person-face" };
-    let resp = ui.interact(r, egui::Id::unique((salt, f.photo, f.index)), Sense::click());
-    crate::widgets::announce(&resp, name.to_string());
-    register(ui, format!("{salt}:{}:{}", f.photo, f.index), r);
-    // the × is added after the tile, so it wins where they overlap
-    let x_rect = Rect::from_min_size(pos2(r.right() - 24.0, r.top() + 4.0), vec2(20.0, 20.0));
-    let x_resp = more.then(|| ui.interact(x_rect, egui::Id::unique(("more-face-x", f.photo, f.index)), Sense::click()));
-    let above_rect = Rect::from_min_size(pos2(r.left() + 4.0, r.top() + 4.0), vec2(24.0, 20.0));
-    let above_resp = more.then(|| ui.interact(above_rect, egui::Id::unique(("more-face-above", f.photo, f.index)), Sense::click()));
-    if more {
-        register(ui, format!("more-face-above:{}:{}", f.photo, f.index), above_rect);
+/// Draw the rows of `grid` that are on screen (only they ask for a face render); returns how many tiles that was. Faces
+/// pressed on in a way the page acts on after the frame (open the photo, the hover buttons) are left in `hit`.
+fn draw_grid<'a>(app: &mut LightcraftApp, ui: &mut egui::Ui, grid: &Grid<'a>, hit: &mut Option<(TileEvent, Face)>) -> usize {
+    let tile_h = grid.layout.edge + STRIP_H;
+    let row_h = tile_h + super::people::TILE_GAP;
+    let col_w = grid.layout.edge + super::people::TILE_GAP;
+    let rows = grid.faces.len().div_ceil(grid.layout.cols);
+    let cell = |i: usize| {
+        Rect::from_min_size(
+            grid.origin + vec2((i % grid.layout.cols) as f32 * col_w, (i / grid.layout.cols) as f32 * row_h),
+            vec2(grid.layout.edge, tile_h),
+        )
+    };
+    // Tab moved the name box to a tile that may be off screen
+    if let Some(i) = app.ui.unnamed_scroll.and_then(|key| grid.entries.iter().position(|e| e.key == key)) {
+        app.ui.unnamed_scroll = None;
+        ui.scroll_to_rect(cell(i).expand2(vec2(0.0, super::people::TILE_GAP)), None);
     }
-    let hovered = resp.hovered() || x_resp.as_ref().is_some_and(|x| x.hovered()) || above_resp.as_ref().is_some_and(|x| x.hovered());
-    let p = ui.painter();
-    p.rect_filled(r, 3.0, t.canvas);
-    if let Some(job) = app.session.face_job(lightcraft_catalog::PhotoId(f.photo), f.rect, (r.width() * ppp).ceil() as usize)
-        && let Some(tex) = app.renderer.variant(job)
-    {
-        p.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-    }
-    if hovered {
-        p.rect_stroke(r, 3.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Outside);
-    }
-    let mut hit = Hit::Nothing;
-    if more && hovered {
-        // a check at the bottom right says a click confirms; × hides and ↑ names all above this score
-        let badge = Rect::from_min_size(pos2(r.right() - 28.0, r.bottom() - 28.0), vec2(24.0, 24.0));
-        p.circle_filled(badge.center(), 12.0, Color32::from_rgba_unmultiplied(30, 30, 30, 220));
-        let c = badge.center();
-        let check = [pos2(c.x - 5.0, c.y), pos2(c.x - 1.5, c.y + 4.0), pos2(c.x + 5.5, c.y - 4.0)];
-        p.line_segment([check[0], check[1]], Stroke::new(2.0, Color32::WHITE));
-        p.line_segment([check[1], check[2]], Stroke::new(2.0, Color32::WHITE));
-        p.circle_filled(x_rect.center(), 10.0, Color32::from_rgba_unmultiplied(30, 30, 30, 220));
-        let xc: Pos2 = x_rect.center();
-        p.line_segment([pos2(xc.x - 3.5, xc.y - 3.5), pos2(xc.x + 3.5, xc.y + 3.5)], Stroke::new(1.6, Color32::WHITE));
-        p.line_segment([pos2(xc.x - 3.5, xc.y + 3.5), pos2(xc.x + 3.5, xc.y - 3.5)], Stroke::new(1.6, Color32::WHITE));
-        p.rect_filled(above_rect, 4.0, Color32::from_rgba_unmultiplied(30, 30, 30, 220));
-        let ac = above_rect.center();
-        let arrow = Stroke::new(2.0, Color32::WHITE);
-        p.line_segment([pos2(ac.x, ac.y + 5.0), pos2(ac.x, ac.y - 5.0)], arrow);
-        p.line_segment([pos2(ac.x - 4.0, ac.y - 1.0), pos2(ac.x, ac.y - 5.0)], arrow);
-        p.line_segment([pos2(ac.x, ac.y - 5.0), pos2(ac.x + 4.0, ac.y - 1.0)], arrow);
-    }
-    if more {
-        let tip = format!("Looks like {name} (similarity {:.2}). Click to confirm.", f.score);
-        let _ = resp.clone().on_hover_text(tip);
-        if let Some(above) = above_resp.as_ref() {
-            let _ = above.clone().on_hover_text(format!(
-                "All above: confirm {above_count} faces as {name} (this face and every shown face with equal or higher similarity). Press A."
-            ));
-        }
-        if x_resp.as_ref().is_some_and(|x| x.clicked()) {
-            hit = Hit::Dismiss;
-        } else if above_resp.as_ref().is_some_and(|x| x.clicked()) {
-            hit = Hit::ConfirmAbove;
-        } else if resp.clicked() {
-            hit = Hit::Confirm;
-        }
-    } else {
-        let _ = resp.clone().on_hover_text(format!("{name} — click to open this photo"));
-        if resp.clicked() {
-            hit = Hit::Open;
+    let first = (((grid.layout.viewport.top() - grid.origin.y) / row_h).floor().max(0.0) as usize).min(rows);
+    let last = (((grid.layout.viewport.bottom() - grid.origin.y) / row_h).ceil().max(0.0) as usize).min(rows);
+    let mut shown = 0;
+    for i in (first * grid.layout.cols)..(last * grid.layout.cols).min(grid.faces.len()) {
+        let Some(f) = grid.faces.get(i) else { break };
+        shown += 1;
+        if let Some(event) = draw_tile(app, ui, grid, i, cell(i), f) {
+            *hit = Some((event, (*f).clone()));
         }
     }
-    hit
+    shown
+}
+
+/// One tile of `grid`: the event for the page to act on after the frame, if any (selecting, opening the name box and the
+/// box itself are handled here).
+fn draw_tile<'a>(app: &mut LightcraftApp, ui: &mut egui::Ui, grid: &Grid<'a>, i: usize, r: Rect, f: &Face) -> Option<TileEvent> {
+    let key = (f.photo, f.index);
+    let more = matches!(grid.gallery, Gallery::More(_));
+    let hover = more.then(|| Hover {
+        confirm: true,
+        above: true,
+        hide: true,
+        person: grid.layout.name,
+        score: f.score,
+        above_count: grid.faces.iter().filter(|c| c.score >= f.score).count(),
+    });
+    let spec = FaceTile { key, view: f.rect, suggestion: Some(grid.layout.name), named: !more, prefix: if more { "more" } else { "person" }, hover };
+    let selected = face_tile::is_selected(app, grid.gallery, key);
+    let mut out = None;
+    match face_tile::show(app, ui, r, &spec, selected, grid.layout.ppp) {
+        TileEvent::Name => {
+            if let Some(e) = grid.entries.get(i) {
+                face_tile::open(app, ui.ctx(), e);
+            }
+        }
+        TileEvent::Click { shift } => face_tile::click(app, grid.gallery, grid.entries, i, shift),
+        TileEvent::None => {}
+        event => out = Some(event),
+    }
+    if app.ui.name_edit.as_ref().is_some_and(|e| (e.photo, e.index) == key) {
+        let list = Listing { gallery: grid.gallery, order: grid.entries, at: i };
+        if let Some(to) = face_tile::name_box_for(app, ui.ctx(), r, &list) {
+            app.ui.unnamed_scroll = Some(to);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

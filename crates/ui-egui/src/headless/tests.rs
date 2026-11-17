@@ -947,8 +947,15 @@ fn a_persons_page_shows_their_faces_and_back_returns_to_everyone() {
         assert!(widgets.contains(&format!("\"person-face:{}:{index}\"", id.0)), "a tile for each face: {widgets}");
     }
     assert!(!widgets.contains(&format!("\"person-face:{}:0\"", ids[2].0)), "someone else's face is not on the page");
-    // a face opens its photo in the detail view
+    // a double click on a face opens its photo in the detail view (a single click only selects it)
     h.request("ui.clickWidget", json!({"id": format!("person-face:{}:0", ids[1].0)}), t);
+    h.step();
+    assert_eq!(h.app.ui.view, ViewMode::People, "one click selects");
+    h.request("ui.key", json!({"key": "escape"}), t);
+    for _ in 0..30 {
+        h.step();
+    }
+    h.request("ui.clickWidget", json!({"id": format!("person-face:{}:0", ids[1].0), "count": 2}), t);
     h.step();
     h.step();
     assert_eq!((h.app.ui.view, h.app.session.active()), (ViewMode::Detail, Some(ids[1])));
@@ -957,7 +964,10 @@ fn a_persons_page_shows_their_faces_and_back_returns_to_everyone() {
     h.step();
     assert_eq!((h.app.ui.view, h.app.ui.person_page.as_deref()), (ViewMode::People, Some("Jane Doe")));
     // the People button from a photo shows everyone, with the person last left one click away next to the title
-    h.request("ui.clickWidget", json!({"id": format!("person-face:{}:0", ids[1].0)}), t);
+    for _ in 0..30 {
+        h.step();
+    }
+    h.request("ui.clickWidget", json!({"id": format!("person-face:{}:0", ids[1].0), "count": 2}), t);
     h.step();
     h.step();
     assert_eq!(h.app.ui.view, ViewMode::Detail);
@@ -1050,7 +1060,7 @@ fn person_more_confirms_all_above_with_one_undo_step() {
     assert_eq!(names(&h), vec![Some("Jane Doe".into()), None, None, None, None, None, Some("John Roe".into())]);
     // With no target A cannot name a face, even on this page.
     h.request("ui.move", json!({"x": 1, "y": 1}), t);
-    h.view.ctx.memory_mut(|m| m.surrender_focus(egui::Id::unique(("more-face-above", ids[2].0, 0_usize))));
+    h.view.ctx.memory_mut(|m| m.surrender_focus(crate::panels::face_tile::widget_id("more", "above", (ids[2].0, 0))));
     set_page(&mut h);
     h.request("ui.key", json!({"key": "a"}), t);
     h.step();
@@ -1078,7 +1088,7 @@ fn person_more_confirms_all_above_with_one_undo_step() {
     h.request("ui.move", json!({"x": 1, "y": 1}), t);
     set_page(&mut h);
     // Keyboard focus on the candidate makes the same batch action available without hovering it.
-    h.view.ctx.memory_mut(|m| m.request_focus(egui::Id::unique(("more-face", ids[2].0, 0_usize))));
+    h.view.ctx.memory_mut(|m| m.request_focus(crate::panels::face_tile::widget_id("more", "face", (ids[2].0, 0))));
     h.request("ui.key", json!({"key": "a"}), t);
     h.step();
     assert_eq!(
