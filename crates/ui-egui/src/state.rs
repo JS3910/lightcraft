@@ -120,6 +120,9 @@ pub struct UiState {
     pub show_counts: bool,
     /// Face / pet boxes (read from XMP) over the photo in the loupe.
     pub face_boxes: bool,
+    /// What the loupe toolbar says about who is in the photo on show (empty: nothing); set while it is drawn.
+    #[serde(skip)]
+    pub face_summary: String,
     /// The left sidebar's sections: their order, which are hidden and which are folded shut.
     pub sidebar: crate::sidebar::SidebarLayout,
     /// What settings files said before [`UiState::sidebar`]: the ids of the folded sections. Read
@@ -439,6 +442,7 @@ impl Default for UiState {
             grid_info: "filename".into(),
             show_counts: true,
             face_boxes: true,
+            face_summary: String::new(),
             sidebar: Default::default(),
             collapsed_sidebar: Vec::new(),
             name_edit: None,

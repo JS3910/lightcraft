@@ -1,7 +1,8 @@
 # Faces
 
 LightCraft reads the face names other apps (Lightroom, digiKam…) write into your photos, shows them in the loupe
-(boxes you can switch off, resize and remove) and groups photos by person in the People view. This page is about the
+(boxes you can switch off, resize and remove; the loupe toolbar, beside the face-boxes button, says who is in the photo: the names left to right, each once,
+then how many faces are not named, and a click on that text shows or hides the boxes) and groups photos by person in the People view. This page is about the
 *models* that find and recognise faces by themselves.
 
 ## Nothing is bundled; every model is an opt-in download

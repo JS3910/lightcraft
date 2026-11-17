@@ -5238,3 +5238,113 @@ fn export_sizes_keep_the_pixels_typed() {
     type_value(&mut h, "sliderValue:export.sizeH", "1350");
     assert_eq!((resize(&h).value, resize(&h).height), (1080.0, 1350));
 }
+
+/// The loupe toolbar says who is in the photo, follows every change to the faces and the photo on show, and a click
+/// on it does what the face-boxes button does.
+#[test]
+fn the_loupe_toolbar_says_who_is_in_the_photo() {
+    use lightcraft_catalog::Op;
+    let mut h = demo([1400.0, 900.0]);
+    let t = Duration::from_secs(10);
+    let ids: Vec<_> = h.app.session.catalog.photos().map(|p| p.id).collect();
+    let (id, other) = (ids[0], ids[1]);
+    let face = |x: f64, name: Option<&str>| lightcraft_meta::Region {
+        rect: lightcraft_geom::Rect { x0: x, y0: 0.2, x1: x + 0.1, y1: 0.4 },
+        kind: lightcraft_meta::RegionKind::Face,
+        name: name.map(str::to_string),
+        description: None,
+    };
+    let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
+    meta.regions = vec![face(0.7, Some("Sasha")), face(0.4, None), face(0.1, Some("Johan"))];
+    meta.regions.push(lightcraft_meta::Region { kind: lightcraft_meta::RegionKind::Pet, ..face(0.85, Some("Rex")) });
+    h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+    h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [id.0]}}), t);
+    h.request("ui.set", json!({"view": "detail", "right": "none"}), t);
+    h.settle(SETTLE);
+    h.step();
+    assert_eq!(h.app.ui.face_summary, "Johan, Sasha, 1 unnamed");
+    // naming the unnamed face (middle one, index 1) shows at once
+    h.app.session.execute("faces.setName", &json!({"id": id.0, "index": 1, "name": "Ann"})).unwrap();
+    h.step();
+    assert_eq!(h.app.ui.face_summary, "Johan, Ann, Sasha");
+    // renaming, then un-naming
+    h.app.session.execute("faces.setName", &json!({"id": id.0, "index": 1, "name": "sasha"})).unwrap();
+    h.step();
+    assert_eq!(h.app.ui.face_summary, "Johan, sasha");
+    h.app.session.execute("faces.setName", &json!({"id": id.0, "index": 0, "name": ""})).unwrap();
+    h.step();
+    assert_eq!(h.app.ui.face_summary, "Johan, sasha, 1 unnamed");
+    // removing a face
+    h.app.session.execute("photo.removeRegion", &json!({"id": id.0, "index": 2})).unwrap();
+    h.step();
+    assert_eq!(h.app.ui.face_summary, "sasha, 1 unnamed");
+    h.app.session.execute("photo.removeRegion", &json!({"id": id.0, "index": 1})).unwrap();
+    h.step();
+    assert_eq!(h.app.ui.face_summary, "1 unnamed person");
+    // the text is shown whether the boxes are or not; a click on it toggles them
+    assert!(h.app.ui.face_boxes);
+    let r = h.request("ui.clickWidget", json!({"id": "faceSummary"}), t);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    assert!(!h.app.ui.face_boxes);
+    assert_eq!(h.app.ui.face_summary, "1 unnamed person");
+    // another photo, with no faces: nothing
+    h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [other.0]}}), t);
+    h.step();
+    h.step();
+    assert_eq!(h.app.ui.face_summary, "");
+    let w = h.request("ui.widgets", json!({"filter": "faceSummary"}), t);
+    assert_eq!(w["result"].as_array().map(Vec::len), Some(0), "{w}");
+}
+
+/// The face-boxes button sits in the left-hand group after the sort button, the line about who is in the photo right
+/// of it and before the rating controls; in a narrow window the line shortens and goes before anything overlaps, and
+/// the button stays.
+#[test]
+fn the_face_boxes_button_and_its_text_sit_in_the_left_group() {
+    use lightcraft_catalog::Op;
+    let mut h = demo([1700.0, 900.0]);
+    let t = Duration::from_secs(10);
+    let id = h.app.session.catalog.photos().next().unwrap().id;
+    let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
+    meta.regions = ["Johan Strom", "Sasha Brown", "Alexandra Longname", "Maximilian Verylongname"]
+        .iter()
+        .enumerate()
+        .map(|(i, n)| lightcraft_meta::Region {
+            rect: lightcraft_geom::Rect { x0: 0.1 * i as f64, y0: 0.2, x1: 0.1 * i as f64 + 0.05, y1: 0.4 },
+            kind: lightcraft_meta::RegionKind::Face,
+            name: Some((*n).to_string()),
+            description: None,
+        })
+        .collect();
+    h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+    h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [id.0]}}), t);
+    h.request("ui.set", json!({"view": "detail", "right": "none"}), t);
+    h.settle(SETTLE);
+    h.step();
+    let rect = |h: &mut Headless, name: &str| -> Option<[f64; 4]> {
+        let w = h.request("ui.widgets", json!({"filter": name}), t);
+        let r = w["result"].as_array()?.iter().find(|e| e["id"] == name)?["rect"].as_array()?.clone();
+        Some([r[0].as_f64()?, r[1].as_f64()?, r[2].as_f64()?, r[3].as_f64()?])
+    };
+    let (sort, button, text, pill, film) = (
+        rect(&mut h, "icon:sort").unwrap(),
+        rect(&mut h, "icon:faceBoxes").unwrap(),
+        rect(&mut h, "faceSummary").unwrap(),
+        rect(&mut h, "flag:pick").unwrap(),
+        rect(&mut h, "icon:filmstrip").unwrap(),
+    );
+    assert!(button[0] > sort[0] + sort[2], "after the sort button");
+    assert!(text[0] >= button[0] + button[2], "the text is right of the button");
+    assert!(text[0] + text[2] <= pill[0], "the text ends before the rating controls");
+    assert!(button[0] < pill[0] && film[0] > pill[0], "the button is not in the right-hand group");
+    // a window too narrow for the text: it goes, the button stays, the pill does not move over anything
+    h.request("ui.resize", json!({"width": 900, "height": 900}), t);
+    h.settle(SETTLE);
+    h.step();
+    assert!(rect(&mut h, "icon:faceBoxes").is_some(), "the button stays");
+    if let (Some(text), Some(pill)) = (rect(&mut h, "faceSummary"), rect(&mut h, "flag:pick")) {
+        assert!(text[0] + text[2] <= pill[0], "no overlap");
+    }
+    assert_eq!(h.app.ui.face_summary, "Johan Strom, Sasha Brown, Alexandra Longname, Maximilian Verylongname");
+}
