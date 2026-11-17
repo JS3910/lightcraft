@@ -162,6 +162,18 @@ pub fn clear_selection(app: &mut LightcraftApp) {
     app.ui.face_gallery = None;
 }
 
+/// Undo or Redo changed the catalog: a face box that was removed (or put back) moves every later index of its photo, which
+/// nothing the view holds by (photo, index) can follow, so it is all dropped: the selection and its anchor, the faces
+/// rejected in place, a suggestion the loupe quieted, an open name box.
+pub fn forget_positions(app: &mut LightcraftApp) {
+    clear_selection(app);
+    app.ui.name_edit = None;
+    app.ui.quiet_faces.clear();
+    for set in [&mut app.ui.rejected_faces, &mut app.ui.rejected_unnamed, &mut app.ui.rejected_confirmed] {
+        set.clear();
+    }
+}
+
 /// Select exactly `keys` in `gallery`.
 pub fn select_all(app: &mut LightcraftApp, gallery: &Gallery, keys: impl IntoIterator<Item = FaceKey>) {
     claim(app, gallery);
@@ -347,8 +359,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect, tile: &FaceTile
     let text = strip_label(tile.suggestion, tile.named);
     let label = super::people::fit(p, &text, t.font(11.5), strip.width() - 10.0);
     let color = if tile.suggestion.is_some() { t.text } else { t.text_dim };
-    p.text(pos2(strip.left() + 5.0, strip.center().y), Align2::LEFT_CENTER, label, t.font(11.5), color);
-    let name = name.on_hover_text(crate::i18n::tr("Click to name this face"));
+    p.text(pos2(strip.left() + 5.0, strip.center().y), Align2::LEFT_CENTER, &label, t.font(11.5), color);
+    let name = name.on_hover_text(super::people::full_name_tip(&text, &label, crate::i18n::tr("Click to name this face")));
     if let Some(event) = buttons.as_ref().and_then(Buttons::pressed) {
         return event;
     }
@@ -414,18 +426,23 @@ fn buttons_for(ui: &mut egui::Ui, tile: &FaceTile, hover: &Hover, pic: Rect) -> 
 fn explain_buttons(picture: &egui::Response, b: &Buttons, hover: &Hover) {
     let person = hover.person;
     if hover.confirm && !hover.positional {
-        let _ = picture.clone().on_hover_text(format!("Looks like {person} (similarity {:.2}). Use the check to confirm.", hover.score));
+        let _ = picture.clone().on_hover_text(crate::i18n::tr_format!(
+            "Looks like {person} (similarity {score}). Use the check to confirm.",
+            person = person,
+            score = format!("{:.2}", hover.score)
+        ));
     }
     if let Some((_, r)) = &b.above {
         let tip = if hover.positional {
-            format!(
-                "All above: confirm the {} suggested faces from the first one through this one, each as its own suggested name.",
-                hover.above_count
+            crate::i18n::tr_format!(
+                "All above: confirm the {n} suggested faces from the first one through this one, each as its own suggested name.",
+                n = hover.above_count
             )
         } else {
-            format!(
-                "All above: confirm {} faces as {person} (this face and every shown face with equal or higher similarity). Press A.",
-                hover.above_count
+            crate::i18n::tr_format!(
+                "All above: confirm {n} faces as {person} (this face and every shown face with equal or higher similarity). Press A.",
+                n = hover.above_count,
+                person = person
             )
         };
         let _ = r.clone().on_hover_text(tip);
@@ -441,7 +458,7 @@ fn explain_buttons(picture: &egui::Response, b: &Buttons, hover: &Hover) {
         let _ = r.clone().on_hover_text(tip);
     }
     if let Some((_, r)) = &b.confirm {
-        let _ = r.clone().on_hover_text(format!("Confirm as {person}"));
+        let _ = r.clone().on_hover_text(crate::i18n::tr_format!("Confirm as {person}", person = person));
     }
 }
 

@@ -47,6 +47,19 @@ pub(super) fn columns(width: f32, edge: f32) -> usize {
 pub(super) const TILE_GAP: f32 = GAP;
 
 /// `text` shortened with "…" until it is no wider than `max_w` in `font` (measured, not guessed).
+/// The tooltip of a name shown as `shown`, a shortened `full` (see [`fit`]): the whole name above `tip`; just `tip` when
+/// nothing was cut.
+pub(super) fn full_name_tip(full: &str, shown: &str, tip: &str) -> String {
+    if full == shown {
+        tip.to_string()
+    } else {
+        format!(
+            "{full}
+{tip}"
+        )
+    }
+}
+
 pub(super) fn fit(painter: &egui::Painter, text: &str, font: egui::FontId, max_w: f32) -> String {
     let width = |s: &str| painter.layout_no_wrap(s.to_string(), font.clone(), Color32::WHITE).size().x;
     if width(text) <= max_w {
@@ -120,7 +133,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.painter().text(
                 pos2(area.left() + PAD, area.top() + 24.0),
                 Align2::LEFT_CENTER,
-                "No named people yet. Name the faces below to start.",
+                crate::i18n::tr("No named people yet. Name the faces below to start."),
                 t.font(13.0),
                 t.text_dim,
             );
@@ -185,9 +198,9 @@ pub(crate) fn handle_delete_key(app: &mut LightcraftApp, ctx: &egui::Context) ->
     true
 }
 
-/// Esc with no name box open drops the selected unnamed faces (with a box open, Esc only closes the box).
+/// Esc with no name box open (on a tile or a card) drops the selected unnamed faces (with a box open, Esc only closes the box).
 fn clear_selection_on_escape(app: &mut LightcraftApp, ctx: &egui::Context) {
-    if app.ui.name_edit.is_none() && app.ui.dialog.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if app.ui.name_edit.is_none() && app.ui.card_name.is_none() && app.ui.dialog.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         super::face_tile::clear_selection(app);
     }
 }
@@ -234,10 +247,10 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, person: &Person, r: Rect, ed
         p.rect_stroke(face, 3.0, Stroke::new(1.0, t.text_dim), StrokeKind::Outside);
     }
     // a long name must not run past the card
-    let name = fit(p, &person.name, t.semibold(13.0), edge);
-    p.text(pos2(r.left() + 2.0, face.bottom() + 14.0), Align2::LEFT_CENTER, name, t.semibold(13.0), t.text);
+    let shown = fit(p, &person.name, t.semibold(13.0), edge);
+    p.text(pos2(r.left() + 2.0, face.bottom() + 14.0), Align2::LEFT_CENTER, &shown, t.semibold(13.0), t.text);
     let resp = resp.on_hover_text(crate::i18n::tr_format!("{} — show their photos", person.name));
-    let name_resp = name_resp.on_hover_text(crate::i18n::tr("Rename"));
+    let name_resp = name_resp.on_hover_text(full_name_tip(&person.name, &shown, crate::i18n::tr("Rename")));
     let (mut rename, mut editing) = (false, app.ui.card_name.as_ref().is_some_and(|e| e.from == person.name));
     for r in [&resp, &name_resp] {
         crate::widgets::context_menu(r, |ui| {
@@ -322,6 +335,16 @@ mod tests {
         assert_eq!((badge_count(6110), badge_count(1), badge_count(999_999)), ("6110".to_string(), "1".to_string(), "999999".to_string()));
         assert_eq!(photo_count_text(6110), "6110 photos");
         assert_eq!(photo_count_text(1), "1 photo");
+    }
+
+    #[test]
+    fn a_shortened_name_gets_the_whole_name_in_its_tooltip() {
+        assert_eq!(full_name_tip("Ann", "Ann", "Rename"), "Rename");
+        assert_eq!(
+            full_name_tip("Ann-Marie Longname", "Ann-M…", "Rename"),
+            "Ann-Marie Longname
+Rename"
+        );
     }
 
     #[test]

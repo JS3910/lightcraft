@@ -35,6 +35,14 @@ pub fn offered(typed: &str, candidates: &[(String, f32)], people: &[String]) -> 
     offered_for(typed, candidates, people, &[])
 }
 
+/// What a listed name says: the name, and when the face was ranked, how much it looks like them as a percentage.
+pub fn label(offer: &Offer) -> String {
+    match offer.score {
+        Some(s) => format!("{}   {:.0}%", offer.name, (s * 100.0).max(0.0)),
+        None => offer.name.clone(),
+    }
+}
+
 /// [`offered`] for a face that rejected some names (trimmed, ignoring capitalization): those come last, after everyone
 /// else, in the order they would have had.
 pub fn offered_for(typed: &str, candidates: &[(String, f32)], people: &[String], rejected: &[String]) -> Vec<Offer> {
@@ -94,6 +102,15 @@ pub fn stored_spelling(typed: &str, people: &[String], current: Option<&str>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ranked_name_shows_its_similarity_as_a_percentage_and_an_unranked_one_none() {
+        let ranked = |score| label(&Offer { name: "Ann Lee".into(), score });
+        assert_eq!(ranked(Some(0.874)), "Ann Lee   87%");
+        assert_eq!(ranked(Some(1.0)), "Ann Lee   100%");
+        assert_eq!(ranked(Some(-0.2)), "Ann Lee   0%", "never negative");
+        assert_eq!(ranked(None), "Ann Lee");
+    }
 
     fn names(offers: &[Offer]) -> Vec<&str> {
         offers.iter().map(|o| o.name.as_str()).collect()

@@ -167,3 +167,22 @@ fn a_box_closed_with_escape_opens_again_ready_to_type() {
         ok(&mut h, "ui.key", json!({"key": "escape"}));
     }
 }
+
+#[test]
+fn escape_with_a_cards_box_open_only_closes_it_and_a_second_escape_clears_the_selection() {
+    let (mut h, _) = people();
+    let third = h.app.session.catalog.photos().map(|p| p.id).nth(2).unwrap();
+    let mut meta = h.app.session.catalog.photo(third).unwrap().meta.clone();
+    meta.regions = vec![lightcraft_meta::Region { name: None, ..face(0.3, "") }];
+    h.app.session.commit("setup", Op::SetMeta { id: third, meta: Box::new(meta) }).unwrap();
+    h.step();
+    h.step();
+    crate::panels::face_tile::select_all(&mut h.app, &crate::panels::face_tile::Gallery::Unnamed, [(third.0, 0)]);
+    ok(&mut h, "ui.clickWidget", json!({"id": "personName:Jane Doe"}));
+    assert!(h.app.ui.card_name.is_some());
+    ok(&mut h, "ui.key", json!({"key": "escape"}));
+    assert!(h.app.ui.card_name.is_none(), "the box closed");
+    assert_eq!(h.app.ui.unnamed_selected.len(), 1, "the first Esc only closed the box");
+    ok(&mut h, "ui.key", json!({"key": "escape"}));
+    assert!(h.app.ui.unnamed_selected.is_empty(), "the second clears the selection");
+}

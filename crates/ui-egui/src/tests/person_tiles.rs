@@ -378,3 +378,17 @@ fn escape_closes_a_name_box_on_the_page_without_leaving_it() {
     assert_eq!(h.app.ui.person_page.as_deref(), Some("Ann Lee"), "only the box closed");
     assert_eq!(names(&h, p3), [None]);
 }
+
+#[test]
+fn confirm_on_a_selected_more_tile_confirms_the_whole_selection_in_one_undo_step() {
+    let (mut h, [_, _, p2, p3, p4]) = page();
+    ok(&mut h, "ui.clickWidget", json!({"id": more(p3, 0)}));
+    ok(&mut h, "ui.clickWidget", json!({"id": more(p4, 0)}));
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": format!("more-face-confirm:{}:0", p4.0)}));
+    assert_eq!((names(&h, p3), names(&h, p4)), (vec![n("Ann Lee")], vec![n("Ann Lee")]));
+    assert_eq!(names(&h, p2), vec![None, n("Bob Ray")], "an unselected face is left alone");
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    ok(&mut h, "engine.execute", json!({"command": "edit.undo"}));
+    assert_eq!((names(&h, p3), names(&h, p4)), (vec![None], vec![None]));
+}

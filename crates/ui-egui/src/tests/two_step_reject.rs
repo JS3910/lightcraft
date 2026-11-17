@@ -250,3 +250,25 @@ fn escape_on_a_persons_page_closes_an_open_box_first_and_only_a_second_escape_cl
     press(&mut h, "escape");
     assert_eq!(h.app.ui.person_page, None, "the third leaves it");
 }
+
+#[test]
+fn undo_and_redo_of_a_box_removal_leave_no_view_state_pointing_at_another_face() {
+    let (mut h, [_, p1, _]) = people();
+    // (p1,1) is suggested, rejected in place and selected; removing (p1,0) moves it to index 0
+    suggest(&mut h, &[(p1, 1, "Ann Lee")]);
+    click(&mut h, button("unnamed", "hide", p1, 1));
+    click(&mut h, picture(p1, 1));
+    click(&mut h, button("unnamed", "hide", p1, 0));
+    assert!(h.app.ui.unnamed_selected.contains(&(p1.0, 0)), "shifted up while the box is gone");
+    // Undo brings the box back at index 0: what was held for (p1,0) would now be about the other face
+    undo(&mut h);
+    assert_eq!(regions(&h, p1), 2);
+    assert!(h.app.ui.unnamed_selected.is_empty(), "{:?}", h.app.ui.unnamed_selected);
+    assert!(h.app.ui.rejected_unnamed.is_empty(), "no tile is shown as rejected in place for the wrong face");
+    assert!(h.app.ui.name_edit.is_none() && h.app.ui.unnamed_anchor.is_none());
+    // and the same for Redo
+    click(&mut h, picture(p1, 1));
+    ok(&mut h, "engine.execute", json!({"command": "edit.redo"}));
+    assert_eq!(regions(&h, p1), 1);
+    assert!(h.app.ui.unnamed_selected.is_empty(), "{:?}", h.app.ui.unnamed_selected);
+}

@@ -1042,7 +1042,11 @@ fn person_more_confirms_all_above_with_one_undo_step() {
         pending: 0,
     };
     let set_page = |h: &mut Headless| {
-        h.app.caches.person_page = Some(("Jane Doe".into(), h.app.session.catalog.revision, h.app.caches.faces_indexed, 0.0, Arc::new(page.clone())));
+        // (as the engine lists it: a face that rejected Jane Doe is not in her More)
+        let mut page = page.clone();
+        page.more
+            .retain(|f| !h.app.session.catalog.photo(lightcraft_catalog::PhotoId(f.photo)).is_some_and(|p| p.meta.regions[0].rejects("Jane Doe")));
+        h.app.caches.person_page = Some(("Jane Doe".into(), h.app.session.catalog.revision, h.app.caches.faces_indexed, 0.0, Arc::new(page)));
         h.step();
     };
     set_page(&mut h);

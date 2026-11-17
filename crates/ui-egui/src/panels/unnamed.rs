@@ -82,20 +82,25 @@ pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
 /// The heading of the section, at `at`, and what it says about where the faces come from.
 pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, at: egui::Pos2, right: f32) {
     let t = Tokens::get(ui.ctx());
-    let count = if list.total > list.faces.len() { format!("{} of {}", list.faces.len(), list.total) } else { list.total.to_string() };
+    let count = if list.total > list.faces.len() {
+        crate::i18n::tr_format!("{shown} of {total}", shown = list.faces.len(), total = list.total)
+    } else {
+        list.total.to_string()
+    };
     let p = ui.painter();
-    p.text(at, Align2::LEFT_CENTER, "Unnamed faces", t.semibold(15.0), t.text);
+    p.text(at, Align2::LEFT_CENTER, crate::i18n::tr("Unnamed faces"), t.semibold(15.0), t.text);
     p.text(pos2(right, at.y), Align2::RIGHT_CENTER, count, t.font(13.0), t.text_dim);
     let sub = if !list.ready && list.faces.is_empty() {
-        "Turn on face recognition in Settings to find the faces in your photos.".to_string()
+        crate::i18n::tr("Turn on face recognition in Settings to find the faces in your photos.").to_string()
     } else if list.faces.is_empty() && app.caches.faces_pending > 0 {
-        format!("Looking through your photos… {} left", app.caches.faces_pending)
+        crate::i18n::tr_format!("Looking through your photos… {n} left", n = app.caches.faces_pending)
     } else if list.faces.is_empty() {
-        "No unnamed faces. Faces found in your photos appear here until you name them.".to_string()
+        crate::i18n::tr("No unnamed faces. Faces found in your photos appear here until you name them.").to_string()
     } else if list.ordered {
-        "Faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones).".to_string()
+        crate::i18n::tr("Faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones).").to_string()
     } else {
-        "Click faces to select them, Shift-click for a range; click the name under a face to name it (or the selected ones).".to_string()
+        crate::i18n::tr("Click faces to select them, Shift-click for a range; click the name under a face to name it (or the selected ones).")
+            .to_string()
     };
     p.text(pos2(at.x, at.y + 24.0), Align2::LEFT_CENTER, sub, t.font(12.0), t.text_dim);
     if !list.ready && list.faces.is_empty() {

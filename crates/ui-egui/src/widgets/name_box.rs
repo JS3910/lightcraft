@@ -148,10 +148,7 @@ pub fn show(ctx: &egui::Context, at: Pos2, state: &mut NameBoxState, spec: &Name
                 track(ui.ctx(), state, spec, &field, before, r.response.changed());
                 let listed = rules::offered_for(state.query(), spec.candidates, spec.people, spec.rejected);
                 for (i, offer) in listed.iter().enumerate() {
-                    let label = match offer.score {
-                        Some(s) => format!("{}   {:.0}%", offer.name, (s * 100.0).max(0.0)),
-                        None => offer.name.clone(),
-                    };
+                    let label = rules::label(offer);
                     let button = egui::Button::new(RichText::new(label).color(t.text_label))
                         .frame(false)
                         .selected(state.picked == Some(i))

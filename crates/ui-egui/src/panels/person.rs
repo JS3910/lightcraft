@@ -60,6 +60,11 @@ impl Rejected {
         self.pass = pass;
     }
 
+    /// Forget every rejected-in-place face.
+    pub fn clear(&mut self) {
+        self.faces.clear();
+    }
+
     pub fn is_empty(&self) -> bool {
         self.faces.is_empty()
     }
@@ -278,7 +283,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         if rename.clicked() {
             super::people::open_rename(app, &shown_name);
         }
-        let count = if page.total == 1 { "1 face".to_string() } else { format!("{} faces", page.total) };
+        let count = if page.total == 1 { crate::i18n::tr("1 face").to_string() } else { crate::i18n::tr_format!("{n} faces", n = page.total) };
         ui.label(RichText::new(count).color(t.text_dim));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(PAD - 4.0);
@@ -296,7 +301,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
             ui,
             ui.available_rect_before_wrap(),
             "No faces by that name",
-            "They may have been renamed or removed. Go back to People",
+            "They may have been renamed or removed. Go back to People", // (empty_message translates both)
         );
         return;
     }
@@ -310,13 +315,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
     // with a model installed the button switches recognition on; without one it opens Settings ▸ Faces
     let step = if recognising { super::faces::Setup::Running } else { super::faces::setup(app, ui.ctx()) };
     let note: Option<String> = if step == super::faces::Setup::TurnOn {
-        Some(format!("Face recognition is off. Turn it on to find more photos of {shown_name}."))
+        Some(crate::i18n::tr_format!("Face recognition is off. Turn it on to find more photos of {name}.", name = shown_name))
     } else if !recognising {
-        Some(format!("Face recognition needs a model, in Settings, to find more photos of {shown_name}."))
+        Some(crate::i18n::tr_format!("Face recognition needs a model, in Settings, to find more photos of {name}.", name = shown_name))
     } else if more.is_empty() && page.pending > 0 {
-        Some(format!("Looking through your photos… {} left", page.pending))
+        Some(crate::i18n::tr_format!("Looking through your photos… {n} left", n = page.pending))
     } else if more.is_empty() {
-        Some(format!("No other faces look like {shown_name} yet. Faces appear here as your photos are scanned."))
+        Some(crate::i18n::tr_format!("No other faces look like {name} yet. Faces appear here as your photos are scanned.", name = shown_name))
     } else {
         None
     };
@@ -344,18 +349,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         let mut shown = draw_grid(app, ui, &Grid { gallery: &confirmed_gallery, faces: &confirmed, entries: confirmed_entries, origin: origin(PAD), layout: &layout }, &mut hit);
         // the "More" section
         let heading = pos2(area.left() + PAD, area.top() + more_top + 14.0);
-        ui.painter().text(heading, Align2::LEFT_CENTER, "More", t.semibold(15.0), t.text);
+        ui.painter().text(heading, Align2::LEFT_CENTER, crate::i18n::tr("More"), t.semibold(15.0), t.text);
         let sub = match &note {
             Some(n) => n.clone(),
-            None => format!(
-                "Faces that look like {shown_name}. Click one to select it, use the check to confirm, ↑ for all above or × if it is not them; click a name to give the face to someone else."
+            None => crate::i18n::tr_format!(
+                "Faces that look like {name}. Click one to select it, use the check to confirm, ↑ for all above or × if it is not them; click a name to give the face to someone else.",
+                name = shown_name
             ),
         };
         ui.painter().text(pos2(area.left() + PAD, area.top() + more_top + 36.0), Align2::LEFT_CENTER, sub, t.font(12.0), t.text_dim);
         if !recognising {
             let r = Rect::from_min_size(pos2(area.left() + PAD + 330.0, area.top() + more_top + 8.0), vec2(120.0, 24.0));
             let label = if step == super::faces::Setup::TurnOn { "Turn on" } else { "Open Settings" };
-            let b = ui.put(r, egui::Button::new(label));
+            let b = ui.put(r, egui::Button::new(crate::i18n::tr(label)));
             register(ui, "faces:setup", b.rect);
             if b.clicked() {
                 if step == super::faces::Setup::TurnOn {
@@ -380,7 +386,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
                 app.ui.person_page = None;
             }
             TileEvent::Confirm => {
-                let _ = app.run("faces.setName", json!({"id": f.photo, "index": f.index, "name": shown_name}));
+                // on a selected tile the whole selection is confirmed, each face as the person; else this face alone
+                face_tile::confirm_own(app, &gallery, &lists.more_entries, (f.photo, f.index));
             }
             TileEvent::ConfirmAbove => confirm_above(app, ui.ctx(), &shown_name, &suggested, f.score),
             TileEvent::Hide => reject(app, ui.ctx(), &gallery, &lists, (f.photo, f.index)),
