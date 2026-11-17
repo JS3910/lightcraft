@@ -438,7 +438,10 @@ fn face_boxes(
     if app.ui.name_edit.as_ref().is_some_and(|e| e.photo != id.0) {
         app.ui.name_edit = None;
     }
+    // a face whose suggestion was rejected shows none until the photo is shown again
+    app.ui.quiet_faces.retain(|(p, _)| *p == id.0);
     let hints = super::faces::hints_for(app, id.0);
+    let hints = hints.map(|h| quieted(h, &app.ui.quiet_faces, id.0));
     let people = if app.ui.name_edit.is_some() { app.caches.person_names(&app.session.catalog) } else { Default::default() };
     // while the name box is open and recognition is not set up, the box offers the next step
     let setup = if app.ui.name_edit.is_some() { super::faces::setup(app, ui.ctx()) } else { super::faces::Setup::Running };
@@ -450,6 +453,7 @@ fn face_boxes(
             super::faces::take_step(app, ui.ctx(), setup);
         }
         Some(RegionEdit::Remove(index)) => {
+            app.ui.quiet_faces.retain(|(p, _)| *p != id.0);
             let _ = app.run("photo.removeRegion", json!({"id": id.0, "index": index}));
         }
         Some(RegionEdit::Name(index, name)) => {
@@ -459,11 +463,33 @@ fn face_boxes(
                 let _ = app.run("faces.setName", json!({"id": id.0, "index": index, "name": name}));
             }
         }
+        Some(RegionEdit::Reject(index, name)) => {
+            app.ui.quiet_faces.insert((id.0, index));
+            let _ = app.run("faces.reject", json!({"faces": [{"photo": id.0, "index": index, "name": name}]}));
+        }
         Some(RegionEdit::Resize(index, r)) => {
             let _ = app.run("photo.setRegion", json!({"id": id.0, "index": index, "rect": {"x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1}}));
         }
         None => {}
     }
+}
+
+/// `hints` without the suggestions of the faces of `photo` whose suggestion was just rejected.
+fn quieted(
+    hints: std::sync::Arc<super::faces::Hints>,
+    quiet: &std::collections::HashSet<(u64, usize)>,
+    photo: u64,
+) -> std::sync::Arc<super::faces::Hints> {
+    if !quiet.iter().any(|(p, _)| *p == photo) {
+        return hints;
+    }
+    let mut own = (*hints).clone();
+    for (index, hint) in own.by_index.iter_mut() {
+        if quiet.contains(&(photo, *index)) {
+            hint.suggestion = None;
+        }
+    }
+    std::sync::Arc::new(own)
 }
 
 /// A wipe shows the Before whole-frame render on its side of the line.

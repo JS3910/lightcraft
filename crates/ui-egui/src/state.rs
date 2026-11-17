@@ -123,6 +123,9 @@ pub struct UiState {
     /// What the loupe toolbar says about who is in the photo on show (empty: nothing); set while it is drawn.
     #[serde(skip)]
     pub face_summary: String,
+    /// Faces (photo, region index) whose suggested name was rejected in the loupe: no suggestion until the photo is shown again.
+    #[serde(skip)]
+    pub quiet_faces: std::collections::HashSet<(u64, usize)>,
     /// The left sidebar's sections: their order, which are hidden and which are folded shut.
     pub sidebar: crate::sidebar::SidebarLayout,
     /// What settings files said before [`UiState::sidebar`]: the ids of the folded sections. Read
@@ -448,6 +451,7 @@ impl Default for UiState {
             show_counts: true,
             face_boxes: true,
             face_summary: String::new(),
+            quiet_faces: Default::default(),
             sidebar: Default::default(),
             collapsed_sidebar: Vec::new(),
             name_edit: None,

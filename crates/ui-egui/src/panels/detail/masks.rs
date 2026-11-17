@@ -12,6 +12,8 @@ pub(super) enum RegionEdit {
     Resize(usize, lightcraft_geom::Rect),
     /// A name was typed or picked for the face.
     Name(usize, String),
+    /// The reject icon on a suggested name was pressed: the face is not this person.
+    Reject(usize, String),
     /// The name box's offer to set up face recognition was pressed.
     SetUp,
 }
@@ -74,7 +76,8 @@ fn region_body_drag(
             let (w, h) = (shown.x1 - shown.x0, shown.y1 - shown.y0);
             let (x0, y0) = ((shown.x0 + now.x - start.x).clamp(0.0, (1.0 - w).max(0.0)), (shown.y0 + now.y - start.y).clamp(0.0, (1.0 - h).max(0.0)));
             let moved = lightcraft_geom::Rect { x0, y0, x1: x0 + w, y1: y0 + h };
-            if moved == shown {
+            // (a press that has not moved is no move: the × and the label under it are clicked, not dragged)
+            if moved == shown || (now.x == start.x && now.y == start.y) {
                 ui.data_mut(|d| d.remove_temp::<(usize, lightcraft_geom::Rect)>(drag_key));
             } else {
                 ui.data_mut(|d| d.insert_temp(drag_key, (index, orient.inverse().map_norm_rect(moved))));
@@ -192,8 +195,10 @@ pub(super) fn region_overlay(
         // the name in a dark label with a caret, centred above the box (below it when there is no room)
         let name = &text;
         let g = p.layout_no_wrap(name.clone(), t.font(13.0), text_color);
-        let (pad, caret) = (vec2(14.0, 7.0), 5.0);
-        let size = g.size() + pad * 2.0;
+        let caret = 5.0;
+        let suggested = suggested_name(r, hint);
+        let (pad, icons) = label_padding(suggested.is_some());
+        let size = g.size() + pad * 2.0 + vec2(icons, 0.0);
         let above = rect.top() - caret - size.y >= clip.top();
         let (top, tip, base) = if above {
             (rect.top() - caret - size.y, rect.top() - 1.0, rect.top() - caret - 1.0)
@@ -211,7 +216,8 @@ pub(super) fn region_overlay(
         p.rect_stroke(label, 3.0, Stroke::new(1.0, Color32::from_black_alpha(160)), StrokeKind::Inside);
         let cx = rect.center().x.clamp(label.left() + caret + 4.0, label.right() - caret - 4.0);
         p.add(egui::Shape::convex_polygon(vec![pos2(cx - caret, base), pos2(cx + caret, base), pos2(cx, tip)], fill, Stroke::NONE));
-        p.galley(label.min + pad, g, text_color);
+        let text_at = label.min + pad + vec2(icons / 2.0, 0.0);
+        p.galley(text_at, g, text_color);
         if is_face && live.is_none() {
             // a click on the label opens the name box, filled with the name or the guess
             let resp = ui.interact(label, egui::Id::unique(("region-label", index)), Sense::click());
@@ -221,6 +227,10 @@ pub(super) fn region_overlay(
                 *editing = Some(open_name_edit(ui.ctx(), photo, index, hints));
             }
         }
+        let pointed = pointer.is_some_and(|h| rect.union(label).expand(3.0).contains(h));
+        if let Some(name) = suggested.filter(|_| live.is_none() && !editing_this && pointed) {
+            edit = suggestion_icons(ui, p, label, pad, (index, name)).or(edit);
+        }
         if editing_this && let Some(e) = editing.as_mut() {
             let candidates = hint.map(|h| h.candidates.as_slice()).unwrap_or(&[]);
             let spec = crate::name_box::NameBox { id: "faceName", candidates, people, current: r.name.as_deref(), rejected: &r.rejected, setup };
@@ -228,6 +238,62 @@ pub(super) fn region_overlay(
             if let Some(done) = end_name_edit(ui.ctx(), photo, index, hints, outcome, editing) {
                 edit = Some(done);
             }
+        }
+    }
+    edit
+}
+
+/// Side of the accept and reject icons on a suggested label, and the gap between an icon and the name.
+const ICON: f32 = 14.0;
+const ICON_GAP: f32 = 6.0;
+
+/// The suggestion a face's label offers: only an unnamed face has one.
+fn suggested_name(r: &lightcraft_meta::Region, hint: Option<&crate::panels::faces::Hint>) -> Option<String> {
+    let unnamed_face = r.name.is_none() && r.kind == lightcraft_meta::RegionKind::Face;
+    hint.and_then(|h| h.suggestion.as_ref()).filter(|_| unnamed_face).map(|(n, _)| n.clone())
+}
+
+/// The label's padding and the room kept for the two icons of a suggestion (kept while they are hidden, so the
+/// label does not jump under the pointer).
+fn label_padding(suggested: bool) -> (egui::Vec2, f32) {
+    if suggested { (vec2(8.0, 7.0), 2.0 * (ICON + ICON_GAP)) } else { (vec2(14.0, 7.0), 0.0) }
+}
+
+/// A check (accept) to the left of the name and a circle with a slash (reject) to its right, inside the label.
+/// Both are drawn here as strokes. Returns what a press on one means; the label's own click (the name box) is laid
+/// out before, so the icons win an overlapping press.
+fn suggestion_icons(ui: &egui::Ui, p: &egui::Painter, label: Rect, pad: egui::Vec2, (index, name): (usize, String)) -> Option<RegionEdit> {
+    let mut edit = None;
+    let y = label.center().y;
+    let slots = [(label.left() + pad.x + ICON / 2.0, true), (label.right() - pad.x - ICON / 2.0, false)];
+    for (x, accept) in slots {
+        let area = Rect::from_center_size(pos2(x, y), vec2(ICON + 4.0, ICON + 6.0));
+        let (id, tip) = if accept {
+            ("regionAccept", crate::i18n::tr_format!("Name this face {name}", name = name))
+        } else {
+            ("regionReject", crate::i18n::tr_format!("This face is not {name} (undo with Edit ▸ Undo)", name = name))
+        };
+        let resp = ui.interact(area, egui::Id::unique((id, index)), Sense::click());
+        crate::widgets::announce(&resp, tip.clone());
+        register(ui, format!("{id}:{index}"), area);
+        let hot = resp.hovered();
+        let color = match (accept, hot) {
+            (true, true) => Color32::from_rgb(130, 220, 140),
+            (false, true) => Color32::from_rgb(255, 130, 120),
+            (_, false) => Color32::from_gray(200),
+        };
+        let stroke = Stroke::new(1.5, color);
+        let c = pos2(x, y);
+        if accept {
+            p.line_segment([c + vec2(-4.5, 0.5), c + vec2(-1.5, 3.5)], stroke);
+            p.line_segment([c + vec2(-1.5, 3.5), c + vec2(4.5, -3.5)], stroke);
+        } else {
+            p.circle_stroke(c, ICON / 2.0 - 1.0, stroke);
+            let d = (ICON / 2.0 - 1.0) * std::f32::consts::FRAC_1_SQRT_2;
+            p.line_segment([c + vec2(-d, d), c + vec2(d, -d)], stroke);
+        }
+        if resp.on_hover_text(tip).clicked() {
+            edit = Some(if accept { RegionEdit::Name(index, name.clone()) } else { RegionEdit::Reject(index, name.clone()) });
         }
     }
     edit
@@ -1072,5 +1138,80 @@ mod region_drag_tests {
         assert!(((moved.y1 - moved.y0) - 0.2).abs() < 0.02, "height kept: {moved:?}");
         assert!((moved.x0 - 0.3).abs() < 0.02 && (moved.y0 - 0.25).abs() < 0.02, "moved by the drag: {moved:?}");
         assert!(moved.x0 >= 0.0 && moved.y0 >= 0.0 && moved.x1 <= 1.0 && moved.y1 <= 1.0, "inside the photo: {moved:?}");
+    }
+
+    /// A suggested face's label carries an accept icon left of the name and a reject icon right of it, shown while the
+    /// pointer is on the label or the box; a click on the name opens the name box and the × still removes the box.
+    #[test]
+    fn a_suggested_label_has_accept_and_reject_icons_and_the_other_buttons_still_work() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        crate::theme::apply(&ctx);
+        let canvas = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 400.0));
+        let frame = lightcraft_pipeline::geometry::Frame::new(100, 100, &DevelopSettings::default(), true);
+        let map = CanvasMap::new(&frame, canvas);
+        let mut photo = lightcraft_catalog::Photo::new(
+            lightcraft_catalog::PhotoId(1),
+            lightcraft_catalog::Source::Demo { scene: 0 },
+            "a.jpg",
+            "JPEG",
+            100,
+            100,
+            "2026-10-01T00:00:00",
+        );
+        let region = |name: Option<&str>| lightcraft_meta::Region {
+            rect: lightcraft_geom::Rect { x0: 0.2, y0: 0.2, x1: 0.4, y1: 0.4 },
+            kind: lightcraft_meta::RegionKind::Face,
+            name: name.map(str::to_string),
+            description: None,
+            rejected: Vec::new(),
+        };
+        let mut hints = crate::panels::faces::Hints::default();
+        hints.by_index.insert(0, crate::panels::faces::Hint { suggestion: Some(("Ann Lee".to_string(), 0.8)), candidates: Vec::new() });
+        let mut editing = None;
+        let run = |photo: &lightcraft_catalog::Photo, events: &[egui::Event], editing: &mut Option<crate::state::NameEdit>| -> Option<RegionEdit> {
+            let mut edit = None;
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(canvas), events: events.to_vec(), ..Default::default() }, |ui| {
+                egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
+                    let p = ui.painter_at(canvas);
+                    let regions = RegionContext {
+                        photo,
+                        orient: lightcraft_geom::Orientation::Normal,
+                        hints: Some(&hints),
+                        people: &[],
+                        setup: crate::panels::faces::Setup::Running,
+                        movable: true,
+                    };
+                    edit = region_overlay(ui, &p, &map, &regions, editing);
+                });
+            });
+            output.textures_delta.clear();
+            edit
+        };
+        let button =
+            |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        // point at a spot, press, release: what a click is
+        let click = |photo: &lightcraft_catalog::Photo, at: egui::Pos2, editing: &mut Option<crate::state::NameEdit>| {
+            run(photo, &[egui::Event::PointerMoved(at)], editing);
+            run(photo, &[egui::Event::PointerMoved(at)], editing);
+            run(photo, &[button(at, true)], editing);
+            run(photo, &[button(at, false)], editing)
+        };
+        // the box is at 80..160 px; its label is centred above it
+        photo.meta.regions = vec![region(None)];
+        let accept = click(&photo, pos2(80.0, 60.0), &mut editing);
+        assert!(matches!(&accept, Some(RegionEdit::Name(0, n)) if n == "Ann Lee"), "the check names the face with the suggestion");
+        let reject = click(&photo, pos2(160.0, 60.0), &mut editing);
+        assert!(matches!(&reject, Some(RegionEdit::Reject(0, n)) if n == "Ann Lee"), "the circle with a slash rejects it");
+        assert!(editing.is_none());
+        click(&photo, pos2(120.0, 60.0), &mut editing);
+        assert!(editing.is_some(), "a click on the name opens the name box");
+        editing = None;
+        let remove = click(&photo, pos2(147.0, 93.0), &mut editing);
+        assert!(matches!(remove, Some(RegionEdit::Remove(0))), "the corner button removes the box in one click");
+        // a named face has no icons: the same spots do nothing but the label click
+        photo.meta.regions = vec![region(Some("Bob Ray"))];
+        let none = click(&photo, pos2(80.0, 60.0), &mut editing);
+        assert!(none.is_none());
     }
 }

@@ -337,3 +337,78 @@ fn opening_the_box_starts_no_embedding() {
     assert!(h.app.session.activity.list().is_empty(), "no task for the box: {:?}", h.app.session.activity.list());
     let _ = id;
 }
+
+// ---------------------------------------------------------------- accept and reject icons on a suggested label
+
+/// Whether the widget `id` is on screen.
+fn has_widget(h: &mut Headless, id: &str) -> bool {
+    let r = h.request("ui.widgets", json!({"filter": id}), T);
+    r["result"].as_array().is_some_and(|l| l.iter().any(|w| w["id"] == id))
+}
+
+fn point_at(h: &mut Headless, i: usize) {
+    ok(h, "ui.pointer", json!({"events": [{"kind": "move", "x": 0.2 + 0.3 * i as f64, "y": 0.4}]}));
+}
+
+fn rejected_names(h: &Headless, id: PhotoId, i: usize) -> Vec<String> {
+    h.app.session.catalog.photo(id).unwrap().meta.regions[i].rejected.clone()
+}
+
+#[test]
+fn a_suggested_label_shows_accept_and_reject_while_pointed_at_and_only_then() {
+    let (mut h, id) = loupe([None, Some("Zed"), None]);
+    suggest(&mut h, id, &[(0, Some("Ann Lee"), &[("Ann Lee", 0.8)])]);
+    ok(&mut h, "ui.pointer", json!({"events": [{"kind": "move", "x": 0.95, "y": 0.95}]}));
+    assert!(!has_widget(&mut h, "regionAccept:0"), "not pointed at");
+    point_at(&mut h, 0);
+    assert!(has_widget(&mut h, "regionAccept:0"));
+    assert!(has_widget(&mut h, "regionReject:0"));
+    point_at(&mut h, 1);
+    assert!(!has_widget(&mut h, "regionAccept:1"), "a named face shows none");
+    assert!(!has_widget(&mut h, "regionReject:1"));
+    point_at(&mut h, 2);
+    assert!(!has_widget(&mut h, "regionAccept:2"), "a face with no suggestion shows none");
+    assert!(!has_widget(&mut h, "regionReject:2"));
+}
+
+#[test]
+fn accepting_names_the_face_with_the_suggestion_in_one_undo_step() {
+    let (mut h, id) = loupe([None, None, None]);
+    suggest(&mut h, id, &[(0, Some("Ann Lee"), &[("Ann Lee", 0.8)])]);
+    point_at(&mut h, 0);
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": "regionAccept:0"}));
+    assert_eq!(names(&h, id), [n("Ann Lee"), None, None]);
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    assert!(h.app.ui.name_edit.is_none(), "no name box opened");
+}
+
+#[test]
+fn rejecting_records_the_rejection_in_one_undo_step_and_the_label_goes_quiet() {
+    let (mut h, id) = loupe([None, None, None]);
+    suggest(&mut h, id, &[(0, Some("Ann Lee"), &[("Ann Lee", 0.8)])]);
+    point_at(&mut h, 0);
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": "regionReject:0"}));
+    assert_eq!(rejected_names(&h, id, 0), ["Ann Lee"]);
+    assert_eq!(names(&h, id), [None, None, None]);
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    // even when the ranking would now offer a next-best name, this visit of the photo shows none
+    suggest(&mut h, id, &[(0, Some("Bob Ray"), &[("Bob Ray", 0.7)])]);
+    point_at(&mut h, 0);
+    assert!(!has_widget(&mut h, "regionAccept:0"));
+    // undo takes the rejection back
+    h.request("engine.execute", json!({"command": "edit.undo", "params": {}}), T);
+    step(&mut h);
+    assert!(rejected_names(&h, id, 0).is_empty());
+}
+
+#[test]
+fn a_click_on_the_suggested_name_still_opens_the_box() {
+    let (mut h, id) = loupe([None, None, None]);
+    suggest(&mut h, id, &[(0, Some("Ann Lee"), &[("Ann Lee", 0.8)])]);
+    open(&mut h, 0);
+    assert_eq!(shown(&h), "Ann Lee");
+    key(&mut h, "escape");
+    assert!(h.app.ui.name_edit.is_none());
+}

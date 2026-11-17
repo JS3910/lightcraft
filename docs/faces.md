@@ -246,6 +246,7 @@ suggest names for the ones you have not:
 - An unnamed face with a good match gets a dim label such as **Jane Doe?** in the loupe. Click it and the name box opens
   with the guess filled in and selected, so the first letter you type replaces it; Enter confirms it. Any other unnamed face shows **Add name** when you point at it. Clicking a name
   opens the box on it the same way. Clearing the box of a named face and pressing Enter removes the name.
+  Pointing at the label of a suggested face (box or label) also shows a check to the left of the name and a circle with a slash to its right, inside the label: the check names the face with the suggestion, the circle says it is not that person (see Rejecting a name); a named face and a face with no suggestion show neither, and the corner × still removes the box in one click.
 - **The name box** completes what you type from the people you have already named, in the box itself with the completed
   part selected: Backspace removes it, so a new name that begins like an existing one can still be typed. A short list of
   matching names (at most seven; names that begin with what you typed before names where a later word does) sits below,
@@ -382,6 +383,8 @@ rejection. Renaming a person, or merging two, moves the rejections to the new na
 a rejection back in one step, however many faces it covered. Re-reading a photo's metadata from its sidecar replaces its
 regions with the file's but keeps the rejections of every box that is still there (the same box, to within its overlap), and
 synchronizing a folder does the same.
+
+In the loupe the circle with a slash on a suggested label does the same for that one face, in one undo step; the label then shows no suggestion until the photo is shown again, when a next-best one may appear, and the rejected name is never suggested for the face again, in the loupe or in the People view.
 
 
 How well it works: on 755 named faces of marble busts from one museum folder (each face hidden in turn and matched against
