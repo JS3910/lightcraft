@@ -189,13 +189,17 @@ fn rename_person(s: &mut Session, p: &Value) -> Result<Value> {
             continue;
         }
         let mut meta = ph.meta.clone();
-        for i in indexes {
+        for &i in &indexes {
             if let Some(region) = meta.regions.get_mut(i) {
                 region.name = Some(to.clone());
                 faces += 1;
             }
         }
-        // (after the names, so a face that is now `to` does not reject itself)
+        // (after the names, so a face that is now `to` does not reject itself; a renamed face also drops a rejection
+        // of `to` it already held)
+        rewrites.extend(indexes);
+        rewrites.sort_unstable();
+        rewrites.dedup();
         for i in rewrites {
             if let Some(region) = meta.regions.get_mut(i) {
                 rewrite_rejections(region, &from_key, &to);

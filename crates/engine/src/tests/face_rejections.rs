@@ -127,10 +127,11 @@ fn naming_a_face_with_a_rejected_name_drops_that_rejection_in_the_same_edit() {
 fn rejecting_the_current_name_can_clear_it_in_the_same_step() {
     let (mut s, d, a, _) = library("rej-clear");
     let undo = s.undo.len();
-    // not asked for: the name stays, the rejection is recorded
-    s.execute("faces.reject", &json!({"faces": [{"photo": a.0, "index": 1}], "name": "bob"})).unwrap();
-    assert_eq!((name_of(&s, a, 1).as_deref(), rejected(&s, a, 1)), (Some("Bob"), vec!["bob".to_string()]));
-    s.execute("edit.undo", &json!({})).unwrap();
+    // not asked for: a face called that is left alone (rejecting its own name would contradict it), and counted
+    let r = s.execute("faces.reject", &json!({"faces": [{"photo": a.0, "index": 1}], "name": "bob"})).unwrap();
+    assert_eq!((r["rejected"].clone(), r["skipped"].clone(), r["photos"].clone()), (json!(0), json!(1), json!(0)), "{r}");
+    assert_eq!((name_of(&s, a, 1).as_deref(), rejected(&s, a, 1)), (Some("Bob"), Vec::<String>::new()));
+    assert_eq!(s.undo.len(), undo, "nothing changed");
     // asked for: only a face whose name is the rejected one loses it
     let r = s
         .execute("faces.reject", &json!({"faces": [{"photo": a.0, "index": 1}, {"photo": a.0, "index": 0}], "name": " BOB", "clearName": true}))
@@ -336,5 +337,19 @@ fn a_photo_whose_last_face_box_was_removed_is_not_searched_again() {
     s.execute("faces.removeBoxes", &json!({"faces": [{"photo": b.0, "index": 0}]})).unwrap();
     assert!(s.catalog.photo(b).unwrap().meta.regions.is_empty());
     assert!(s.faces.scanned.contains(b.0), "the scan must not detect the removed boxes again");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_merge_leaves_no_face_rejecting_the_name_it_carries() {
+    let (mut s, d, a, _) = library("rej-merge-own");
+    // the face named Ann once rejected Bob (a suggestion it did not want); merging Ann into Bob names it Bob
+    s.execute("faces.reject", &json!({"faces": [{"photo": a.0, "index": 0}], "name": "Bob"})).unwrap();
+    let undo = s.undo.len();
+    s.execute("faces.renamePerson", &json!({"from": "Ann", "to": "Bob", "merge": true})).unwrap();
+    assert_eq!((name_of(&s, a, 0).as_deref(), rejected(&s, a, 0)), (Some("Bob"), Vec::<String>::new()));
+    assert_eq!(s.undo.len(), undo + 1);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!((name_of(&s, a, 0).as_deref(), rejected(&s, a, 0)), (Some("Ann"), vec!["Bob".to_string()]), "one undo brings both back");
     let _ = std::fs::remove_dir_all(&d);
 }

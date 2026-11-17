@@ -23,12 +23,20 @@ struct Effect {
     listed: bool,
     /// The face's own name was cleared.
     cleared: bool,
+    /// The face is called the name and `clear` was not asked for, so it was left alone.
+    skipped: bool,
 }
 
-/// Reject `name` for `region`; with `clear`, a face called `name` loses its name too.
+/// Reject `name` for `region`; with `clear`, a face called `name` loses its name too; without it such a face is left alone.
 fn reject(region: &mut Region, name: &str, clear: bool) -> Result<Effect> {
     const C: &str = "faces.reject";
     let mut effect = Effect::default();
+    let called = region.name.as_deref().is_some_and(|n| n.trim().to_lowercase() == name.trim().to_lowercase());
+    if called && !clear {
+        // rejecting a face's own name would leave it carrying a name it rejects
+        effect.skipped = true;
+        return Ok(effect);
+    }
     if !region.rejects(name) {
         if region.rejected.len() >= MAX_REJECTED {
             return Err(bad(C, format!("a face keeps at most {MAX_REJECTED} rejected names")));
@@ -36,7 +44,7 @@ fn reject(region: &mut Region, name: &str, clear: bool) -> Result<Effect> {
         region.rejected.push(name.to_string());
         effect.listed = true;
     }
-    if clear && region.name.as_deref().is_some_and(|n| n.trim().to_lowercase() == name.trim().to_lowercase()) {
+    if called {
         region.name = None;
         effect.cleared = true;
     }
@@ -96,7 +104,7 @@ fn reject_faces(s: &mut Session, p: &Value) -> Result<Value> {
     for t in targets {
         by_photo.entry(t.photo).or_default().push(t);
     }
-    let (mut ops, mut found, mut listed, mut cleared) = (Vec::new(), 0usize, 0usize, 0usize);
+    let (mut ops, mut found, mut listed, mut cleared, mut skipped) = (Vec::new(), 0usize, 0usize, 0usize, 0usize);
     for (photo, faces) in by_photo {
         let id = PhotoId(photo);
         let Some(ph) = s.catalog.photo(id) else { continue };
@@ -108,6 +116,7 @@ fn reject_faces(s: &mut Session, p: &Value) -> Result<Value> {
             let e = reject(region, &t.name, clear)?;
             listed += usize::from(e.listed);
             cleared += usize::from(e.cleared);
+            skipped += usize::from(e.skipped);
             changed |= e.listed || e.cleared;
         }
         if changed {
@@ -122,7 +131,7 @@ fn reject_faces(s: &mut Session, p: &Value) -> Result<Value> {
         s.commit(if listed == 1 { "Reject Name" } else { "Reject Names" }, Op::Batch { ops })?;
         s.skip_auto_write = true;
     }
-    Ok(json!({"rejected": listed, "cleared": cleared, "photos": photos}))
+    Ok(json!({"rejected": listed, "cleared": cleared, "skipped": skipped, "photos": photos}))
 }
 
 /// The `(photo, index)` pairs of a `faces.removeBoxes` call, checked before anything changes.
@@ -198,7 +207,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Reject Name for Faces",
             [],
             None,
-            "{faces: [{photo, index, name?}], name?, clearName?: false} → {rejected, cleared, photos} — say the name is not these faces' (up to 5000, across photos), as one undoable step: it is kept on each face in the catalog only (never in a sidecar or a file), suggestions skip it, the person's More leaves the face out, and naming the face that name later drops it. An entry's own `name` wins over the shared one; `clearName` also clears the name of a face that is called the rejected name. `rejected` counts faces whose list grew (a name already rejected, in any capitalization, changes nothing), `cleared` faces that lost their name; missing or non-face entries are skipped and the call is refused when none exists",
+            "{faces: [{photo, index, name?}], name?, clearName?: false} → {rejected, cleared, skipped, photos} — say the name is not these faces' (up to 5000, across photos), as one undoable step: it is kept on each face in the catalog only (never in a sidecar or a file), suggestions skip it, the person's More leaves the face out, and naming the face that name later drops it. An entry's own `name` wins over the shared one; `clearName` also clears the name of a face that is called the rejected name; without it such a face is left alone (a face would carry a name it rejects), counted in `skipped`. `rejected` counts faces whose list grew (a name already rejected, in any capitalization, changes nothing), `cleared` faces that lost their name, `skipped` faces left alone because they are called the name; missing or non-face entries are skipped and the call is refused when none exists",
             super::always,
             reject_faces
         ),
