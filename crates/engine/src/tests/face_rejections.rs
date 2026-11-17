@@ -268,3 +268,73 @@ fn rejecting_refuses_hostile_arguments_and_changes_nothing() {
     assert!(s.execute("faces.reject", &json!({"faces": [{"photo": a.0, "index": 0}], "name": "one too many"})).is_err());
     let _ = std::fs::remove_dir_all(&d);
 }
+
+fn region_names(s: &Session, id: PhotoId) -> Vec<Option<String>> {
+    s.catalog.photo(id).unwrap().meta.regions.iter().map(|r| r.name.clone()).collect()
+}
+
+#[test]
+fn removing_many_face_boxes_across_photos_and_on_one_photo_is_one_undo_step() {
+    let (mut s, d, a, b) = library("rm-many");
+    s.execute("faces.reject", &json!({"faces": [{"photo": a.0, "index": 1}], "name": "Zed"})).unwrap();
+    let (before_a, before_b) = (s.catalog.photo(a).unwrap().meta.regions.clone(), s.catalog.photo(b).unwrap().meta.regions.clone());
+    let undo = s.undo.len();
+    // two boxes of photo a (the first and the last: later indexes shift as the first goes) and one of photo b
+    let r = s
+        .execute("faces.removeBoxes", &json!({"faces": [{"photo": a.0, "index": 2}, {"photo": b.0, "index": 0}, {"photo": a.0, "index": 0}]}))
+        .unwrap();
+    assert_eq!((r["removed"].clone(), r["photos"].clone()), (json!(3), json!(2)), "{r}");
+    assert_eq!(s.undo.len(), undo + 1, "one step for the whole list");
+    assert_eq!(region_names(&s, a), [Some("Bob".to_string())], "only the middle box is left");
+    assert_eq!(rejected(&s, a, 0), ["Zed"], "the box that stayed keeps its rejections");
+    assert_eq!(s.catalog.photo(b).unwrap().meta.regions.len(), 1);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(a).unwrap().meta.regions, before_a, "every box back, with name and rejections");
+    assert_eq!(s.catalog.photo(b).unwrap().meta.regions, before_b);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn removing_face_boxes_refuses_hostile_lists_and_skips_what_is_not_there() {
+    let (mut s, d, a, _) = library("rm-hostile");
+    let undo = s.undo.len();
+    for bad in [
+        json!({}),
+        json!({"faces": []}),
+        json!({"faces": "x"}),
+        json!({"faces": [{"photo": a.0}]}),
+        json!({"faces": [{"index": 0}]}),
+        json!({"faces": [{"photo": a.0, "index": -1}]}),
+        json!({"faces": [{"photo": a.0, "index": u64::MAX}]}),
+        json!({"faces": [{"photo": a.0, "index": 99}]}),
+        json!({"faces": [{"photo": 987_654, "index": 0}]}),
+        json!({"faces": vec![json!({"photo": a.0, "index": 0}); 5001]}),
+    ] {
+        assert!(s.execute("faces.removeBoxes", &bad).is_err(), "{bad}");
+    }
+    assert_eq!(s.undo.len(), undo, "a refusal is no undo step");
+    // the same face twice, and one that does not exist, count once
+    let r = s
+        .execute("faces.removeBoxes", &json!({"faces": [{"photo": a.0, "index": 0}, {"photo": a.0, "index": 0}, {"photo": a.0, "index": 99}]}))
+        .unwrap();
+    assert_eq!(r["removed"], 1, "{r}");
+    assert_eq!(s.catalog.photo(a).unwrap().meta.regions.len(), 2);
+    // a pet box is not a face box
+    let mut pet = s.catalog.photo(a).unwrap().meta.clone();
+    pet.regions[0].kind = lightcraft_meta::RegionKind::Pet;
+    s.commit("pet", lightcraft_catalog::Op::SetMeta { id: a, meta: Box::new(pet) }).unwrap();
+    assert!(s.execute("faces.removeBoxes", &json!({"faces": [{"photo": a.0, "index": 0}]})).is_err());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_photo_whose_last_face_box_was_removed_is_not_searched_again() {
+    let (mut s, d, _, b) = library("rm-scan");
+    assert!(!s.faces.scanned.contains(b.0), "boxes that came from a file: never searched by the scan");
+    s.execute("faces.removeBoxes", &json!({"faces": [{"photo": b.0, "index": 0}]})).unwrap();
+    assert!(!s.faces.scanned.contains(b.0), "one box is left: nothing to search for yet");
+    s.execute("faces.removeBoxes", &json!({"faces": [{"photo": b.0, "index": 0}]})).unwrap();
+    assert!(s.catalog.photo(b).unwrap().meta.regions.is_empty());
+    assert!(s.faces.scanned.contains(b.0), "the scan must not detect the removed boxes again");
+    let _ = std::fs::remove_dir_all(&d);
+}

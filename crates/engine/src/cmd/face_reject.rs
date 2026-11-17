@@ -125,14 +125,91 @@ fn reject_faces(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"rejected": listed, "cleared": cleared, "photos": photos}))
 }
 
+/// The `(photo, index)` pairs of a `faces.removeBoxes` call, checked before anything changes.
+fn box_targets(p: &Value) -> Result<Vec<(u64, usize)>> {
+    const C: &str = "faces.removeBoxes";
+    let list = p.get("faces").and_then(Value::as_array).ok_or_else(|| bad(C, "missing `faces`"))?;
+    if list.is_empty() || list.len() > MAX_FACES {
+        return Err(bad(C, format!("between 1 and {MAX_FACES} faces at a time")));
+    }
+    let mut out = Vec::with_capacity(list.len());
+    for f in list {
+        let (Some(photo), Some(index)) =
+            (f.get("photo").and_then(Value::as_u64), f.get("index").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()))
+        else {
+            return Err(bad(C, "each face needs a `photo` and an `index`"));
+        };
+        out.push((photo, index));
+    }
+    Ok(out)
+}
+
+/// A photo with no face box left counts as searched by the scan, so the scan does not find the removed boxes again.
+#[cfg(not(target_arch = "wasm32"))]
+fn mark_searched(s: &mut Session, photo: u64) {
+    s.faces.scanned.insert(photo);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn mark_searched(_: &mut Session, _: u64) {}
+
+/// `faces.removeBoxes {faces: [{photo, index}]}`: remove the face boxes, as one undo step. The indexes are positions in
+/// each photo's regions as they are now: all of a photo's boxes go in one edit, highest index first, so removing one
+/// never moves another. Entries that do not exist or are not faces are skipped (a face listed twice counts once);
+/// the call is refused when none exists.
+fn remove_boxes(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut by_photo: std::collections::BTreeMap<u64, std::collections::BTreeSet<usize>> = std::collections::BTreeMap::new();
+    for (photo, index) in box_targets(p)? {
+        by_photo.entry(photo).or_default().insert(index);
+    }
+    let (mut ops, mut removed) = (Vec::new(), 0usize);
+    for (photo, indexes) in by_photo {
+        let id = PhotoId(photo);
+        let Some(ph) = s.catalog.photo(id) else { continue };
+        let mut meta = ph.meta.clone();
+        let mut gone = 0usize;
+        for &i in indexes.iter().rev() {
+            if meta.regions.get(i).is_some_and(|r| r.kind == RegionKind::Face) {
+                meta.regions.remove(i);
+                gone += 1;
+            }
+        }
+        if gone > 0 {
+            removed += gone;
+            if !meta.regions.iter().any(|r| r.kind == RegionKind::Face) {
+                mark_searched(s, photo);
+            }
+            ops.push(Op::SetMeta { id, meta: Box::new(meta) });
+        }
+    }
+    if removed == 0 {
+        return Err(bad("faces.removeBoxes", "none of those faces exist"));
+    }
+    let photos = ops.len();
+    s.commit(if removed == 1 { "Remove Face Box" } else { "Remove Face Boxes" }, Op::Batch { ops })?;
+    s.skip_auto_write = true;
+    Ok(json!({"removed": removed, "photos": photos}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
-    vec![cmd!(
-        "faces.reject",
-        "Reject Name for Faces",
-        [],
-        None,
-        "{faces: [{photo, index, name?}], name?, clearName?: false} → {rejected, cleared, photos} — say the name is not these faces' (up to 5000, across photos), as one undoable step: it is kept on each face in the catalog only (never in a sidecar or a file), suggestions skip it, the person's More leaves the face out, and naming the face that name later drops it. An entry's own `name` wins over the shared one; `clearName` also clears the name of a face that is called the rejected name. `rejected` counts faces whose list grew (a name already rejected, in any capitalization, changes nothing), `cleared` faces that lost their name; missing or non-face entries are skipped and the call is refused when none exists",
-        super::always,
-        reject_faces
-    )]
+    vec![
+        cmd!(
+            "faces.reject",
+            "Reject Name for Faces",
+            [],
+            None,
+            "{faces: [{photo, index, name?}], name?, clearName?: false} → {rejected, cleared, photos} — say the name is not these faces' (up to 5000, across photos), as one undoable step: it is kept on each face in the catalog only (never in a sidecar or a file), suggestions skip it, the person's More leaves the face out, and naming the face that name later drops it. An entry's own `name` wins over the shared one; `clearName` also clears the name of a face that is called the rejected name. `rejected` counts faces whose list grew (a name already rejected, in any capitalization, changes nothing), `cleared` faces that lost their name; missing or non-face entries are skipped and the call is refused when none exists",
+            super::always,
+            reject_faces
+        ),
+        cmd!(
+            "faces.removeBoxes",
+            "Remove Face Boxes",
+            [],
+            None,
+            "{faces: [{photo, index}]} → {removed, photos} — remove the face boxes of up to 5000 faces across photos as one undoable step (the boxes of one photo go together, so indexes never shift under the call), name and rejections included; Undo brings every box back. Missing, repeated or non-face entries are skipped and the call is refused when none exists. The XMP sidecar is never rewritten for this, and a removed box is not detected again on the photo: the scan keeps a record of the photos it searched",
+            super::always,
+            remove_boxes
+        ),
+    ]
 }
