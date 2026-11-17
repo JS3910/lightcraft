@@ -61,6 +61,8 @@ pub struct Hover<'a> {
     pub score: f32,
     /// How many shown faces "all above" would name.
     pub above_count: usize,
+    /// "All above" counts tiles from the first one (Unnamed faces), not by similarity; no similarity is shown.
+    pub positional: bool,
 }
 
 /// What the tile draws.
@@ -204,6 +206,25 @@ pub fn name_each(app: &mut LightcraftApp, names: &[(FaceKey, String)], clearing:
     }
 }
 
+/// The faces of `order` that have a name on their strip, each with that name, for naming them as it says.
+fn own_names(order: &[Entry], faces: &[FaceKey]) -> Vec<(FaceKey, String)> {
+    faces.iter().filter_map(|k| order.iter().find(|e| e.key == *k).and_then(|e| Some((*k, e.suggestion.clone()?)))).collect()
+}
+
+/// The check on a tile of `gallery`: confirm each face it applies to (the selection when `face` is selected, else `face`
+/// alone) as its own suggestion, in one undo step. Faces without a suggestion are left alone.
+pub fn confirm_own(app: &mut LightcraftApp, gallery: &Gallery, order: &[Entry], face: FaceKey) {
+    let targets = apply_to(&selection(app, gallery), order, face);
+    name_each(app, &own_names(order, &targets), false);
+}
+
+/// "All above" by position: confirm every suggestion from the first tile of `order` through tile `at`, each face as its
+/// own suggestion, in one undo step. Faces without a suggestion are skipped; the selection is not touched.
+pub fn confirm_through(app: &mut LightcraftApp, order: &[Entry], at: usize) {
+    let faces: Vec<FaceKey> = order.get(..=at).unwrap_or(order).iter().map(|e| e.key).collect();
+    name_each(app, &own_names(order, &faces), false);
+}
+
 /// The tile's egui id for one of its parts (`face`, `name`, a button): keyboard focus and the page's A key look it up.
 pub fn widget_id(prefix: &str, part: &str, key: FaceKey) -> egui::Id {
     egui::Id::unique((prefix, part, key.0, key.1))
@@ -305,14 +326,22 @@ fn buttons_for(ui: &mut egui::Ui, tile: &FaceTile, hover: &Hover, pic: Rect) -> 
 
 fn explain_buttons(picture: &egui::Response, b: &Buttons, hover: &Hover) {
     let person = hover.person;
-    if hover.confirm {
+    if hover.confirm && !hover.positional {
         let _ = picture.clone().on_hover_text(format!("Looks like {person} (similarity {:.2}). Use the check to confirm.", hover.score));
     }
     if let Some((_, r)) = &b.above {
-        let _ = r.clone().on_hover_text(format!(
-            "All above: confirm {} faces as {person} (this face and every shown face with equal or higher similarity). Press A.",
-            hover.above_count
-        ));
+        let tip = if hover.positional {
+            format!(
+                "All above: confirm the {} suggested faces from the first one through this one, each as its own suggested name.",
+                hover.above_count
+            )
+        } else {
+            format!(
+                "All above: confirm {} faces as {person} (this face and every shown face with equal or higher similarity). Press A.",
+                hover.above_count
+            )
+        };
+        let _ = r.clone().on_hover_text(tip);
     }
     if let Some((_, r)) = &b.hide {
         let _ = r.clone().on_hover_text(format!("Not {person}: never suggest this face as them again"));

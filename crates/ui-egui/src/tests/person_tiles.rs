@@ -358,7 +358,7 @@ fn the_name_box_on_a_face_offers_the_names_it_rejected_last() {
 }
 
 #[test]
-fn the_unnamed_faces_have_no_hover_buttons() {
+fn unnamed_faces_without_a_suggestion_have_no_hover_buttons() {
     let (mut h, _) = page();
     ok(&mut h, "engine.execute", json!({"command": "view.people"}));
     assert!(widgets(&mut h, "unnamed-face:").len() >= 3);

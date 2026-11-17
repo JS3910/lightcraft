@@ -390,6 +390,7 @@ fn draw_tile<'a>(app: &mut LightcraftApp, ui: &mut egui::Ui, grid: &Grid<'a>, i:
         person: grid.layout.name,
         score: f.score,
         above_count: grid.faces.iter().filter(|c| c.score >= f.score && !app.ui.rejected_faces.contains((c.photo, c.index))).count(),
+        positional: false,
     });
     let suggestion = (!rejected).then_some(grid.layout.name);
     let spec = FaceTile { key, view: f.rect, suggestion, named: !more, prefix: if more { "more" } else { "person" }, hover };
