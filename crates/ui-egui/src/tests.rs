@@ -112,6 +112,7 @@ mod temp_slider;
 mod text_prompt;
 mod titlebar;
 mod tool_overlay;
+mod two_step_reject;
 mod unnamed_tiles;
 mod unsaved;
 mod view_cost;

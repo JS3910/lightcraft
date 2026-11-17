@@ -372,7 +372,7 @@ since you look at each one before anything is named.
 
 ### Rejecting a name
 
-`×` on a More face says "this is not that person", and LightCraft remembers it. The rejected name is kept on the face
+`×` on a face tile says "this is not that person", and LightCraft remembers it. It is on every tile of the Unnamed faces and of a person's page: on a More face or an unnamed face with a suggestion it rejects the suggested name; on a confirmed face it removes the name and rejects it (the face is then no longer that person's); on a tile with nothing left to reject it removes the face box (see below). The rejected name is kept on the face
 itself, in the library only (it is never written into a sidecar or a photo file, and a catalog written before this
 existed simply has none). The tile stays where it is with its strip turned to a question mark until you leave the page,
 and nothing new is suggested straight away. The face never comes back to that person's More; its next visit to the
@@ -382,6 +382,22 @@ rejection. Renaming a person, or merging two, moves the rejections to the new na
 a rejection back in one step, however many faces it covered. Re-reading a photo's metadata from its sidecar replaces its
 regions with the file's but keeps the rejections of every box that is still there (the same box, to within its overlap), and
 synchronizing a folder does the same.
+
+### Removing a face box in two steps
+
+Reject works the same on every face tile, in two steps. The first click on a tile that shows a name (a suggestion, or a
+confirmed face's own name) rejects it and leaves the tile where it is, its strip turned to a question mark, until you leave
+the view; a second click, or the first on a face with no suggestion, removes the face box from the photo. A false detection
+is therefore gone in two clicks without leaving the gallery. The removal is catalog only (the sidecar is never rewritten),
+and the background scan does not detect the box again: a photo that lost its last face box is remembered as searched.
+
+On a selected tile, reject (and the Delete key, when no name box or other text field has the keyboard) acts on the whole
+selection; on an unselected tile, on that face alone. Over a selection it has two levels: while any selected face shows a
+name it only rejects those names and removes nothing, and once none does it removes the face boxes of all of them. However
+many faces and photos that covers (several boxes of one photo included), it is one undo step, and Edit, Undo brings every
+box back with its name and rejections. Face boxes are numbered by their place in the photo's list, so removing one moves
+the later boxes of that photo up; the command removes all of a photo's boxes in one edit, and the People view moves its
+selection and the tiles it keeps as question marks along with them.
 
 
 How well it works: on 755 named faces of marble busts from one museum folder (each face hidden in turn and matched against
@@ -429,7 +445,7 @@ reuses the pictures of its step instead of rendering every face again.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, look-alikes together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, photos}`; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, look-alikes together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, photos}`; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 

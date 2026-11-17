@@ -88,6 +88,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // Esc with no name box open drops the selection
     clear_selection_on_escape(app, ui.ctx());
     let unnamed = super::unnamed::faces(app, now);
+    app.ui.rejected_unnamed.visit("", ui.ctx().cumulative_pass_nr());
     if people.is_empty() && unnamed.faces.is_empty() {
         let (title, body) = if chips.is_empty() {
             ("No people yet", "Face names written to XMP by Lightroom and other apps show up here, and faces found in your photos can be named.")
@@ -161,6 +162,27 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         // the picture cache keeps all of them (a fixed budget would evict and re-request the same few every frame)
         app.renderer.want_variants(shown);
     });
+}
+
+/// The Delete key (or the key labelled Backspace) in the People view rejects the selected faces, as the reject button on one
+/// of them does: their names first, then their face boxes. It waits while a text field, a name box or a dialog has the
+/// keyboard. The key is used up in the People view, selection or not.
+pub(crate) fn handle_delete_key(app: &mut LightcraftApp, ctx: &egui::Context) -> bool {
+    use egui::Key;
+    if app.ui.view != crate::state::ViewMode::People || app.ui.dialog.is_some() || app.ui.name_edit.is_some() || app.ui.card_name.is_some() {
+        return false;
+    }
+    if ctx.egui_wants_keyboard_input()
+        || !ctx.input(|i| i.modifiers == egui::Modifiers::NONE && (i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace)))
+    {
+        return false;
+    }
+    let _ = match app.ui.person_page.clone() {
+        Some(name) => super::person::reject_selected(app, ctx, &name),
+        None => super::unnamed::reject_selected(app, ctx),
+    };
+    // with nothing selected the key does nothing here: it must not reach the photo delete behind the view
+    true
 }
 
 /// Esc with no name box open drops the selected unnamed faces (with a box open, Esc only closes the box).

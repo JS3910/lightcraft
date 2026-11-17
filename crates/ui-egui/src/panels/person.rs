@@ -60,6 +60,23 @@ impl Rejected {
         self.pass = pass;
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.faces.is_empty()
+    }
+
+    /// The face boxes `removed` went from their photos: forget those faces, and move the later ones of the same photos up
+    /// (their region indexes shifted), with the places they had in the list.
+    pub fn forget(&mut self, removed: &[face_tile::FaceKey]) {
+        let gone: Vec<usize> = self.faces.iter().filter(|(f, _)| removed.contains(&(f.photo, f.index))).map(|(_, at)| *at).collect();
+        self.faces.retain(|(f, _)| !removed.contains(&(f.photo, f.index)));
+        for (face, at) in &mut self.faces {
+            if let Some((_, index)) = face_tile::shift_key((face.photo, face.index), removed) {
+                face.index = index;
+            }
+            *at = at.saturating_sub(gone.iter().filter(|g| **g < *at).count());
+        }
+    }
+
     pub fn contains(&self, key: (u64, usize)) -> bool {
         self.faces.iter().any(|(f, _)| (f.photo, f.index) == key)
     }
@@ -140,13 +157,65 @@ fn confirm_above(app: &mut LightcraftApp, ctx: &egui::Context, name: &str, more:
     }
 }
 
-/// The cross on a More tile: this face is not `name`. The catalog keeps that for good (`faces.reject`, undoable); the page
-/// keeps the tile in `at` its place with a question mark until it is left.
-fn reject(app: &mut LightcraftApp, ctx: &egui::Context, name: &str, face: &Face, at: Option<usize>) {
-    match app.run("faces.reject", json!({"faces": [{"photo": face.photo, "index": face.index}], "name": name})) {
-        Ok(_) => app.ui.rejected_faces.remember(face, at.unwrap_or(0)),
-        Err(error) => app.toast(ctx, error),
+/// The faces of a person's two galleries as the page shows them, with the name each strip carries: the faces rejected during
+/// this visit are put back where they were as a lone question mark (no name, so nothing new is offered, and a second
+/// reject removes the box).
+pub struct Lists {
+    pub confirmed: Vec<Face>,
+    pub more: Vec<Face>,
+    pub confirmed_entries: Vec<Entry>,
+    pub more_entries: Vec<Entry>,
+}
+
+/// `page` of the person `name` as the galleries show it.
+pub fn lists(app: &LightcraftApp, page: &PersonPage, name: &str) -> Lists {
+    let confirmed = app.ui.rejected_confirmed.put_back(&page.confirmed);
+    let more = app.ui.rejected_faces.put_back(&page.more);
+    let entries = |faces: &[Face], rejected: &Rejected| -> Vec<Entry> {
+        faces
+            .iter()
+            .map(|f| Entry { key: (f.photo, f.index), suggestion: (!rejected.contains((f.photo, f.index))).then(|| name.to_string()) })
+            .collect()
+    };
+    Lists {
+        confirmed_entries: entries(&confirmed, &app.ui.rejected_confirmed),
+        more_entries: entries(&more, &app.ui.rejected_faces),
+        confirmed,
+        more,
     }
+}
+
+/// Reject on a tile (or the Delete key, with any selected face as `face`) of `gallery` of the page of `lists`: the
+/// faces whose names were rejected keep their tiles, in place, until the page is left.
+pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, gallery: &Gallery, lists: &Lists, face: face_tile::FaceKey) {
+    let (faces, order) = match gallery {
+        Gallery::More(_) => (&lists.more, &lists.more_entries),
+        _ => (&lists.confirmed, &lists.confirmed_entries),
+    };
+    if let face_tile::Rejection::Rejected(keys) = face_tile::reject(app, ctx, gallery, order, face) {
+        for key in keys {
+            let Some(at) = faces.iter().position(|f| (f.photo, f.index) == key) else { continue };
+            let Some(f) = faces.get(at) else { continue };
+            match gallery {
+                Gallery::More(_) => app.ui.rejected_faces.remember(f, at),
+                _ => app.ui.rejected_confirmed.remember(f, at),
+            }
+        }
+    }
+}
+
+/// The Delete key on the open page: reject the selected faces, as the reject button on one of them does. Whether it did.
+pub(crate) fn reject_selected(app: &mut LightcraftApp, ctx: &egui::Context, name: &str) -> bool {
+    let Some(gallery) = app.ui.face_gallery.clone() else { return false };
+    let (Gallery::Confirmed(n) | Gallery::More(n)) = &gallery else { return false };
+    let Some(face) = app.ui.unnamed_selected.iter().min().copied().filter(|_| n == name) else { return false };
+    let Some((cached, _, _, _, page)) = &app.caches.person_page else { return false };
+    if cached != name {
+        return false;
+    }
+    let lists = lists(app, &page.clone(), name);
+    reject(app, ctx, &gallery, &lists, face);
+    true
 }
 
 /// The page-scoped A key takes precedence over View ▸ Visualize Spots only for a visible More tile. Called before the
@@ -191,7 +260,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
     let t = Tokens::get(ui.ctx());
     let now = ui.input(|i| i.time);
     let page = page_for(app, name, now);
-    app.ui.rejected_faces.visit(name, ui.ctx().cumulative_pass_nr());
+    let pass = ui.ctx().cumulative_pass_nr();
+    app.ui.rejected_faces.visit(name, pass);
+    app.ui.rejected_confirmed.visit(name, pass);
     let shown_name = if page.name.is_empty() { name.to_string() } else { page.name.clone() };
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -220,7 +291,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         });
     });
     ui.add_space(6.0);
-    if page.total == 0 {
+    if page.total == 0 && app.ui.rejected_confirmed.is_empty() {
         super::empty_message(
             ui,
             ui.available_rect_before_wrap(),
@@ -230,8 +301,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         return;
     }
     // the faces rejected on this visit stay where they were, as question marks
-    let more_faces = app.ui.rejected_faces.put_back(&page.more);
-    let more: Vec<&Face> = more_faces.iter().collect();
+    let lists = lists(app, &page, &shown_name);
+    let more: Vec<&Face> = lists.more.iter().collect();
     // (what "all above" and the A key may confirm: the faces with a suggestion left)
     let suggested: Vec<&Face> = more.iter().copied().filter(|f| !app.ui.rejected_faces.contains((f.photo, f.index))).collect();
     // what the "More" section says when it has no faces to show
@@ -253,30 +324,24 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
     let edge = super::people::tile_edge(app.ui.thumb_size);
     let tile_h = edge + STRIP_H;
     let (confirmed_gallery, more_gallery) = (Gallery::Confirmed(shown_name.clone()), Gallery::More(shown_name.clone()));
-    let entry = |f: &Face| Entry { key: (f.photo, f.index), suggestion: Some(shown_name.clone()) };
-    let confirmed_entries: Vec<Entry> = page.confirmed.iter().map(entry).collect();
-    // a rejected face has no suggestion: nothing new is offered straight after a rejection
-    let more_entries: Vec<Entry> = more
-        .iter()
-        .map(|f| Entry { suggestion: (!app.ui.rejected_faces.contains((f.photo, f.index))).then(|| shown_name.clone()), ..entry(f) })
-        .collect();
+    let (confirmed_entries, more_entries) = (&lists.confirmed_entries, &lists.more_entries);
     // what was selected and has since been named, hidden or removed is no longer selected
     face_tile::retain_present(app, &confirmed_gallery, &confirmed_entries.iter().map(|e| e.key).collect());
     face_tile::retain_present(app, &more_gallery, &more_entries.iter().map(|e| e.key).collect());
-    let mut hit: Option<(TileEvent, Face)> = None;
+    let mut hit: Option<(TileEvent, Face, Gallery)> = None;
     egui::ScrollArea::vertical().auto_shrink(false).show_viewport(ui, |ui, viewport| {
         let width = ui.available_width();
         let cols = super::people::columns(width, edge);
         let row_h = tile_h + super::people::TILE_GAP;
-        let confirmed_rows = page.confirmed.len().div_ceil(cols);
+        let confirmed_rows = lists.confirmed.len().div_ceil(cols);
         let more_rows = more.len().div_ceil(cols);
         let more_top = PAD + confirmed_rows as f32 * row_h + 12.0;
         let total_h = more_top + SECTION_H + more_rows as f32 * row_h + PAD;
         let (area, _) = ui.allocate_exact_size(vec2(width, total_h), Sense::hover());
         let layout = Layout { name: &shown_name, viewport, cols, edge, ppp };
         let origin = |top: f32| area.min + vec2(PAD, top);
-        let confirmed: Vec<&Face> = page.confirmed.iter().collect();
-        let mut shown = draw_grid(app, ui, &Grid { gallery: &confirmed_gallery, faces: &confirmed, entries: &confirmed_entries, origin: origin(PAD), layout: &layout }, &mut hit);
+        let confirmed: Vec<&Face> = lists.confirmed.iter().collect();
+        let mut shown = draw_grid(app, ui, &Grid { gallery: &confirmed_gallery, faces: &confirmed, entries: confirmed_entries, origin: origin(PAD), layout: &layout }, &mut hit);
         // the "More" section
         let heading = pos2(area.left() + PAD, area.top() + more_top + 14.0);
         ui.painter().text(heading, Align2::LEFT_CENTER, "More", t.semibold(15.0), t.text);
@@ -300,11 +365,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
                 }
             }
         }
-        shown += draw_grid(app, ui, &Grid { gallery: &more_gallery, faces: &more, entries: &more_entries, origin: origin(more_top + SECTION_H), layout: &layout }, &mut hit);
+        shown += draw_grid(app, ui, &Grid { gallery: &more_gallery, faces: &more, entries: more_entries, origin: origin(more_top + SECTION_H), layout: &layout }, &mut hit);
         // the picture cache keeps every face on screen
         app.renderer.want_variants(shown);
     });
-    if let Some((what, f)) = hit {
+    if let Some((what, f, gallery)) = hit {
         match what {
             TileEvent::Open => {
                 let _ = app.run("library.select", json!({"ids": [f.photo], "active": f.photo}));
@@ -318,7 +383,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
                 let _ = app.run("faces.setName", json!({"id": f.photo, "index": f.index, "name": shown_name}));
             }
             TileEvent::ConfirmAbove => confirm_above(app, ui.ctx(), &shown_name, &suggested, f.score),
-            TileEvent::Hide => reject(app, ui.ctx(), &shown_name, &f, more.iter().position(|m| (m.photo, m.index) == (f.photo, f.index))),
+            TileEvent::Hide => reject(app, ui.ctx(), &gallery, &lists, (f.photo, f.index)),
             _ => {}
         }
     }
@@ -347,7 +412,7 @@ struct Layout<'a> {
 
 /// Draw the rows of `grid` that are on screen (only they ask for a face render); returns how many tiles that was. Faces
 /// pressed on in a way the page acts on after the frame (open the photo, the hover buttons) are left in `hit`.
-fn draw_grid<'a>(app: &mut LightcraftApp, ui: &mut egui::Ui, grid: &Grid<'a>, hit: &mut Option<(TileEvent, Face)>) -> usize {
+fn draw_grid<'a>(app: &mut LightcraftApp, ui: &mut egui::Ui, grid: &Grid<'a>, hit: &mut Option<(TileEvent, Face, Gallery)>) -> usize {
     let tile_h = grid.layout.edge + STRIP_H;
     let row_h = tile_h + super::people::TILE_GAP;
     let col_w = grid.layout.edge + super::people::TILE_GAP;
@@ -370,7 +435,7 @@ fn draw_grid<'a>(app: &mut LightcraftApp, ui: &mut egui::Ui, grid: &Grid<'a>, hi
         let Some(f) = grid.faces.get(i) else { break };
         shown += 1;
         if let Some(event) = draw_tile(app, ui, grid, i, cell(i), f) {
-            *hit = Some((event, (*f).clone()));
+            *hit = Some((event, (*f).clone(), grid.gallery.clone()));
         }
     }
     shown
@@ -381,12 +446,14 @@ fn draw_grid<'a>(app: &mut LightcraftApp, ui: &mut egui::Ui, grid: &Grid<'a>, hi
 fn draw_tile<'a>(app: &mut LightcraftApp, ui: &mut egui::Ui, grid: &Grid<'a>, i: usize, r: Rect, f: &Face) -> Option<TileEvent> {
     let key = (f.photo, f.index);
     let more = matches!(grid.gallery, Gallery::More(_));
-    // a face rejected on this visit is a lone question mark: nothing to confirm, only the cross
-    let rejected = more && app.ui.rejected_faces.contains(key);
-    let hover = more.then(|| Hover {
-        confirm: !rejected,
-        above: !rejected,
+    // a face rejected on this visit is a lone question mark: nothing to confirm, only the cross (which removes the box)
+    let rejected = if more { app.ui.rejected_faces.contains(key) } else { app.ui.rejected_confirmed.contains(key) };
+    // a confirmed face has the cross alone
+    let hover = Some(Hover {
+        confirm: more && !rejected,
+        above: more && !rejected,
         hide: true,
+        removes: rejected,
         person: grid.layout.name,
         score: f.score,
         above_count: grid.faces.iter().filter(|c| c.score >= f.score && !app.ui.rejected_faces.contains((c.photo, c.index))).count(),
@@ -476,5 +543,24 @@ mod tests {
         for bad in [Value::Null, json!([]), json!({"confirmed": "x", "more": 5, "total": -1})] {
             assert_eq!(parse(&bad), PersonPage::default(), "{bad}");
         }
+    }
+
+    #[test]
+    fn forgetting_removed_faces_moves_the_later_ones_of_their_photos_up_with_their_places() {
+        let face = |photo, index| Face { photo, index, rect: lightcraft_geom::Rect { x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 }, score: 0.5 };
+        let mut rejected = Rejected::default();
+        rejected.visit("Ann", 1);
+        rejected.remember(&face(1, 0), 0);
+        rejected.remember(&face(1, 1), 1);
+        rejected.remember(&face(2, 0), 2);
+        rejected.forget(&[(1, 0)]);
+        assert!(!rejected.contains((1, 1)) && rejected.contains((1, 0)) && rejected.contains((2, 0)));
+        let shown = rejected.put_back(&[]);
+        assert_eq!(shown.iter().map(|f| (f.photo, f.index)).collect::<Vec<_>>(), [(1, 0), (2, 0)]);
+        assert_eq!(
+            rejected.put_back(&[face(7, 0), face(8, 0)]).iter().map(|f| f.photo).collect::<Vec<_>>(),
+            [1, 2, 7, 8],
+            "places moved up with the removed tile"
+        );
     }
 }

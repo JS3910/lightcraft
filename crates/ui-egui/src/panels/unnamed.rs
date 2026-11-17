@@ -121,8 +121,34 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
 }
 
 /// The list as the name box and the selection see it: the faces in the order shown, with their suggestions.
-pub fn entries(list: &Unnamed) -> Vec<Entry> {
-    list.faces.iter().map(|f| Entry { key: (f.photo, f.index), suggestion: f.suggestion.clone() }).collect()
+pub fn entries(list: &Unnamed, rejected: &super::person::Rejected) -> Vec<Entry> {
+    list.faces.iter().map(|f| Entry { key: (f.photo, f.index), suggestion: shown(f, rejected).map(str::to_string) }).collect()
+}
+
+/// The name on a face's strip: its suggestion, unless it was rejected during this visit (nothing new is offered straight
+/// after a rejection).
+fn shown<'a>(f: &'a UnnamedFace, rejected: &super::person::Rejected) -> Option<&'a str> {
+    f.suggestion.as_deref().filter(|_| !rejected.contains((f.photo, f.index)))
+}
+
+/// Reject on a tile, or the Delete key with any selected face as `face`: the faces whose names were rejected stay in place
+/// as a question mark until the view is left.
+pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, list: &Unnamed, face: FaceKey) {
+    let order = entries(list, &app.ui.rejected_unnamed);
+    if let face_tile::Rejection::Rejected(keys) = face_tile::reject(app, ctx, &Gallery::Unnamed, &order, face) {
+        for f in list.faces.iter().filter(|f| keys.contains(&(f.photo, f.index))) {
+            let at = list.faces.iter().position(|o| (o.photo, o.index) == (f.photo, f.index)).unwrap_or(0);
+            app.ui.rejected_unnamed.remember(&super::person::Face { photo: f.photo, index: f.index, rect: f.view, score: 0.0 }, at);
+        }
+    }
+}
+
+/// The Delete key in the People view: reject the selected unnamed faces. Whether there were any.
+pub(crate) fn reject_selected(app: &mut LightcraftApp, ctx: &egui::Context) -> bool {
+    let Some(face) = app.ui.unnamed_selected.iter().min().copied().filter(|_| app.ui.face_gallery == Some(Gallery::Unnamed)) else { return false };
+    let Some((_, _, _, list)) = app.caches.unnamed.clone() else { return false };
+    reject(app, ctx, &list, face);
+    true
 }
 
 /// One face tile, number `i` of `list`, in `r` (the picture and the name strip). Returns the face a Tab moved the name box
@@ -130,19 +156,22 @@ pub fn entries(list: &Unnamed) -> Vec<Entry> {
 pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize, r: Rect, f: &UnnamedFace, ppp: f32) -> Option<FaceKey> {
     let key = (f.photo, f.index);
     let selected = face_tile::is_selected(app, &Gallery::Unnamed, key);
-    let hover = f.suggestion.as_deref().map(|person| Hover {
-        confirm: true,
-        above: true,
-        hide: false,
-        person,
+    let suggestion = shown(f, &app.ui.rejected_unnamed);
+    // a face with a suggestion can be confirmed; reject is on every tile (and removes the box when there is nothing to reject)
+    let hover = Some(Hover {
+        confirm: suggestion.is_some(),
+        above: suggestion.is_some(),
+        hide: true,
+        removes: suggestion.is_none(),
+        person: suggestion.unwrap_or_default(),
         score: 0.0,
-        above_count: list.faces.iter().take(i + 1).filter(|c| c.suggestion.is_some()).count(),
+        above_count: list.faces.iter().take(i + 1).filter(|c| shown(c, &app.ui.rejected_unnamed).is_some()).count(),
         positional: true,
     });
-    let spec = FaceTile { key, view: f.view, suggestion: f.suggestion.as_deref(), named: false, prefix: "unnamed", hover };
+    let spec = FaceTile { key, view: f.view, suggestion, named: false, prefix: "unnamed", hover };
     match face_tile::show(app, ui, r, &spec, selected, ppp) {
-        TileEvent::Name => face_tile::open(app, ui.ctx(), &Entry { key, suggestion: f.suggestion.clone() }),
-        TileEvent::Click { shift } => face_tile::click(app, &Gallery::Unnamed, &entries(list), i, shift),
+        TileEvent::Name => face_tile::open(app, ui.ctx(), &Entry { key, suggestion: suggestion.map(str::to_string) }),
+        TileEvent::Click { shift } => face_tile::click(app, &Gallery::Unnamed, &entries(list, &app.ui.rejected_unnamed), i, shift),
         // a double click opens the photo, as in the grid; its second click must not undo the first one's selection
         TileEvent::Open => {
             let _ = app.run("library.select", json!({"ids": [f.photo], "active": f.photo}));
@@ -150,12 +179,13 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
             // Escape comes back to the faces
             app.ui.person_from = Some((None, f.photo));
         }
-        TileEvent::Confirm => face_tile::confirm_own(app, &Gallery::Unnamed, &entries(list), key),
-        TileEvent::ConfirmAbove => face_tile::confirm_through(app, &entries(list), i),
-        TileEvent::None | TileEvent::Hide => {}
+        TileEvent::Confirm => face_tile::confirm_own(app, &Gallery::Unnamed, &entries(list, &app.ui.rejected_unnamed), key),
+        TileEvent::ConfirmAbove => face_tile::confirm_through(app, &entries(list, &app.ui.rejected_unnamed), i),
+        TileEvent::Hide => reject(app, ui.ctx(), list, key),
+        TileEvent::None => {}
     }
     if app.ui.name_edit.as_ref().is_some_and(|e| (e.photo, e.index) == key) {
-        let order = entries(list);
+        let order = entries(list, &app.ui.rejected_unnamed);
         return face_tile::name_box_for(app, ui.ctx(), r, &Listing { gallery: &Gallery::Unnamed, order: &order, at: i });
     }
     None

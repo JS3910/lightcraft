@@ -63,6 +63,8 @@ pub struct Hover<'a> {
     pub above_count: usize,
     /// "All above" counts tiles from the first one (Unnamed faces), not by similarity; no similarity is shown.
     pub positional: bool,
+    /// The reject button removes the face box (the tile has no name left to reject).
+    pub removes: bool,
 }
 
 /// What the tile draws.
@@ -211,6 +213,91 @@ fn own_names(order: &[Entry], faces: &[FaceKey]) -> Vec<(FaceKey, String)> {
     faces.iter().filter_map(|k| order.iter().find(|e| e.key == *k).and_then(|e| Some((*k, e.suggestion.clone()?)))).collect()
 }
 
+/// What reject does over `targets` of a list: while any has a name on its strip (a suggestion, or among confirmed faces
+/// the person's name) it only rejects those names and removes nothing; once none has, it removes the face boxes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Plan {
+    /// Reject each face's strip name.
+    Reject(Vec<(FaceKey, String)>),
+    /// Remove these faces' boxes.
+    Remove(Vec<FaceKey>),
+}
+
+/// The two-level reject rule for `targets` (in `order`'s terms: a face missing from it has no name).
+pub fn plan(targets: &[FaceKey], order: &[Entry]) -> Plan {
+    let names = own_names(order, targets);
+    if names.is_empty() { Plan::Remove(targets.to_vec()) } else { Plan::Reject(names) }
+}
+
+/// Where a face's region index ends up when the boxes `removed` go from their photos in one edit: later regions of a photo
+/// move up by the number of removed ones before them. `None` for a face that is itself removed.
+pub fn shift_key(key: FaceKey, removed: &[FaceKey]) -> Option<FaceKey> {
+    if removed.contains(&key) {
+        return None;
+    }
+    let before = removed.iter().filter(|(p, i)| *p == key.0 && *i < key.1).collect::<HashSet<_>>().len();
+    Some((key.0, key.1.saturating_sub(before)))
+}
+
+/// What a reject did.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Rejection {
+    /// These faces had their strip name rejected (the gallery keeps their tiles in place as a question mark).
+    Rejected(Vec<FaceKey>),
+    /// The boxes were removed (the view's own state is already put right).
+    Removed,
+    /// Nothing happened (a command failed: the user was told).
+    Nothing,
+}
+
+/// The reject button, or the Delete key, on a tile of `gallery` (`face` is a tile, or any selected face for the key):
+/// reject the names of every face it applies to (the selection when `face` is selected, else `face` alone) while any has
+/// one, else remove their face boxes. Either way one command, so one undo step.
+pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, gallery: &Gallery, order: &[Entry], face: FaceKey) -> Rejection {
+    let targets = apply_to(&selection(app, gallery), order, face);
+    match plan(&targets, order) {
+        Plan::Reject(names) => {
+            let faces: Vec<Value> = names.iter().map(|((photo, index), n)| json!({"photo": photo, "index": index, "name": n})).collect();
+            // a confirmed face also loses the name it was rejected as
+            let clear = matches!(gallery, Gallery::Confirmed(_));
+            match app.run("faces.reject", json!({"faces": faces, "clearName": clear})) {
+                Ok(_) => Rejection::Rejected(names.into_iter().map(|(k, _)| k).collect()),
+                Err(error) => {
+                    app.toast(ctx, error);
+                    Rejection::Nothing
+                }
+            }
+        }
+        Plan::Remove(keys) => {
+            let faces: Vec<Value> = keys.iter().map(|(photo, index)| json!({"photo": photo, "index": index})).collect();
+            match app.run("faces.removeBoxes", json!({"faces": faces})) {
+                Ok(_) => {
+                    after_removal(app, &keys);
+                    Rejection::Removed
+                }
+                Err(error) => {
+                    app.toast(ctx, error);
+                    Rejection::Nothing
+                }
+            }
+        }
+    }
+}
+
+/// The face boxes `removed` are gone, and later boxes of the same photos have moved up: put right everything the view
+/// holds by (photo, index): the selection, the faces rejected in place, an open name box.
+fn after_removal(app: &mut LightcraftApp, removed: &[FaceKey]) {
+    app.ui.unnamed_selected = std::mem::take(&mut app.ui.unnamed_selected).into_iter().filter_map(|k| shift_key(k, removed)).collect();
+    app.ui.unnamed_anchor = None;
+    app.ui.unnamed_scroll = None;
+    if app.ui.name_edit.as_ref().is_some_and(|e| removed.iter().any(|(p, _)| *p == e.photo)) {
+        app.ui.name_edit = None;
+    }
+    for set in [&mut app.ui.rejected_faces, &mut app.ui.rejected_unnamed, &mut app.ui.rejected_confirmed] {
+        set.forget(removed);
+    }
+}
+
 /// The check on a tile of `gallery`: confirm each face it applies to (the selection when `face` is selected, else `face`
 /// alone) as its own suggestion, in one undo step. Faces without a suggestion are left alone.
 pub fn confirm_own(app: &mut LightcraftApp, gallery: &Gallery, order: &[Entry], face: FaceKey) {
@@ -344,7 +431,14 @@ fn explain_buttons(picture: &egui::Response, b: &Buttons, hover: &Hover) {
         let _ = r.clone().on_hover_text(tip);
     }
     if let Some((_, r)) = &b.hide {
-        let _ = r.clone().on_hover_text(format!("Not {person}: never suggest this face as them again"));
+        let tip = if hover.removes {
+            crate::i18n::tr("Remove this face box from the photo").to_string()
+        } else if person.is_empty() {
+            crate::i18n::tr("Not this person: never suggest this name for this face again").to_string()
+        } else {
+            crate::i18n::tr_format!("Not {person}: never suggest this face as them again", person = person)
+        };
+        let _ = r.clone().on_hover_text(tip);
     }
     if let Some((_, r)) = &b.confirm {
         let _ = r.clone().on_hover_text(format!("Confirm as {person}"));
@@ -548,5 +642,28 @@ mod tests {
         assert_eq!(neighbour(&o, 0, Step::Next, &[(1, 1), (1, 2), (1, 3)]), None);
         assert_eq!(neighbour(&order(1), 0, Step::Next, &[]), None);
         assert_eq!(neighbour(&[], 0, Step::Next, &[]), None);
+    }
+
+    #[test]
+    fn reject_clears_names_while_any_target_has_one_and_removes_boxes_once_none_has() {
+        let o = vec![
+            Entry { key: (1, 0), suggestion: Some("Ann".into()) },
+            Entry { key: (1, 1), suggestion: None },
+            Entry { key: (2, 0), suggestion: Some("Bob".into()) },
+        ];
+        assert_eq!(plan(&[(1, 0), (1, 1), (2, 0)], &o), Plan::Reject(vec![((1, 0), "Ann".into()), ((2, 0), "Bob".into())]));
+        assert_eq!(plan(&[(1, 1)], &o), Plan::Remove(vec![(1, 1)]));
+        assert_eq!(plan(&[(9, 9)], &o), Plan::Remove(vec![(9, 9)]), "a face the list does not know has nothing to reject");
+    }
+
+    #[test]
+    fn later_regions_of_a_photo_move_up_when_boxes_before_them_go() {
+        let removed = [(1, 0), (1, 2), (2, 1)];
+        assert_eq!(shift_key((1, 1), &removed), Some((1, 0)));
+        assert_eq!(shift_key((1, 3), &removed), Some((1, 1)));
+        assert_eq!(shift_key((2, 0), &removed), Some((2, 0)));
+        assert_eq!(shift_key((2, 2), &removed), Some((2, 1)));
+        assert_eq!(shift_key((1, 2), &removed), None, "a removed face is gone");
+        assert_eq!(shift_key((1, 5), &[(1, 0), (1, 0)]), Some((1, 4)), "a face listed twice counts once");
     }
 }

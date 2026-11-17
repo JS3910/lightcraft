@@ -14,9 +14,9 @@ use crate::panels::person::{Face, PersonPage};
 use crate::state::ViewMode;
 use crate::{LightcraftApp, Services};
 
-const T: Duration = Duration::from_secs(20);
+pub(super) const T: Duration = Duration::from_secs(20);
 
-fn region(x: f64, name: Option<&str>) -> lightcraft_meta::Region {
+pub(super) fn region(x: f64, name: Option<&str>) -> lightcraft_meta::Region {
     lightcraft_meta::Region {
         rect: lightcraft_geom::Rect { x0: x, y0: 0.2, x1: x + 0.2, y1: 0.6 },
         kind: lightcraft_meta::RegionKind::Face,
@@ -26,7 +26,7 @@ fn region(x: f64, name: Option<&str>) -> lightcraft_meta::Region {
     }
 }
 
-fn set_regions(h: &mut Headless, id: PhotoId, regions: Vec<lightcraft_meta::Region>) {
+pub(super) fn set_regions(h: &mut Headless, id: PhotoId, regions: Vec<lightcraft_meta::Region>) {
     let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
     meta.regions = regions;
     h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
@@ -35,7 +35,7 @@ fn set_regions(h: &mut Headless, id: PhotoId, regions: Vec<lightcraft_meta::Regi
 /// What the engine would say about Ann Lee's page, rebuilt from the catalog (the headless build has no recognition):
 /// her named faces, and every unnamed face as a More face. Scores: photos 0 to 4 0.9, 0.85, 0.8, 0.8 and 0.7 (a tie
 /// between the third and the fourth), the rest 0.5.
-fn page_now(h: &Headless) -> PersonPage {
+pub(super) fn page_now(h: &Headless) -> PersonPage {
     let mut page = PersonPage { name: "Ann Lee".into(), ready: true, ..Default::default() };
     for (n, p) in h.app.session.catalog.photos().enumerate() {
         for (i, r) in p.meta.regions.iter().enumerate() {
@@ -53,26 +53,26 @@ fn page_now(h: &Headless) -> PersonPage {
     page
 }
 
-fn inject(h: &mut Headless) {
+pub(super) fn inject(h: &mut Headless) {
     let page = page_now(h);
     h.app.caches.person_page = Some(("Ann Lee".into(), h.app.session.catalog.revision, h.app.caches.faces_indexed, f64::MAX, Arc::new(page)));
     h.step();
     h.step();
 }
 
-fn ok(h: &mut Headless, method: &str, params: serde_json::Value) {
+pub(super) fn ok(h: &mut Headless, method: &str, params: serde_json::Value) {
     let r = h.request(method, params.clone(), T);
     assert_eq!(r["ok"], true, "{method} {params}: {r}");
     inject(h);
 }
 
-fn key(h: &mut Headless, key: &str) {
+pub(super) fn key(h: &mut Headless, key: &str) {
     ok(h, "ui.key", json!({"key": key}));
 }
 
 /// Ann Lee's page. Photos 0 and 1 hold her confirmed faces (photo 1 also a face named Wrong Person); photo 2 an unnamed
 /// face and a Bob Ray face; photos 3 and 4 an unnamed face each. The More faces are (p2,0) 0.80, (p3,0) 0.80, (p4,0) 0.70.
-fn page() -> (Headless, [PhotoId; 5]) {
+pub(super) fn page() -> (Headless, [PhotoId; 5]) {
     let services = Services { png: None, write_shared: Some(Arc::new(|_: &str, _: &[u8]| Ok(()))), ..Default::default() };
     let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
     let mut h = Headless::new(app, [1400.0, 900.0], 1.0);
@@ -89,36 +89,36 @@ fn page() -> (Headless, [PhotoId; 5]) {
     (h, [ids[0], ids[1], ids[2], ids[3], ids[4]])
 }
 
-fn names(h: &Headless, id: PhotoId) -> Vec<Option<String>> {
+pub(super) fn names(h: &Headless, id: PhotoId) -> Vec<Option<String>> {
     h.app.session.catalog.photo(id).unwrap().meta.regions.iter().map(|r| r.name.clone()).collect()
 }
 
-fn rejected(h: &Headless, id: PhotoId) -> Vec<String> {
+pub(super) fn rejected(h: &Headless, id: PhotoId) -> Vec<String> {
     h.app.session.catalog.photo(id).unwrap().meta.regions[0].rejected.clone()
 }
 
-fn n(s: &str) -> Option<String> {
+pub(super) fn n(s: &str) -> Option<String> {
     Some(s.to_string())
 }
 
-fn widgets(h: &mut Headless, filter: &str) -> Vec<String> {
+pub(super) fn widgets(h: &mut Headless, filter: &str) -> Vec<String> {
     let r = h.request("ui.widgets", json!({"filter": filter}), T);
     r["result"].as_array().into_iter().flatten().filter_map(|w| w["id"].as_str().map(str::to_string)).collect()
 }
 
-fn more(id: PhotoId, i: usize) -> String {
+pub(super) fn more(id: PhotoId, i: usize) -> String {
     format!("more-face:{}:{i}", id.0)
 }
 
-fn more_name(id: PhotoId, i: usize) -> String {
+pub(super) fn more_name(id: PhotoId, i: usize) -> String {
     format!("more-name:{}:{i}", id.0)
 }
 
-fn done(id: PhotoId, i: usize) -> String {
+pub(super) fn done(id: PhotoId, i: usize) -> String {
     format!("person-face:{}:{i}", id.0)
 }
 
-fn done_name(id: PhotoId, i: usize) -> String {
+pub(super) fn done_name(id: PhotoId, i: usize) -> String {
     format!("person-name:{}:{i}", id.0)
 }
 
@@ -279,10 +279,10 @@ fn a_box_on_a_more_tile_ignores_a_selection_in_the_other_gallery() {
 #[test]
 fn the_hover_buttons_on_more_faces_confirm_all_above_and_reject() {
     let (mut h, [_, _, p2, p3, p4]) = page();
-    // the buttons exist on More tiles, and not on the confirmed ones
+    // More tiles have all three buttons; the confirmed ones the cross alone
     for kind in ["face-confirm", "face-above", "face-hide"] {
         assert!(widgets(&mut h, &format!("more-{kind}:")).contains(&format!("more-{kind}:{}:0", p3.0)), "{kind}");
-        assert!(widgets(&mut h, &format!("person-{kind}:")).is_empty(), "{kind}");
+        assert_eq!(widgets(&mut h, &format!("person-{kind}:")).is_empty(), kind != "face-hide", "{kind}");
     }
     // confirm: this face alone
     ok(&mut h, "ui.clickWidget", json!({"id": format!("more-face-confirm:{}:0", p4.0)}));
@@ -358,13 +358,14 @@ fn the_name_box_on_a_face_offers_the_names_it_rejected_last() {
 }
 
 #[test]
-fn unnamed_faces_without_a_suggestion_have_no_hover_buttons() {
+fn unnamed_faces_without_a_suggestion_have_the_reject_button_alone() {
     let (mut h, _) = page();
     ok(&mut h, "engine.execute", json!({"command": "view.people"}));
     assert!(widgets(&mut h, "unnamed-face:").len() >= 3);
-    for kind in ["confirm", "above", "hide"] {
+    for kind in ["confirm", "above"] {
         assert!(widgets(&mut h, &format!("unnamed-face-{kind}:")).is_empty(), "{kind}");
     }
+    assert!(widgets(&mut h, "unnamed-face-hide:").len() >= 3, "reject is on every tile: a second one removes the box");
 }
 
 #[test]

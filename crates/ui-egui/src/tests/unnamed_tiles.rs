@@ -28,7 +28,7 @@ fn set_regions(h: &mut Headless, id: PhotoId, regions: Vec<lightcraft_meta::Regi
     h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
 }
 
-fn step(h: &mut Headless) {
+pub(super) fn step(h: &mut Headless) {
     h.step();
     h.step();
 }
@@ -45,7 +45,7 @@ fn key(h: &mut Headless, key: &str) {
 
 /// The People view over a demo library: photo 0 has Ann Lee and one unnamed face, photos 1 and 2 only unnamed faces
 /// (four unnamed faces in all: (p0,1), (p1,0), (p1,1), (p2,0)).
-fn people() -> (Headless, [PhotoId; 3]) {
+pub(super) fn people() -> (Headless, [PhotoId; 3]) {
     let services = Services { png: None, write_shared: Some(Arc::new(|_: &str, _: &[u8]| Ok(()))), ..Default::default() };
     let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
     let mut h = Headless::new(app, [1400.0, 900.0], 1.0);
@@ -60,11 +60,11 @@ fn people() -> (Headless, [PhotoId; 3]) {
     (h, [ids[0], ids[1], ids[2]])
 }
 
-fn picture(id: PhotoId, i: usize) -> String {
+pub(super) fn picture(id: PhotoId, i: usize) -> String {
     format!("unnamed-face:{}:{i}", id.0)
 }
 
-fn strip(id: PhotoId, i: usize) -> String {
+pub(super) fn strip(id: PhotoId, i: usize) -> String {
     format!("unnamed-name:{}:{i}", id.0)
 }
 
@@ -77,7 +77,7 @@ fn n(s: &str) -> Option<String> {
 }
 
 /// Give faces a suggested name as if recognition had looked at them (the list is cached for the current catalog).
-fn suggest(h: &mut Headless, who: &[(PhotoId, usize, &str)]) {
+pub(super) fn suggest(h: &mut Headless, who: &[(PhotoId, usize, &str)]) {
     let mut list = (*crate::panels::unnamed::faces(&mut h.app, 0.0)).clone();
     for f in &mut list.faces {
         f.suggestion = who.iter().find(|(p, i, _)| p.0 == f.photo && *i == f.index).map(|(_, _, s)| s.to_string());
@@ -269,14 +269,14 @@ fn suggest_all_but(h: &mut Headless, except: &[usize]) -> Vec<(u64, usize)> {
 }
 
 #[test]
-fn confirm_and_all_above_are_on_suggested_unnamed_tiles_only() {
+fn confirm_and_all_above_are_on_suggested_unnamed_tiles_only_and_reject_on_every_one() {
     let (mut h, _) = people();
     let faces = suggest_all_but(&mut h, &[1]);
     for (i, f) in faces.iter().enumerate() {
         for kind in ["confirm", "above"] {
             assert_eq!(widgets(&mut h, &button(kind, *f)).len(), usize::from(i != 1), "{kind} on tile {i}");
         }
-        assert!(widgets(&mut h, &button("hide", *f)).is_empty(), "no hide button on tile {i}");
+        assert_eq!(widgets(&mut h, &button("hide", *f)).len(), 1, "reject on every tile, {i}");
     }
 }
 

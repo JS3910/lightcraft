@@ -153,6 +153,11 @@ pub struct UiState {
     /// until it is left (the catalog already holds the rejections).
     #[serde(skip)]
     pub rejected_faces: crate::panels::person::Rejected,
+    /// The same for the People view's unnamed faces and for a person's confirmed faces (a rejected confirmed face has lost its name).
+    #[serde(skip)]
+    pub rejected_unnamed: crate::panels::person::Rejected,
+    #[serde(skip)]
+    pub rejected_confirmed: crate::panels::person::Rejected,
     /// The unnamed faces selected in the People view (photo, region), the list position last clicked (Shift-click selects a
     /// range from it) and the face the view should scroll to (Tab moved the name box there).
     #[serde(skip)]
@@ -457,6 +462,8 @@ impl Default for UiState {
             last_person: None,
             cull_burst: None,
             rejected_faces: Default::default(),
+            rejected_unnamed: Default::default(),
+            rejected_confirmed: Default::default(),
             unnamed_selected: Default::default(),
             unnamed_anchor: None,
             face_gallery: None,

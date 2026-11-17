@@ -388,6 +388,9 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     {
         return;
     }
+    if app.recording_shortcut.is_none() && crate::panels::people::handle_delete_key(app, ctx) {
+        return;
+    }
     // don't steal keys from text fields or from the keymap editor recording a shortcut
     if keyboard_owned(app, ctx) || app.recording_shortcut.is_some() || app.ui.name_edit.is_some() || app.ui.card_name.is_some() {
         return;
