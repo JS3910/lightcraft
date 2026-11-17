@@ -83,6 +83,7 @@ pub use state::UiState;
 pub use widgets::album_picker;
 pub use widgets::button;
 pub use widgets::date_picker;
+pub use widgets::name_box;
 pub use widgets::progress;
 pub use widgets::rating;
 pub use widgets::text_field;

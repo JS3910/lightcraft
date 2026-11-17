@@ -218,21 +218,72 @@ pub(super) fn region_overlay(
             crate::widgets::announce(&resp, crate::i18n::tr("Click to name this face"));
             register(ui, format!("regionLabel:{index}"), label);
             if resp.on_hover_text(crate::i18n::tr("Click to name this face")).clicked() {
-                let start = r.name.clone().or_else(|| hint.and_then(|h| h.suggestion.as_ref().map(|(n, _)| n.clone()))).unwrap_or_default();
-                *editing = Some(crate::state::NameEdit { photo: photo.id.0, index, text: start, fresh: true });
+                *editing = Some(open_name_edit(ui.ctx(), photo, index, hints));
             }
         }
         if editing_this && let Some(e) = editing.as_mut() {
             let candidates = hint.map(|h| h.candidates.as_slice()).unwrap_or(&[]);
-            match crate::panels::faces::name_editor(ui.ctx(), pos2(label.left(), rect.bottom() + 8.0), e, candidates, people, setup) {
-                crate::panels::faces::Editor::Submit(name) => edit = Some(RegionEdit::Name(index, name)),
-                crate::panels::faces::Editor::Setup => edit = Some(RegionEdit::SetUp),
-                crate::panels::faces::Editor::Cancel => *editing = None,
-                crate::panels::faces::Editor::Open => {}
+            let spec = crate::name_box::NameBox { id: "faceName", candidates, people, current: r.name.as_deref(), setup };
+            let outcome = crate::name_box::show(ui.ctx(), pos2(label.left(), rect.bottom() + 8.0), &mut e.input, &spec);
+            if let Some(done) = end_name_edit(ui.ctx(), photo, index, hints, outcome, editing) {
+                edit = Some(done);
             }
         }
     }
     edit
+}
+
+/// The name box for face `index` of `photo`, opened on its name, else on the suggestion for it, else empty.
+fn open_name_edit(
+    ctx: &egui::Context,
+    photo: &lightcraft_catalog::Photo,
+    index: usize,
+    hints: Option<&crate::panels::faces::Hints>,
+) -> crate::state::NameEdit {
+    let current = photo.meta.regions.get(index).and_then(|r| r.name.clone());
+    let suggestion = hints.and_then(|h| h.by_index.get(&index)).and_then(|h| h.suggestion.as_ref()).map(|(n, _)| n.clone());
+    let start = current.clone().or(suggestion).unwrap_or_default();
+    crate::state::NameEdit { photo: photo.id.0, index, current, input: crate::name_box::NameBoxState::open(start, ctx.cumulative_pass_nr()) }
+}
+
+/// The face Tab (or Shift-Tab) leads to from face `index`: the next or previous face of the photo, going round.
+fn neighbour_face(photo: &lightcraft_catalog::Photo, index: usize, step: crate::name_box::Step) -> Option<usize> {
+    let faces: Vec<usize> =
+        photo.meta.regions.iter().enumerate().filter(|(_, r)| r.kind == lightcraft_meta::RegionKind::Face).map(|(i, _)| i).collect();
+    let at = faces.iter().position(|i| *i == index)?;
+    let to = match step {
+        crate::name_box::Step::Next => at.checked_add(1).filter(|n| *n < faces.len()).unwrap_or(0),
+        crate::name_box::Step::Previous => at.checked_sub(1).unwrap_or(faces.len().saturating_sub(1)),
+    };
+    faces.get(to).copied()
+}
+
+/// What an ended name box means for the loupe: close it, save, and on Tab open the next face's box.
+fn end_name_edit(
+    ctx: &egui::Context,
+    photo: &lightcraft_catalog::Photo,
+    index: usize,
+    hints: Option<&crate::panels::faces::Hints>,
+    outcome: crate::name_box::Outcome,
+    editing: &mut Option<crate::state::NameEdit>,
+) -> Option<RegionEdit> {
+    use crate::name_box::Outcome;
+    match outcome {
+        Outcome::Open => None,
+        Outcome::Cancel | Outcome::Untouched => {
+            *editing = None;
+            None
+        }
+        Outcome::Setup => Some(RegionEdit::SetUp),
+        Outcome::Save(name) => {
+            *editing = None;
+            Some(RegionEdit::Name(index, name))
+        }
+        Outcome::Move { step, save } => {
+            *editing = neighbour_face(photo, index, step).map(|to| open_name_edit(ctx, photo, to, hints));
+            save.map(|name| RegionEdit::Name(index, name))
+        }
+    }
 }
 
 // ------------------------------------------------------------------------ masks

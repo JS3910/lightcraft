@@ -13,14 +13,14 @@ impl Dialog {
     }
 }
 
-/// A face's name being typed in the loupe: which face, and what has been typed so far.
+/// A face's name being typed in the loupe: which face, the name it had when the box opened, and the name box's state.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NameEdit {
     pub photo: u64,
     pub index: usize,
-    pub text: String,
-    /// Just opened: the text box takes the keyboard focus once.
-    pub fresh: bool,
+    /// The face's name when the box opened (none: unnamed).
+    pub current: Option<String>,
+    pub input: crate::name_box::NameBoxState,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

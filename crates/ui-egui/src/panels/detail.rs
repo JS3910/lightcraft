@@ -453,8 +453,11 @@ fn face_boxes(
             let _ = app.run("photo.removeRegion", json!({"id": id.0, "index": index}));
         }
         Some(RegionEdit::Name(index, name)) => {
-            app.ui.name_edit = None;
-            let _ = app.run("faces.setName", json!({"id": id.0, "index": index, "name": name}));
+            // (the box has closed or moved to the next face itself) nothing to store when the face already has exactly this
+            let has = photo.meta.regions.get(index).and_then(|r| r.name.as_deref()).unwrap_or("");
+            if has != name {
+                let _ = app.run("faces.setName", json!({"id": id.0, "index": index, "name": name}));
+            }
         }
         Some(RegionEdit::Resize(index, r)) => {
             let _ = app.run("photo.setRegion", json!({"id": id.0, "index": index, "rect": {"x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1}}));

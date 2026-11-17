@@ -290,6 +290,11 @@ impl LightcraftApp {
         // Recent-library checks and launch-list keys read focus/time/keys: they belong to the UI
         // phase, not the hidden-capable `logic` tick (plan §4.5 / migration input contract).
         panels::library_problem::logic(self, ctx);
+        // a name box whose face is no longer drawn (another photo, another view) closes without effect
+        let pass = ctx.cumulative_pass_nr();
+        if self.ui.name_edit.as_ref().is_some_and(|e| e.input.is_stale(pass)) {
+            self.ui.name_edit = None;
+        }
         if self.fonts_ready && !updates_ui::blocks_input(self) {
             shortcuts::handle(self, ctx);
         }

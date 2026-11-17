@@ -243,8 +243,18 @@ the background, what each face in your library looks like to the model, and uses
 suggest names for the ones you have not:
 
 - An unnamed face with a good match gets a dim label such as **Jane Doe?** in the loupe. Click it and the name box opens
-  with the guess filled in; Enter confirms. Any other unnamed face shows **Add name** when you point at it. Clicking a name
-  lets you change it, and clearing the box removes it. Typing completes from the people you have already named.
+  with the guess filled in and selected, so the first letter you type replaces it; Enter confirms it. Any other unnamed face shows **Add name** when you point at it. Clicking a name
+  opens the box on it the same way. Clearing the box of a named face and pressing Enter removes the name.
+- **The name box** completes what you type from the people you have already named, in the box itself with the completed
+  part selected: Backspace removes it, so a new name that begins like an existing one can still be typed. A short list of
+  matching names (at most seven; names that begin with what you typed before names where a later word does, the closest
+  people to the face first, then alphabetical) sits below; Up and Down walk it, a click picks one. Enter saves (the listed
+  name, else the text), Esc cancels and restores what was there, a click outside saves text you changed and otherwise just
+  closes the box. Tab and Shift-Tab save what you typed and move to the next or previous face of the photo; they never
+  confirm a suggestion you did not touch. A name that differs from an existing person only in capitalization is stored
+  with that person's spelling, unless the face already has that name (so you can still correct a capitalization). A new
+  name makes a new person without a question. The box is one component (`crates/ui-egui/src/widgets/name_box.rs`) the
+  People view reuses.
 - **Nothing is ever named for you.** A suggestion is only a label until you confirm it, and a suggestion appears only when
   the match is strong *and* clearly ahead of the next person: it is better to leave a face unnamed than to name it wrongly.
   Naming a face also makes it one of the faces the others are compared with, so the suggestions improve as you go.
