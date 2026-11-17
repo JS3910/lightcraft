@@ -327,6 +327,7 @@ fn draw_tile<'a>(app: &mut LightcraftApp, ui: &mut egui::Ui, grid: &Grid<'a>, i:
         person: grid.layout.name,
         score: f.score,
         above_count: grid.faces.iter().filter(|c| c.score >= f.score).count(),
+        positional: false,
     });
     let spec = FaceTile { key, view: f.rect, suggestion: Some(grid.layout.name), named: !more, prefix: if more { "more" } else { "person" }, hover };
     let selected = face_tile::is_selected(app, grid.gallery, key);

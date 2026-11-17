@@ -319,7 +319,11 @@ the named ones recognise carries the name they suggest on its name strip. Every 
 shown: the suggested name followed by a question mark (**Jane Doe?**), or a lone **?** when there is no suggestion. Faces are
 named in place: click a strip and the shared name box opens on that tile (a suggestion is filled in and selected, so the
 first letter you type replaces it); Tab and Shift-Tab move the box to the next and previous tile without confirming
-untouched suggestions. Click a picture to select it (Shift-click selects a range, **Select all** takes every one listed;
+untouched suggestions. Point at a tile with a suggestion and a check and an up arrow appear on the picture: the check
+confirms the face as its suggestion (when the tile is selected, every selected face that has a suggestion, each as its own),
+and the up arrow confirms every suggestion from the first tile through this one, each face as its own suggested name
+(skipping faces without one); each is one undo step, and a tile without a suggestion shows neither. A tile outside the
+selection is acted on alone and the selection stays. Click a picture to select it (Shift-click selects a range, **Select all** takes every one listed;
 Esc with no box open clears the selection), double-click to open the photo. With faces selected, the box on a selected
 tile acts on all of them: type a name and Enter names every selected face, and Enter on an untouched box gives each
 selected face its own suggestion and leaves selected faces without one alone. A box on a tile outside the selection

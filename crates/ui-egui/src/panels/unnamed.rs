@@ -11,7 +11,7 @@ use std::sync::Arc;
 use egui::{Align2, Rect, pos2, vec2};
 use serde_json::{Value, json};
 
-use super::face_tile::{self, Entry, FaceKey, FaceTile, Gallery, Listing, TileEvent};
+use super::face_tile::{self, Entry, FaceKey, FaceTile, Gallery, Hover, Listing, TileEvent};
 use crate::LightcraftApp;
 use crate::theme::Tokens;
 use crate::widgets::register;
@@ -130,7 +130,16 @@ pub fn entries(list: &Unnamed) -> Vec<Entry> {
 pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize, r: Rect, f: &UnnamedFace, ppp: f32) -> Option<FaceKey> {
     let key = (f.photo, f.index);
     let selected = face_tile::is_selected(app, &Gallery::Unnamed, key);
-    let spec = FaceTile { key, view: f.view, suggestion: f.suggestion.as_deref(), named: false, prefix: "unnamed", hover: None };
+    let hover = f.suggestion.as_deref().map(|person| Hover {
+        confirm: true,
+        above: true,
+        hide: false,
+        person,
+        score: 0.0,
+        above_count: list.faces.iter().take(i + 1).filter(|c| c.suggestion.is_some()).count(),
+        positional: true,
+    });
+    let spec = FaceTile { key, view: f.view, suggestion: f.suggestion.as_deref(), named: false, prefix: "unnamed", hover };
     match face_tile::show(app, ui, r, &spec, selected, ppp) {
         TileEvent::Name => face_tile::open(app, ui.ctx(), &Entry { key, suggestion: f.suggestion.clone() }),
         TileEvent::Click { shift } => face_tile::click(app, &Gallery::Unnamed, &entries(list), i, shift),
@@ -141,7 +150,9 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
             // Escape comes back to the faces
             app.ui.person_from = Some((None, f.photo));
         }
-        TileEvent::None | TileEvent::Confirm | TileEvent::ConfirmAbove | TileEvent::Hide => {}
+        TileEvent::Confirm => face_tile::confirm_own(app, &Gallery::Unnamed, &entries(list), key),
+        TileEvent::ConfirmAbove => face_tile::confirm_through(app, &entries(list), i),
+        TileEvent::None | TileEvent::Hide => {}
     }
     if app.ui.name_edit.as_ref().is_some_and(|e| (e.photo, e.index) == key) {
         let order = entries(list);

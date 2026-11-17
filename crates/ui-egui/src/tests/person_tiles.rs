@@ -299,7 +299,7 @@ fn hide_removes_a_more_face_for_the_session_and_names_nothing() {
 }
 
 #[test]
-fn the_unnamed_faces_have_no_hover_buttons() {
+fn unnamed_faces_without_a_suggestion_have_no_hover_buttons() {
     let (mut h, _) = page();
     ok(&mut h, "engine.execute", json!({"command": "view.people"}));
     assert!(widgets(&mut h, "unnamed-face:").len() >= 3);

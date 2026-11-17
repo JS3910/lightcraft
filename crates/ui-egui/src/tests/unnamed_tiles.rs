@@ -243,3 +243,90 @@ fn only_one_name_box_is_open_in_the_people_view() {
     ok(&mut h, "ui.clickWidget", json!({"id": strip(p1, 1)}));
     assert!(h.app.ui.name_edit.is_some() && h.app.ui.card_name.is_none(), "and the tile's replaced the card's");
 }
+
+/// The faces in the order the view shows them.
+fn order(h: &Headless) -> Vec<(u64, usize)> {
+    h.app.caches.unnamed.as_ref().unwrap().3.faces.iter().map(|f| (f.photo, f.index)).collect()
+}
+
+fn name_of(h: &Headless, face: (u64, usize)) -> Option<String> {
+    names(h, PhotoId(face.0)).get(face.1).cloned().flatten()
+}
+
+fn button(kind: &str, face: (u64, usize)) -> String {
+    format!("unnamed-face-{kind}:{}:{}", face.0, face.1)
+}
+
+/// Suggest `Name<i>` for every face of the list whose position is not in `except`.
+fn suggest_all_but(h: &mut Headless, except: &[usize]) -> Vec<(u64, usize)> {
+    let faces = order(h);
+    let who: Vec<(PhotoId, usize, String)> =
+        faces.iter().enumerate().filter(|(i, _)| !except.contains(i)).map(|(i, f)| (PhotoId(f.0), f.1, format!("Name{i}"))).collect();
+    let who: Vec<(PhotoId, usize, &str)> = who.iter().map(|(p, i, s)| (*p, *i, s.as_str())).collect();
+    suggest(h, &who);
+    faces
+}
+
+#[test]
+fn confirm_and_all_above_are_on_suggested_unnamed_tiles_only() {
+    let (mut h, _) = people();
+    let faces = suggest_all_but(&mut h, &[1]);
+    for (i, f) in faces.iter().enumerate() {
+        for kind in ["confirm", "above"] {
+            assert_eq!(widgets(&mut h, &button(kind, *f)).len(), usize::from(i != 1), "{kind} on tile {i}");
+        }
+        assert!(widgets(&mut h, &button("hide", *f)).is_empty(), "no hide button on tile {i}");
+    }
+}
+
+#[test]
+fn confirm_names_the_face_with_its_suggestion_in_one_undo_step_and_keeps_the_selection() {
+    let (mut h, _) = people();
+    let faces = suggest_all_but(&mut h, &[]);
+    ok(&mut h, "ui.clickWidget", json!({"id": format!("unnamed-face:{}:{}", faces[3].0, faces[3].1)}));
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": button("confirm", faces[1])}));
+    assert_eq!(name_of(&h, faces[1]).as_deref(), Some("Name1"));
+    assert_eq!(faces.iter().filter(|f| name_of(&h, **f).is_some()).count(), 1, "only that face");
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    assert_eq!(name_of(&h, faces[3]), None);
+    assert_eq!(selected(&h), 1, "an unselected tile's button leaves the selection as it is");
+    ok(&mut h, "engine.execute", json!({"command": "edit.undo"}));
+    assert_eq!(name_of(&h, faces[1]), None);
+}
+
+#[test]
+fn confirm_on_a_selected_tile_confirms_every_selected_face_with_a_suggestion_in_one_step() {
+    let (mut h, _) = people();
+    let faces = suggest_all_but(&mut h, &[2]);
+    for i in [0, 2, 3] {
+        ok(&mut h, "ui.clickWidget", json!({"id": format!("unnamed-face:{}:{}", faces[i].0, faces[i].1)}));
+    }
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": button("confirm", faces[3])}));
+    let got: Vec<Option<String>> = faces.iter().map(|f| name_of(&h, *f)).collect();
+    assert_eq!(
+        got,
+        [Some("Name0".to_string()), None, None, Some("Name3".to_string())],
+        "each selected face got its own suggestion; the face without one stays"
+    );
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+}
+
+#[test]
+fn all_above_names_every_suggested_face_from_the_first_tile_through_this_one() {
+    let (mut h, _) = people();
+    let faces = suggest_all_but(&mut h, &[1]);
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": button("above", faces[2])}));
+    let got: Vec<Option<String>> = faces.iter().map(|f| name_of(&h, *f)).collect();
+    assert_eq!(got.iter().filter(|n| n.is_some()).count(), 2);
+    assert_eq!(name_of(&h, faces[0]).as_deref(), Some("Name0"));
+    assert_eq!(name_of(&h, faces[1]), None, "no suggestion: skipped");
+    assert_eq!(name_of(&h, faces[2]).as_deref(), Some("Name2"), "this tile's own suggestion");
+    assert_eq!(name_of(&h, faces[3]), None, "below this tile: untouched");
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    ok(&mut h, "engine.execute", json!({"command": "edit.undo"}));
+    assert_eq!(name_of(&h, faces[0]), None);
+    assert_eq!(name_of(&h, faces[2]), None);
+}
