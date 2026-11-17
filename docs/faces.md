@@ -379,7 +379,7 @@ existed simply has none). The tile stays where it is with its strip turned to a 
 and nothing new is suggested straight away. The face never comes back to that person's More; its next visit to the
 Unnamed faces shows its next-best suggestion when one is good enough, and a rejected name is never suggested for it
 again. In the name box the names a face rejected are offered last, and typing one anyway names the face and drops the
-rejection. Renaming a person, or merging two, moves the rejections to the new name in the same undo step. Edit, Undo takes
+rejection. Renaming a person, or merging two, moves the rejections to the new name in the same undo step. No face is left rejecting the name it carries: a face that is renamed or merged into a name drops a rejection of that name in the same step, and `faces.reject` leaves a face already called the rejected name alone (it reports it as `skipped`) unless `clearName` is true, as the × on a confirmed face sets it. Edit, Undo takes
 a rejection back in one step, however many faces it covered. Re-reading a photo's metadata from its sidecar replaces its
 regions with the file's but keeps the rejections of every box that is still there (the same box, to within its overlap), and
 synchronizing a folder does the same.
@@ -400,7 +400,7 @@ name it only rejects those names and removes nothing, and once none does it remo
 many faces and photos that covers (several boxes of one photo included), it is one undo step, and Edit, Undo brings every
 box back with its name and rejections. Face boxes are numbered by their place in the photo's list, so removing one moves
 the later boxes of that photo up; the command removes all of a photo's boxes in one edit, and the People view moves its
-selection and the tiles it keeps as question marks along with them.
+selection and the tiles it keeps as question marks along with them. Undo and Redo of a removal bring the boxes back at their old places, so after either the view lets go of the selection, the tiles kept as question marks and an open name box rather than point them at another face.
 
 
 How well it works: on 755 named faces of marble busts from one museum folder (each face hidden in turn and matched against
