@@ -19,6 +19,7 @@ mod export;
 mod face_models;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) mod face_recognize;
+pub(super) mod face_rejections;
 #[cfg(not(target_arch = "wasm32"))]
 mod face_tiles;
 mod filesystem_history;

@@ -356,15 +356,29 @@ person; on a confirmed face it corrects that one face's name, and emptying the b
 selects it (Shift-click a range; a double click opens the photo, Escape comes back to the page; Escape with faces selected
 clears the selection first), and the box on a selected tile names the whole selection in one undo step. A selection belongs
 to one gallery at a time: the Unnamed faces, this person's faces or their More; selecting in another replaces it.
-On a More face the hover buttons are unchanged: the check confirms it (one undo step, it moves up into their faces), `×`
-hides it for this session. The `↑` control at the top right of a suggested face confirms that face and every currently shown, non-hidden suggestion
+On a More face the hover buttons are the check, which confirms it (one undo step, it moves up into their faces), and `×`, which
+says this face is not them (see Rejecting a name below). The `↑` control at the top right of a suggested face confirms that face and every currently shown suggestion
 with an equal or higher similarity score. Its tooltip names the person and shows the number of faces before you act.
 Hover a suggestion or focus it with the keyboard and press `A` for the same action. The batch is one undo step;
-suggestions below that score, previously confirmed faces and hidden suggestions stay as they were. Nothing is named
+suggestions below that score, previously confirmed faces and faces you rejected stay as they were. Nothing is named
 without this explicit action.
 **Show photos** puts their photos in the grid; **‹ People** or Escape goes back. "More" only holds faces the scan has
 already embedded, so it fills in as the scan goes; it shows faces scoring above four fifths of the model's suggestion bar,
 since you look at each one before anything is named.
+
+### Rejecting a name
+
+`×` on a More face says "this is not that person", and LightCraft remembers it. The rejected name is kept on the face
+itself, in the library only (it is never written into a sidecar or a photo file, and a catalog written before this
+existed simply has none). The tile stays where it is with its strip turned to a question mark until you leave the page,
+and nothing new is suggested straight away. The face never comes back to that person's More; its next visit to the
+Unnamed faces shows its next-best suggestion when one is good enough, and a rejected name is never suggested for it
+again. In the name box the names a face rejected are offered last, and typing one anyway names the face and drops the
+rejection. Renaming a person, or merging two, moves the rejections to the new name in the same undo step. Edit, Undo takes
+a rejection back in one step, however many faces it covered. Re-reading a photo's metadata from its sidecar replaces its
+regions with the file's but keeps the rejections of every box that is still there (the same box, to within its overlap), and
+synchronizing a folder does the same.
+
 
 How well it works: on 755 named faces of marble busts from one museum folder (each face hidden in turn and matched against
 shots taken more than five seconds apart), SFace named the right person first 95.5% of the time and AuraFace 94.7%; at
@@ -411,7 +425,7 @@ reuses the pictures of its step instead of rendering every face again.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, look-alikes together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, look-alikes together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, photos}`; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 

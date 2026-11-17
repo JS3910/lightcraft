@@ -251,6 +251,7 @@ fn name_box(app: &mut LightcraftApp, ui: &egui::Ui, person: &Person, at: egui::P
         candidates: &[],
         people: &people,
         current: Some(&person.name),
+        rejected: &[],
         setup: super::faces::Setup::Running,
     };
     use crate::name_box::Outcome;

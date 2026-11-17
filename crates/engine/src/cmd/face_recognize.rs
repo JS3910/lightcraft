@@ -19,7 +19,7 @@ fn name_param(p: &Value, c: &str) -> Result<Option<String>> {
 }
 
 /// A name value as [`name_param`] reads it (`None`: nothing given).
-fn name_value(v: Option<&Value>, c: &str) -> Result<Option<String>> {
+pub(super) fn name_value(v: Option<&Value>, c: &str) -> Result<Option<String>> {
     let name = match v {
         None | Some(Value::Null) => None,
         Some(v) => Some(v.as_str().ok_or_else(|| bad(c, "`name` must be text or null"))?.trim().to_string()).filter(|n| !n.is_empty()),
@@ -32,9 +32,14 @@ fn name_value(v: Option<&Value>, c: &str) -> Result<Option<String>> {
     Ok(name)
 }
 
-/// Give a face region its name. Naming makes the face yours: a later "Detect Faces" run no longer replaces it.
+/// Give a face region its name. Naming makes the face yours: a later "Detect Faces" run no longer replaces it. A name
+/// the face had rejected is no longer rejected: an explicit choice wins, in the same edit.
 fn apply_name(region: &mut lightcraft_meta::Region, name: &Option<String>) {
     region.name = name.clone();
+    if let Some(n) = name {
+        let key = n.trim().to_lowercase();
+        region.rejected.retain(|r| r.trim().to_lowercase() != key);
+    }
     if name.is_some() && region.description.as_deref().is_some_and(|d| d.starts_with(super::face_detect::MARK)) {
         region.description = None;
     }
@@ -104,6 +109,22 @@ fn set_name(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": id.0, "index": index, "name": name}))
 }
 
+/// A person was renamed: the face's rejections of `from_key` (lower case) become rejections of `to`, each name once, and a
+/// face that is now called `to` does not reject itself.
+fn rewrite_rejections(region: &mut lightcraft_meta::Region, from_key: &str, to: &str) {
+    let to_key = to.trim().to_lowercase();
+    let own = region.name.as_deref().map(|n| n.trim().to_lowercase());
+    let mut out: Vec<String> = Vec::new();
+    for r in std::mem::take(&mut region.rejected) {
+        let key = r.trim().to_lowercase();
+        let (key, shown) = if key == from_key { (to_key.clone(), to.to_string()) } else { (key, r) };
+        if own.as_deref() != Some(key.as_str()) && !out.iter().any(|o| o.trim().to_lowercase() == key) {
+            out.push(shown);
+        }
+    }
+    region.rejected = out;
+}
+
 /// `faces.renamePerson {from, to, merge?}`: give every in-library face of `from` the exact name `to`, as one undo
 /// step. Names match the People view (trimmed, case-insensitive). A `to` that is already someone else is refused
 /// unless `merge` is set, and then the two people become one. The sidecar is not touched, and a refusal changes nothing.
@@ -144,10 +165,14 @@ fn rename_person(s: &mut Session, p: &Value) -> Result<Value> {
     let ids: Vec<_> = s.catalog.photos().filter(|ph| ph.in_library()).map(|ph| ph.id).collect();
     for id in ids {
         let Some(ph) = s.catalog.photo(id) else { continue };
-        let mut indexes = Vec::new();
+        let (mut indexes, mut rewrites) = (Vec::new(), Vec::new());
         for (i, r) in ph.meta.regions.iter().enumerate() {
             if r.kind != lightcraft_meta::RegionKind::Face {
                 continue;
+            }
+            // the names it says are not its own follow the person to the new name, whoever the face is
+            if r.rejects(&from) {
+                rewrites.push(i);
             }
             let Some(n) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };
             let key = n.to_lowercase();
@@ -160,7 +185,7 @@ fn rename_person(s: &mut Session, p: &Value) -> Result<Value> {
                 other = true;
             }
         }
-        if indexes.is_empty() {
+        if indexes.is_empty() && rewrites.is_empty() {
             continue;
         }
         let mut meta = ph.meta.clone();
@@ -168,6 +193,12 @@ fn rename_person(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(region) = meta.regions.get_mut(i) {
                 region.name = Some(to.clone());
                 faces += 1;
+            }
+        }
+        // (after the names, so a face that is now `to` does not reject itself)
+        for i in rewrites {
+            if let Some(region) = meta.regions.get_mut(i) {
+                rewrite_rejections(region, &from_key, &to);
             }
         }
         ops.push(Op::SetMeta { id, meta: Box::new(meta) });
@@ -291,8 +322,14 @@ fn rank_face(s: &mut Session, p: &Value) -> Result<Value> {
     let photo = s.catalog.photo(id).ok_or_else(|| bad(C, "no such photo"))?;
     let region = photo.meta.regions.get(index).filter(|r| r.kind == lightcraft_meta::RegionKind::Face).ok_or_else(|| bad(C, "no such face"))?;
     let rect = region.rect;
-    let ranking: Vec<Value> =
-        imp::ranking(s, id, index, &rect).into_iter().map(|(name, score, faces)| json!({"name": name, "score": score, "faces": faces})).collect();
+    let rejected = region.rejected.clone();
+    let ranking: Vec<Value> = imp::ranking(s, id, index, &rect)
+        .into_iter()
+        .map(|(name, score, faces)| {
+            let no = rejected.iter().any(|r| r.trim().to_lowercase() == name.trim().to_lowercase());
+            json!({"name": name, "score": score, "faces": faces, "rejected": no})
+        })
+        .collect();
     Ok(json!({"photo": id.0, "index": index, "ranking": ranking}))
 }
 
@@ -415,7 +452,13 @@ mod imp {
         }
         let mut meta = photo.meta.clone();
         for rect in found {
-            meta.regions.push(Region { rect: *rect, kind: RegionKind::Face, name: None, description: Some(format!("{MARK}{LABEL}")) });
+            meta.regions.push(Region {
+                rect: *rect,
+                kind: RegionKind::Face,
+                name: None,
+                description: Some(format!("{MARK}{LABEL}")),
+                rejected: Vec::new(),
+            });
         }
         if s.apply_system(Op::SetMeta { id, meta: Box::new(meta) }).is_ok() {
             // regions are not written to XMP, so no sidecar may be rewritten for this
@@ -733,6 +776,16 @@ mod imp {
         }))
     }
 
+    /// `faces` ranked against `query` without the people the face rejected (compared like people are).
+    fn rank_without(query: &[f32], gallery: &[(&str, &[f32])], rejected: &[String]) -> Vec<matching::Ranked> {
+        if rejected.is_empty() {
+            return matching::rank(query, gallery);
+        }
+        let keys: Vec<String> = rejected.iter().map(|r| r.trim().to_lowercase()).collect();
+        let kept: Vec<(&str, &[f32])> = gallery.iter().filter(|(n, _)| !keys.contains(&n.trim().to_lowercase())).copied().collect();
+        matching::rank(query, &kept)
+    }
+
     /// Everyone named in the library, ranked against the face `index` of photo `id` (`rect`): (name, similarity, faces
     /// compared), best first. Empty while recognition is off or the face is not embedded; nothing is embedded here.
     pub fn ranking(s: &mut Session, id: PhotoId, index: usize, rect: &Rect) -> Vec<(String, f32, usize)> {
@@ -776,7 +829,9 @@ mod imp {
                 match r.name.as_deref() {
                     Some(n) if n.trim().to_lowercase() == key => gallery.push(e.clone()),
                     Some(_) => {}
-                    None => candidates.push((ph.id.0, index, r.rect, e.clone())),
+                    // a face that rejected this person is not offered to them again
+                    None if !r.rejects(key) => candidates.push((ph.id.0, index, r.rect, e.clone())),
+                    None => {}
                 }
             }
         }
@@ -877,7 +932,8 @@ mod imp {
         let mut suggestions = std::collections::HashMap::new();
         if !refs.is_empty() {
             for ((photo, index, _), e) in ordered.iter().take(limit) {
-                if let Some(x) = matching::suggest(&matching::rank(e, &refs), threshold, DEFAULT_MARGIN) {
+                let rejected = s.catalog.photo(PhotoId(*photo)).and_then(|p| p.meta.regions.get(*index)).map_or(&[][..], |r| &r.rejected[..]);
+                if let Some(x) = matching::suggest(&rank_without(e, &refs, rejected), threshold, DEFAULT_MARGIN) {
                     suggestions.insert((*photo, *index), (x.name, x.score));
                 }
             }
@@ -947,7 +1003,7 @@ mod imp {
                     faces.push(json!({"index": index, "pending": true}));
                     continue;
                 };
-                let ranked = matching::rank(q, &refs);
+                let ranked = rank_without(q, &refs, &r.rejected);
                 let suggestion = matching::suggest(&ranked, threshold, margin);
                 faces.push(json!({
                     "index": index,

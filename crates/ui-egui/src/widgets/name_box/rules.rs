@@ -30,8 +30,17 @@ fn rank(name: &str, typed: &str) -> Option<u8> {
 /// first, as the engine returned them). Otherwise the names that match: those that begin with the text before those
 /// where a later word begins with it; within each, the people the face looks like (best first), then the rest
 /// alphabetically. A name appears once, whatever its capitalization.
+#[cfg(test)]
 pub fn offered(typed: &str, candidates: &[(String, f32)], people: &[String]) -> Vec<Offer> {
+    offered_for(typed, candidates, people, &[])
+}
+
+/// [`offered`] for a face that rejected some names (trimmed, ignoring capitalization): those come last, after everyone
+/// else, in the order they would have had.
+pub fn offered_for(typed: &str, candidates: &[(String, f32)], people: &[String], rejected: &[String]) -> Vec<Offer> {
     let typed = key(typed);
+    let bad: std::collections::HashSet<String> = rejected.iter().map(|r| key(r)).collect();
+    let last = |offers: &mut Vec<Offer>| offers.sort_by_key(|o| bad.contains(&key(&o.name)));
     let mut seen = std::collections::HashSet::new();
     let mut known: Vec<Offer> = Vec::new();
     for (name, score) in candidates {
@@ -40,6 +49,7 @@ pub fn offered(typed: &str, candidates: &[(String, f32)], people: &[String]) -> 
         }
     }
     if typed.is_empty() {
+        last(&mut known);
         known.truncate(MAX_OFFERS);
         return known;
     }
@@ -52,7 +62,10 @@ pub fn offered(typed: &str, candidates: &[(String, f32)], people: &[String]) -> 
         }
     }
     ranked.sort_by_key(|(group, order, _)| (*group, *order));
-    ranked.into_iter().map(|(_, _, o)| o).take(MAX_OFFERS).collect()
+    let mut offers: Vec<Offer> = ranked.into_iter().map(|(_, _, o)| o).collect();
+    last(&mut offers);
+    offers.truncate(MAX_OFFERS);
+    offers
 }
 
 /// What the box completes `typed` to: the first offered name that begins with it and is longer. The typed text is
@@ -112,6 +125,19 @@ mod tests {
         assert_eq!(names(&offered("  ", &c, &people(&["Zed"]))), ["Ann", "Bob"]);
         let many: Vec<String> = (0..20).map(|i| format!("Name {i:02}")).collect();
         assert_eq!(offered("name", &[], &many).len(), MAX_OFFERS);
+    }
+
+    #[test]
+    fn the_names_a_face_rejected_are_offered_last() {
+        let p = people(&["Ann", "Anna", "Annie", "Bob"]);
+        let c = vec![("Ann".to_string(), 0.9), ("Anna".to_string(), 0.8), ("Bob".to_string(), 0.7)];
+        let rejected = people(&[" ann "]);
+        assert_eq!(names(&offered_for("an", &c, &p, &rejected)), ["Anna", "Annie", "Ann"], "last, though it looks most like them");
+        assert_eq!(names(&offered_for("", &c, &p, &rejected)), ["Anna", "Bob", "Ann"], "also with nothing typed");
+        assert_eq!(names(&offered_for("an", &c, &p, &[])), ["Ann", "Anna", "Annie"]);
+        let many: Vec<String> = (0..20).map(|i| format!("Name {i:02}")).collect();
+        let listed = offered_for("name", &[], &many, &people(&["Name 00"]));
+        assert!(names(&listed).iter().all(|n| *n != "Name 00"), "a rejected name does not crowd out the others");
     }
 
     #[test]

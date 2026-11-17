@@ -22,6 +22,7 @@ fn region(x: f64, name: Option<&str>) -> lightcraft_meta::Region {
         kind: lightcraft_meta::RegionKind::Face,
         name: name.map(str::to_string),
         description: None,
+        rejected: Vec::new(),
     }
 }
 
@@ -42,6 +43,7 @@ fn page_now(h: &Headless) -> PersonPage {
             let face = Face { photo: p.id.0, index: i, rect: r.rect, score };
             match r.name.as_deref() {
                 Some("Ann Lee") => page.confirmed.push(face),
+                None if r.rejects("Ann Lee") => {}
                 None => page.more.push(face),
                 Some(_) => {}
             }
@@ -89,6 +91,10 @@ fn page() -> (Headless, [PhotoId; 5]) {
 
 fn names(h: &Headless, id: PhotoId) -> Vec<Option<String>> {
     h.app.session.catalog.photo(id).unwrap().meta.regions.iter().map(|r| r.name.clone()).collect()
+}
+
+fn rejected(h: &Headless, id: PhotoId) -> Vec<String> {
+    h.app.session.catalog.photo(id).unwrap().meta.regions[0].rejected.clone()
 }
 
 fn n(s: &str) -> Option<String> {
@@ -271,7 +277,7 @@ fn a_box_on_a_more_tile_ignores_a_selection_in_the_other_gallery() {
 }
 
 #[test]
-fn the_hover_buttons_on_more_faces_still_confirm_all_above_and_hide() {
+fn the_hover_buttons_on_more_faces_confirm_all_above_and_reject() {
     let (mut h, [_, _, p2, p3, p4]) = page();
     // the buttons exist on More tiles, and not on the confirmed ones
     for kind in ["face-confirm", "face-above", "face-hide"] {
@@ -289,13 +295,66 @@ fn the_hover_buttons_on_more_faces_still_confirm_all_above_and_hide() {
 }
 
 #[test]
-fn hide_removes_a_more_face_for_the_session_and_names_nothing() {
-    let (mut h, [_, _, _, p3, _]) = page();
+fn rejecting_a_more_face_keeps_the_tile_in_place_as_a_question_mark_until_the_page_is_left() {
+    let (mut h, [_, _, p2, p3, p4]) = page();
     let undo = h.app.session.undo.len();
+    let before = widgets(&mut h, "more-face:");
     ok(&mut h, "ui.clickWidget", json!({"id": format!("more-face-hide:{}:0", p3.0)}));
-    assert!(h.app.ui.dismissed_faces.contains(&(p3.0, 0)));
+    // the catalog keeps it, as one undoable edit, and nothing is named
+    assert_eq!((rejected(&h, p3), names(&h, p3)), (vec!["Ann Lee".to_string()], vec![None]));
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    // the tile is where it was, and with no suggestion there is nothing to confirm (the cross stays)
+    assert_eq!(widgets(&mut h, "more-face:"), before, "the gallery did not jump");
+    for kind in ["confirm", "above"] {
+        let on = widgets(&mut h, &format!("more-face-{kind}:"));
+        assert!(!on.contains(&format!("more-face-{kind}:{}:0", p3.0)), "{kind} on a rejected tile: {on:?}");
+        assert!(on.contains(&format!("more-face-{kind}:{}:0", p4.0)), "{kind} on the others: {on:?}");
+    }
+    assert!(widgets(&mut h, "more-face-hide:").contains(&format!("more-face-hide:{}:0", p3.0)));
+    // nothing new is suggested straight away: the box opens on an empty strip, and Enter names nobody
+    ok(&mut h, "ui.clickWidget", json!({"id": more_name(p3, 0)}));
+    assert_eq!(shown(&h), "");
+    key(&mut h, "enter");
+    assert_eq!(names(&h, p3), [None]);
+    // "all above" from another tile leaves the rejected face alone
+    ok(&mut h, "ui.clickWidget", json!({"id": format!("more-face-above:{}:0", p4.0)}));
+    assert_eq!((names(&h, p3), names(&h, p4), names(&h, p2)[0].clone()), (vec![None], vec![n("Ann Lee")], n("Ann Lee")));
+    // leaving the page ends the visit: the face is no longer in this person's More
+    ok(&mut h, "engine.execute", json!({"command": "view.people"}));
+    ok(&mut h, "engine.execute", json!({"command": "view.person", "params": {"name": "Ann Lee"}}));
+    h.settle(T);
+    inject(&mut h);
     assert!(!widgets(&mut h, "more-face:").contains(&more(p3, 0)));
-    assert_eq!((names(&h, p3), h.app.session.undo.len()), (vec![None], undo));
+    // undo brings the face back to the More (the step before it was naming the faces above)
+    ok(&mut h, "engine.execute", json!({"command": "edit.undo"}));
+    assert_eq!(rejected(&h, p3), ["Ann Lee"], "one undo took back the naming");
+    ok(&mut h, "engine.execute", json!({"command": "edit.undo"}));
+    assert!(widgets(&mut h, "more-face:").contains(&more(p3, 0)));
+    assert_eq!(rejected(&h, p3), Vec::<String>::new());
+}
+
+#[test]
+fn the_name_box_on_a_face_offers_the_names_it_rejected_last() {
+    let (mut h, [p0, _, _, p3, _]) = page();
+    set_regions(&mut h, p0, vec![region(0.1, Some("Ann Lee")), region(0.5, Some("Ann Moss")), region(0.7, Some("Ann Zed"))]);
+    inject(&mut h);
+    ok(&mut h, "ui.clickWidget", json!({"id": format!("more-face-hide:{}:0", p3.0)}));
+    ok(&mut h, "ui.clickWidget", json!({"id": more_name(p3, 0)}));
+    ok(&mut h, "ui.text", json!({"text": "ann"}));
+    let r = h.request("ui.widgets", json!({"filter": "tileName:pick:"}), T);
+    let mut items: Vec<(f64, String)> = r["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|w| Some((w["rect"][1].as_f64()?, w["id"].as_str()?.strip_prefix("tileName:pick:")?.to_string())))
+        .collect();
+    items.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let listed: Vec<String> = items.into_iter().map(|(_, n)| n).collect();
+    assert_eq!(listed, ["Ann Moss", "Ann Zed", "Ann Lee"], "the rejected name last");
+    // typing it all the same names the face and drops the rejection
+    ok(&mut h, "ui.text", json!({"text": " lee"}));
+    key(&mut h, "enter");
+    assert_eq!((names(&h, p3), rejected(&h, p3)), (vec![n("Ann Lee")], Vec::<String>::new()));
 }
 
 #[test]

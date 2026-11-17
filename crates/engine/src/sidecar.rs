@@ -343,12 +343,15 @@ pub fn merge_into(p: &mut Photo, sc: &SidecarData, now: &str) -> bool {
         m.keywords = k.clone();
     }
     if let Some(r) = &sc.regions {
-        m.regions = r.clone();
+        let before = std::mem::replace(&mut m.regions, r.clone());
         // (the photo's size is the upright one)
         if let (Some(drawn_on), Some(o)) = (sc.regions_drawn_on, sc.orientation) {
             let stored = if o.swaps_axes() { (p.height, p.width) } else { (p.width, p.height) };
             lightcraft_meta::upright_regions(&mut m.regions, drawn_on, o, stored);
         }
+        // rejected names are the catalog's alone, a file never states them: the boxes still there (compared once upright)
+        // keep theirs
+        lightcraft_meta::carry_rejections(&before, &mut m.regions);
     }
     let develop = match &sc.develop {
         Some(DevelopPatch::Full(s)) => (**s).clone(),

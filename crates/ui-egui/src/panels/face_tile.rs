@@ -13,7 +13,7 @@
 //! ([`name_each`], `faces.nameFaces` with a name per face).
 //!
 //! Hover buttons ([`Hover`], `FaceTile::hover`): a gallery that gives its tiles a `Hover` gets, on hover, a check
-//! (confirm), an up arrow (all above) and a cross (hide), each only when switched on. The tile reports a press as
+//! (confirm), an up arrow (all above) and a cross (reject: not this person), each only when switched on. The tile reports a press as
 //! [`TileEvent::Confirm`], [`TileEvent::ConfirmAbove`] or [`TileEvent::Hide`]; what they do is the gallery's business.
 //!
 //! Widget ids: `{prefix}-face:{photo}:{index}` the picture, `{prefix}-name:{photo}:{index}` the strip,
@@ -93,7 +93,7 @@ pub enum TileEvent {
     Confirm,
     /// The up-arrow button: confirm this face and every one at least as alike.
     ConfirmAbove,
-    /// The cross button: hide this face.
+    /// The cross button: reject it: it is not this person.
     Hide,
 }
 
@@ -315,7 +315,7 @@ fn explain_buttons(picture: &egui::Response, b: &Buttons, hover: &Hover) {
         ));
     }
     if let Some((_, r)) = &b.hide {
-        let _ = r.clone().on_hover_text(crate::i18n::tr("Hide this face for now"));
+        let _ = r.clone().on_hover_text(format!("Not {person}: never suggest this face as them again"));
     }
     if let Some((_, r)) = &b.confirm {
         let _ = r.clone().on_hover_text(format!("Confirm as {person}"));
@@ -386,6 +386,12 @@ pub fn box_pos(tile: Rect) -> Pos2 {
     pos2(tile.left(), tile.bottom() - STRIP_H + 2.0)
 }
 
+/// The names the catalog says are not this face's (the name box offers them last).
+fn rejected_of(app: &LightcraftApp, key: FaceKey) -> Vec<String> {
+    let photo = app.session.catalog.photo(lightcraft_catalog::PhotoId(key.0));
+    photo.and_then(|p| p.meta.regions.get(key.1)).map(|r| r.rejected.clone()).unwrap_or_default()
+}
+
 /// The list a tile belongs to, as the name box needs it.
 pub struct Listing<'a> {
     pub gallery: &'a Gallery,
@@ -409,7 +415,8 @@ pub fn name_box_for(app: &mut LightcraftApp, ctx: &egui::Context, tile: Rect, li
     let setup = super::faces::setup(app, ctx);
     // a named face keeps its spelling when the same name is typed again
     let current = matches!(list.gallery, Gallery::Confirmed(_)).then_some(entry.suggestion.as_deref()).flatten();
-    let spec = NameBox { id: "tileName", candidates: &candidates, people: &people, current, setup };
+    let rejected = rejected_of(app, entry.key);
+    let spec = NameBox { id: "tileName", candidates: &candidates, people: &people, current, rejected: &rejected, setup };
     let outcome = name_box::show(ctx, box_pos(tile), &mut input, &spec);
     let touched = input.touched();
     if let Some(e) = app.ui.name_edit.as_mut().filter(|e| (e.photo, e.index) == entry.key) {

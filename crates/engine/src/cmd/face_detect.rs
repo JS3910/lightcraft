@@ -282,6 +282,7 @@ fn detect(s: &mut Session, p: &Value) -> Result<Value> {
                     kind: RegionKind::Face,
                     name: None,
                     description: Some(format!("{MARK}{LABEL}")),
+                    rejected: Vec::new(),
                 });
             }
             ops.push(Op::SetMeta { id, meta: Box::new(meta) });
@@ -328,7 +329,13 @@ mod tests {
         Face { x0, y0, x1, y1, score: 0.9, landmarks: [(0.0, 0.0); 5] }
     }
     fn region(x0: f64, y0: f64, x1: f64, y1: f64) -> Region {
-        Region { rect: lightcraft_geom::Rect { x0, y0, x1, y1 }, kind: RegionKind::Face, name: Some("Ann".into()), description: None }
+        Region {
+            rect: lightcraft_geom::Rect { x0, y0, x1, y1 },
+            kind: RegionKind::Face,
+            name: Some("Ann".into()),
+            description: None,
+            rejected: Vec::new(),
+        }
     }
 
     #[test]

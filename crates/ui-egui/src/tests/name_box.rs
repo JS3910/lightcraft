@@ -19,6 +19,7 @@ fn region(x: f64, name: Option<&str>) -> lightcraft_meta::Region {
         kind: lightcraft_meta::RegionKind::Face,
         name: name.map(str::to_string),
         description: None,
+        rejected: Vec::new(),
     }
 }
 

@@ -25,7 +25,7 @@ pub(crate) fn focus_to_craft(f: &FocusPoint) -> craft_metadata::FocusPoint {
 }
 
 pub(crate) fn region_from_craft(r: craft_metadata::Region) -> Region {
-    Region { rect: rect_from_craft(r.rect), kind: r.kind, name: r.name, description: r.description }
+    Region { rect: rect_from_craft(r.rect), kind: r.kind, name: r.name, description: r.description, rejected: Vec::new() }
 }
 
 pub(crate) fn region_to_craft(r: &Region) -> craft_metadata::Region {

@@ -1991,3 +1991,28 @@ fn a_failed_auto_write_waits_and_is_written_on_retry() {
     std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o755)).unwrap();
     let _ = std::fs::remove_dir_all(&src);
 }
+
+/// Rejected names live in the catalog only: reading the photo's metadata from its sidecar replaces the regions with the
+/// file's but keeps the rejections of a box that is still there, and no sidecar the app writes ever states them.
+#[test]
+fn rejected_names_survive_a_metadata_re_read_and_are_never_written() {
+    let src = temp_dir("rejections-reread");
+    write_png(&src.join("portrait.png"), 9);
+    std::fs::write(src.join("portrait.xmp"), MWG_REGIONS).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    let mut meta = s.catalog.photo(id).unwrap().meta.clone();
+    meta.regions[0].rejected = vec!["Ann".to_string()];
+    s.commit("Reject", lightcraft_catalog::Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+    s.execute("photo.readMetadataFromFile", &json!({})).unwrap();
+    let region = &s.catalog.photo(id).unwrap().meta.regions[0];
+    assert_eq!(region.name.as_deref(), Some("Jane Doe"), "the file's region was read");
+    assert_eq!(region.rejected, ["Ann"], "the rejection is not the file's to erase");
+    // writing the photo's sidecar says nothing of them
+    s.execute("library.xmpPreferences", &json!({"autoWrite": true})).unwrap();
+    s.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    let written = std::fs::read_to_string(src.join("portrait.xmp")).unwrap();
+    assert!(!written.contains("Ann") && !written.to_lowercase().contains("reject"), "{written}");
+    let _ = std::fs::remove_dir_all(&src);
+}

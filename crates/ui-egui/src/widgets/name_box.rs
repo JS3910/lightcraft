@@ -33,6 +33,8 @@ pub struct NameBox<'a> {
     pub people: &'a [String],
     /// The name the face has now (the spelling rule keeps a capitalization change on a face that has the name already).
     pub current: Option<&'a str>,
+    /// The names the face rejected: offered last.
+    pub rejected: &'a [String],
     /// While recognition is not set up the box offers the next step.
     pub setup: Setup,
 }
@@ -120,7 +122,7 @@ pub fn show(ctx: &egui::Context, at: Pos2, state: &mut NameBoxState, spec: &Name
     let (down, up) = ctx.input_mut(|i| (i.consume_key(Modifiers::NONE, Key::ArrowDown), i.consume_key(Modifiers::NONE, Key::ArrowUp)));
     let (escape, enter, tab) =
         ctx.input(|i| (i.key_pressed(Key::Escape), i.key_pressed(Key::Enter), i.key_pressed(Key::Tab).then_some(i.modifiers.shift)));
-    let listed = rules::offered(state.query(), spec.candidates, spec.people);
+    let listed = rules::offered_for(state.query(), spec.candidates, spec.people, spec.rejected);
     if down && !listed.is_empty() {
         state.picked = Some(state.picked.map_or(0, |i| (i + 1).min(listed.len() - 1)));
     }
@@ -144,7 +146,7 @@ pub fn show(ctx: &egui::Context, at: Pos2, state: &mut NameBoxState, spec: &Name
                     .show(ui);
                 real = !ui.is_sizing_pass() && !early;
                 track(ui.ctx(), state, spec, &field, before, r.response.changed());
-                let listed = rules::offered(state.query(), spec.candidates, spec.people);
+                let listed = rules::offered_for(state.query(), spec.candidates, spec.people, spec.rejected);
                 for (i, offer) in listed.iter().enumerate() {
                     let label = match offer.score {
                         Some(s) => format!("{}   {:.0}%", offer.name, (s * 100.0).max(0.0)),
@@ -202,7 +204,7 @@ pub fn show(ctx: &egui::Context, at: Pos2, state: &mut NameBoxState, spec: &Name
 
 /// What saving the box now stores: the listed name chosen with the arrow keys, else the text, in the stored spelling.
 fn chosen(state: &NameBoxState, spec: &NameBox) -> String {
-    let picked = state.picked.and_then(|i| rules::offered(state.query(), spec.candidates, spec.people).into_iter().nth(i));
+    let picked = state.picked.and_then(|i| rules::offered_for(state.query(), spec.candidates, spec.people, spec.rejected).into_iter().nth(i));
     rules::stored_spelling(picked.as_ref().map_or(state.text.as_str(), |o| o.name.as_str()), spec.people, spec.current)
 }
 
@@ -218,7 +220,7 @@ fn track(ctx: &egui::Context, state: &mut NameBoxState, spec: &NameBox, field: &
         let at_end = range.is_some_and(|r| r.is_empty() && r.primary.index == egui::text::CharIndex(len));
         state.typed = state.text.clone();
         if grew && at_end {
-            let offers = rules::offered(&state.typed, spec.candidates, spec.people);
+            let offers = rules::offered_for(&state.typed, spec.candidates, spec.people, spec.rejected);
             if let Some(full) = rules::completion(&state.typed, &offers) {
                 let (from, full) = (len, full.to_string());
                 let to = full.chars().count();

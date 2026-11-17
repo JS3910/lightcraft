@@ -60,7 +60,13 @@ mod tests {
     use lightcraft_geom::Rect;
 
     fn face(x: f64, name: Option<&str>) -> Region {
-        Region { rect: Rect { x0: x, y0: 0.2, x1: x + 0.1, y1: 0.4 }, kind: RegionKind::Face, name: name.map(str::to_string), description: None }
+        Region {
+            rect: Rect { x0: x, y0: 0.2, x1: x + 0.1, y1: 0.4 },
+            kind: RegionKind::Face,
+            name: name.map(str::to_string),
+            description: None,
+            rejected: Vec::new(),
+        }
     }
 
     fn say(regions: &[Region]) -> Option<String> {

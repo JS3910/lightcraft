@@ -223,7 +223,7 @@ pub(super) fn region_overlay(
         }
         if editing_this && let Some(e) = editing.as_mut() {
             let candidates = hint.map(|h| h.candidates.as_slice()).unwrap_or(&[]);
-            let spec = crate::name_box::NameBox { id: "faceName", candidates, people, current: r.name.as_deref(), setup };
+            let spec = crate::name_box::NameBox { id: "faceName", candidates, people, current: r.name.as_deref(), rejected: &r.rejected, setup };
             let outcome = crate::name_box::show(ui.ctx(), pos2(label.left(), rect.bottom() + 8.0), &mut e.input, &spec);
             if let Some(done) = end_name_edit(ui.ctx(), photo, index, hints, outcome, editing) {
                 edit = Some(done);
@@ -1035,6 +1035,7 @@ mod region_drag_tests {
             kind: lightcraft_meta::RegionKind::Face,
             name: Some("Jane".to_string()),
             description: None,
+            rejected: Vec::new(),
         }];
         let mut editing = None;
         let mut run_frame = |events: &[egui::Event]| -> Option<RegionEdit> {

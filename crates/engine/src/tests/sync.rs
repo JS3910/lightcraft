@@ -560,7 +560,13 @@ fn face_regions_found_meanwhile_leave_the_scan_current() {
     // background face search adds a region to a photo of the folder
     let a = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
     let mut meta = s.catalog.photo(a).unwrap().meta.clone();
-    meta.regions.push(lightcraft_meta::Region { rect: Default::default(), kind: lightcraft_meta::RegionKind::Face, name: None, description: None });
+    meta.regions.push(lightcraft_meta::Region {
+        rect: Default::default(),
+        kind: lightcraft_meta::RegionKind::Face,
+        name: None,
+        description: None,
+        rejected: Vec::new(),
+    });
     s.catalog.apply(lightcraft_catalog::Op::SetMeta { id: a, meta: Box::new(meta) }).unwrap();
     let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip"), "scanned": true})).unwrap();
     assert_eq!(r["imported"], 1, "{r}");
@@ -756,4 +762,45 @@ fn removing_missing_photos_takes_them_out_of_their_stacks() {
     assert!(s.catalog.stack_of(b).is_none(), "like photo.delete, a removed photo leaves its stack: {:?}", s.catalog.stack_of(b));
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(s.catalog.stack_of(b).is_some(), "one undo step puts b back in its stack");
+}
+
+/// Rejected names live in the catalog only: reading a sidecar another app saved (regions and all) in a synchronize
+/// replaces the photo's regions with the file's, but the box that is still there keeps what was rejected for it.
+#[test]
+fn synchronizing_keeps_the_names_a_face_rejected() {
+    let dir = Scratch::new("rejections");
+    let mut s = library(&dir);
+    let a = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    let mut meta = s.catalog.photo(a).unwrap().meta.clone();
+    meta.regions.push(lightcraft_meta::Region {
+        rect: lightcraft_geom::Rect { x0: 0.35, y0: 0.3, x1: 0.65, y1: 0.7 },
+        kind: lightcraft_meta::RegionKind::Face,
+        name: None,
+        description: None,
+        rejected: vec!["Ann".to_string()],
+    });
+    s.catalog.apply(lightcraft_catalog::Op::SetMeta { id: a, meta: Box::new(meta) }).unwrap();
+    // another app saves the photo's sidecar with the face named, drawn on the same box
+    let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="4"
+    xmlns:mwg-rs="http://www.metadataworkinggroup.com/schemas/regions/"
+    xmlns:stArea="http://ns.adobe.com/xmp/sType/Area#"
+    xmlns:stDim="http://ns.adobe.com/xap/1.0/sType/Dimensions#">
+   <mwg-rs:Regions><rdf:Description>
+     <mwg-rs:AppliedToDimensions stDim:w="24" stDim:h="16" stDim:unit="pixel"/>
+     <mwg-rs:RegionList><rdf:Bag><rdf:li><rdf:Description mwg-rs:Name="Bob" mwg-rs:Type="Face">
+       <mwg-rs:Area stArea:x="0.5" stArea:y="0.5" stArea:w="0.3" stArea:h="0.4" stArea:unit="normalized"/>
+     </rdf:Description></rdf:li></rdf:Bag></mwg-rs:RegionList>
+   </rdf:Description></mwg-rs:Regions>
+  </rdf:Description>
+</rdf:RDF></x:xmpmeta>"#;
+    std::fs::write(Path::new(&dir.path("trip/a.png")).with_extension("xmp"), xmp).unwrap();
+    let choice = crate::sync::SyncChoice { import_new: false, relink_moved: false, remove_missing: false, read_metadata: true };
+    let r = sync_in_halves(&mut s, &dir.path("trip"), choice);
+    assert_eq!(r.read, 1, "{r:?}");
+    let p = s.catalog.photo(a).unwrap();
+    assert_eq!(p.rating, 4, "the sidecar was read");
+    assert_eq!(p.meta.regions.len(), 1);
+    assert_eq!(p.meta.regions[0].name.as_deref(), Some("Bob"), "the file's region");
+    assert_eq!(p.meta.regions[0].rejected, ["Ann"], "the rejection is the catalog's, not the file's to erase");
 }

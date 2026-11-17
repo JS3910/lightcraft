@@ -94,6 +94,7 @@ fn single_photo_commands_refuse_an_id_that_is_not_a_photo_id() {
         kind: lightcraft_meta::RegionKind::Face,
         name: None,
         description: None,
+        rejected: Vec::new(),
     }];
     s.commit("setup", lightcraft_catalog::Op::SetMeta { id: active, meta: Box::new(meta) }).unwrap();
     let source = |s: &Session| format!("{:?}", s.catalog.photo(active).unwrap().source);

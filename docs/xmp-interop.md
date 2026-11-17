@@ -138,6 +138,10 @@ write them, from sidecars and from XMP embedded in the file. Named faces become 
 - **Re-reading**: a sidecar that has `mwg-rs:Regions` — even with an empty list — replaces the photo's regions, so
   regions removed in another application go away here too. A sidecar without `mwg-rs:Regions` (an application that
   doesn't do regions) leaves the photo's regions as they are.
+- **Rejected names** (the names a face was said not to be, kept by `faces.reject`) are not part of MWG regions and are never
+  written to a sidecar or a file. A re-read keeps them: each region of the file that is still the same box as one of the
+  photo's (overlap of at least a half, compared once both are upright) takes that region's rejections, a region that is
+  new has none. See [`faces.md`](faces.md).
 
 ## Reading `crs:` develop fields
 

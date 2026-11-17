@@ -60,7 +60,7 @@ fn fresh_library(d: &std::path::Path, dim: u64) -> (Session, PathBuf) {
 }
 
 /// A real, distinct 1024×768 PNG (seed picks its colours).
-fn write_photo(path: &std::path::Path, seed: u8) {
+pub(crate) fn write_photo(path: &std::path::Path, seed: u8) {
     let (w, h) = (1024usize, 768usize);
     let data: Vec<[u8; 4]> = (0..w * h)
         .map(|i| [((i % w * 3 + seed as usize * 17) % 256) as u8, ((i / w * 5 + seed as usize * 29) % 256) as u8, seed.wrapping_mul(41), 255])
@@ -98,7 +98,13 @@ pub(crate) fn install_yunet(s: &mut Session) -> bool {
 }
 
 pub(crate) fn region(x: f64, name: Option<&str>) -> Region {
-    Region { rect: Rect { x0: x, y0: 0.2, x1: x + 0.25, y1: 0.6 }, kind: RegionKind::Face, name: name.map(str::to_string), description: None }
+    Region {
+        rect: Rect { x0: x, y0: 0.2, x1: x + 0.25, y1: 0.6 },
+        kind: RegionKind::Face,
+        name: name.map(str::to_string),
+        description: None,
+        rejected: Vec::new(),
+    }
 }
 
 pub(crate) fn set_regions(s: &mut Session, id: PhotoId, regions: Vec<Region>) {
@@ -419,7 +425,7 @@ fn faces_person_lists_a_persons_faces_and_looks_for_more_only_while_recognition_
     let _ = std::fs::remove_dir_all(&d);
 }
 
-fn unit64(parts: &[(usize, f32)]) -> Vec<f32> {
+pub(crate) fn unit64(parts: &[(usize, f32)]) -> Vec<f32> {
     let mut v = vec![0.0f32; 64];
     for (i, x) in parts {
         v[*i] = *x;
@@ -536,7 +542,7 @@ fn every_scanned_face_is_shown_by_the_same_kind_of_box() {
     let loose = lightcraft_geom::Rect { x0: 0.2, y0: 0.1, x1: 0.8, y1: 0.9 };
     let tight = lightcraft_geom::Rect { x0: 0.35, y0: 0.25, x1: 0.65, y1: 0.65 };
     let mut meta = s.catalog.photo(a).unwrap().meta.clone();
-    meta.regions = vec![Region { rect: loose, kind: RegionKind::Face, name: Some("Ann".into()), description: None }];
+    meta.regions = vec![Region { rect: loose, kind: RegionKind::Face, name: Some("Ann".into()), description: None, rejected: Vec::new() }];
     s.commit("setup", Op::SetMeta { id: a, meta: Box::new(meta) }).unwrap();
     // before the scan has looked at it, the face is shown by its own box
     assert_eq!(s.face_view(a, loose), loose);

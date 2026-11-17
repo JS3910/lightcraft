@@ -89,6 +89,53 @@ pub struct Region {
     /// `mwg-rs:Name` (e.g. the person's name).
     pub name: Option<String>,
     pub description: Option<String>,
+    /// Names the user said are not this face's (compared like people: trimmed, ignoring capitalization), so they are
+    /// never suggested for it again. Catalog only: never written to a sidecar or a file, carried over a metadata
+    /// re-read ([`carry_rejections`]), and read as none from a catalog written before the field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rejected: Vec<String>,
+}
+
+impl Region {
+    /// Whether `name` is one of the names rejected for this face (trimmed, ignoring capitalization).
+    pub fn rejects(&self, name: &str) -> bool {
+        let key = name.trim().to_lowercase();
+        self.rejected.iter().any(|r| r.trim().to_lowercase() == key)
+    }
+}
+
+/// Keep the rejections of the regions a metadata re-read is about to replace: each region of `new` that is the same
+/// box as one of `old` (intersection over union of at least a half) takes that region's rejections, when it has none of
+/// its own. Rejections live in the catalog only, so a file never states them.
+pub fn carry_rejections(old: &[Region], new: &mut [Region]) {
+    let mut taken = vec![false; old.len()];
+    for region in new.iter_mut().filter(|r| r.rejected.is_empty()) {
+        let best = old
+            .iter()
+            .enumerate()
+            .filter(|(i, o)| !o.rejected.is_empty() && o.kind == region.kind && taken.get(*i) == Some(&false))
+            .map(|(i, o)| (i, overlap(&o.rect, &region.rect)))
+            .filter(|(_, v)| *v >= 0.5)
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((i, _)) = best
+            && let Some(o) = old.get(i)
+        {
+            region.rejected = o.rejected.clone();
+            if let Some(t) = taken.get_mut(i) {
+                *t = true;
+            }
+        }
+    }
+}
+
+/// Intersection over union of two boxes (0 when they do not meet, or either is not a box).
+fn overlap(a: &Rect, b: &Rect) -> f64 {
+    let w = (a.x1.min(b.x1) - a.x0.max(b.x0)).max(0.0);
+    let h = (a.y1.min(b.y1) - a.y0.max(b.y0)).max(0.0);
+    let inter = w * h;
+    let area = |r: &Rect| ((r.x1 - r.x0) * (r.y1 - r.y0)).max(0.0);
+    let union = area(a) + area(b) - inter;
+    if union > 0.0 && inter.is_finite() { inter / union } else { 0.0 }
 }
 
 /// Everything LightCraft shows or searches about a photo. All fields are optional; unknown = `None`/empty.
@@ -439,6 +486,48 @@ pub(crate) fn parse_number(s: &str) -> Option<f64> {
 mod tests {
     use super::*;
 
+    fn face_at(x: f64, rejected: &[&str]) -> Region {
+        Region {
+            rect: Rect { x0: x, y0: 0.2, x1: x + 0.2, y1: 0.5 },
+            kind: RegionKind::Face,
+            name: None,
+            description: None,
+            rejected: rejected.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_re_read_region_takes_the_rejections_of_the_same_box() {
+        let old = [face_at(0.1, &["Ann"]), face_at(0.6, &["Bob"])];
+        // the file's boxes come in another order and a hair off
+        let mut new = [face_at(0.61, &[]), face_at(0.11, &[])];
+        carry_rejections(&old, &mut new);
+        assert_eq!(new[0].rejected, ["Bob"]);
+        assert_eq!(new[1].rejected, ["Ann"]);
+    }
+
+    #[test]
+    fn rejections_are_not_carried_to_another_box_or_given_twice() {
+        let old = [face_at(0.1, &["Ann"])];
+        let mut new = [face_at(0.7, &[]), face_at(0.1, &[]), face_at(0.1, &[])];
+        carry_rejections(&old, &mut new);
+        assert!(new[0].rejected.is_empty(), "a box elsewhere is another face");
+        assert_eq!(new[1].rejected, ["Ann"]);
+        assert!(new[2].rejected.is_empty(), "one old face hands its rejections to one new one");
+    }
+
+    #[test]
+    fn rejections_compare_like_people_and_old_catalogs_read_as_none() {
+        assert!(face_at(0.1, &[" ann "]).rejects("ANN"));
+        assert!(!face_at(0.1, &["Ann"]).rejects("Anna"));
+        let json = serde_json::to_string(&face_at(0.1, &[])).unwrap();
+        assert!(!json.contains("rejected"), "an empty list is not written: {json}");
+        let back: Region = serde_json::from_str(&json).unwrap();
+        assert!(back.rejected.is_empty());
+        let with: Region = serde_json::from_str(&serde_json::to_string(&face_at(0.1, &["Ann"])).unwrap()).unwrap();
+        assert_eq!(with.rejected, ["Ann"]);
+    }
+
     #[test]
     fn lens_names_from_a_spec_read_like_lightroom() {
         assert_eq!(lens_spec_name([50.0, 50.0, 1.8, 1.8]).as_deref(), Some("50.0 mm f/1.8"));
@@ -595,6 +684,7 @@ mod tests {
             kind: RegionKind::Face,
             name: None,
             description: None,
+            rejected: Vec::new(),
         };
         let turned = |o: Orientation, drawn_on: (f64, f64), stored: (u32, u32)| {
             let mut regions = [region()];

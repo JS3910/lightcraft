@@ -18,6 +18,7 @@ fn face(x: f64, name: &str) -> lightcraft_meta::Region {
         kind: lightcraft_meta::RegionKind::Face,
         name: Some(name.to_string()),
         description: None,
+        rejected: Vec::new(),
     }
 }
 

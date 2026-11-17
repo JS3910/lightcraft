@@ -149,9 +149,10 @@ pub struct UiState {
     /// session; `None` until the dialog is first confirmed (then 10 s, 0.93).
     #[serde(skip)]
     pub cull_burst: Option<(f32, f32)>,
-    /// "More" faces the user hid with ×, for this session: (photo, region index).
+    /// The "More" faces rejected during this visit to a person's page, which the page keeps in place showing a question mark
+    /// until it is left (the catalog already holds the rejections).
     #[serde(skip)]
-    pub dismissed_faces: std::collections::HashSet<(u64, usize)>,
+    pub rejected_faces: crate::panels::person::Rejected,
     /// The unnamed faces selected in the People view (photo, region), the list position last clicked (Shift-click selects a
     /// range from it) and the face the view should scroll to (Tab moved the name box there).
     #[serde(skip)]
@@ -455,7 +456,7 @@ impl Default for UiState {
             person_from: None,
             last_person: None,
             cull_burst: None,
-            dismissed_faces: Default::default(),
+            rejected_faces: Default::default(),
             unnamed_selected: Default::default(),
             unnamed_anchor: None,
             face_gallery: None,
