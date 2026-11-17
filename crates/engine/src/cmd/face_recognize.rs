@@ -269,6 +269,22 @@ fn person(s: &mut Session, p: &Value) -> Result<Value> {
     )
 }
 
+/// `faces.rank {id?, index}`: every named person ranked by how much they look like this one face (best first, `score`
+/// is the same similarity `faces.suggest` reports as a candidate's), for the name box. Read-only: it uses what the
+/// background scan has embedded and never embeds anything, so a face the scan has not looked at, or recognition being
+/// off, gives an empty ranking. The face's own embedding is left out of the gallery.
+fn rank_face(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "faces.rank";
+    let id = super::photo_id(p, C)?.or_else(|| s.active()).ok_or_else(|| bad(C, "no photo"))?;
+    let index = p.get("index").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()).ok_or_else(|| bad(C, "missing or invalid `index`"))?;
+    let photo = s.catalog.photo(id).ok_or_else(|| bad(C, "no such photo"))?;
+    let region = photo.meta.regions.get(index).filter(|r| r.kind == lightcraft_meta::RegionKind::Face).ok_or_else(|| bad(C, "no such face"))?;
+    let rect = region.rect;
+    let ranking: Vec<Value> =
+        imp::ranking(s, id, index, &rect).into_iter().map(|(name, score, faces)| json!({"name": name, "score": score, "faces": faces})).collect();
+    Ok(json!({"photo": id.0, "index": index, "ranking": ranking}))
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
     use std::sync::Arc;
@@ -706,6 +722,30 @@ mod imp {
         }))
     }
 
+    /// Everyone named in the library, ranked against the face `index` of photo `id` (`rect`): (name, similarity, faces
+    /// compared), best first. Empty while recognition is off or the face is not embedded; nothing is embedded here.
+    pub fn ranking(s: &mut Session, id: PhotoId, index: usize, rect: &Rect) -> Vec<(String, f32, usize)> {
+        let Some(dir) = s.face_models_dir.clone() else { return Vec::new() };
+        if !enabled_cached(s, &dir) {
+            return Vec::new();
+        }
+        let Some(query) = s.faces.index.get(id.0, rect).cloned() else { return Vec::new() };
+        let mut gallery: Vec<(String, Arc<[f32]>)> = Vec::new();
+        for ph in s.catalog.photos().filter(|ph| ph.in_library()) {
+            for (i, r) in ph.meta.regions.iter().enumerate().filter(|(_, r)| r.kind == RegionKind::Face) {
+                let Some(name) = r.name.clone() else { continue };
+                if (ph.id, i) == (id, index) {
+                    continue;
+                }
+                if let Some(e) = s.faces.index.get(ph.id.0, &r.rect) {
+                    gallery.push((name, e.clone()));
+                }
+            }
+        }
+        let refs: Vec<(&str, &[f32])> = gallery.iter().map(|(n, e)| (n.as_str(), &e[..])).collect();
+        matching::rank(&query, &refs).into_iter().map(|r| (r.name, r.score, r.faces)).collect()
+    }
+
     /// The unnamed faces that look most like the person whose lower-cased name is `key`, best first, at most `limit`: each
     /// is scored like a suggestion (the mean of its two closest faces of theirs) and kept above four fifths of the
     /// model's suggestion bar, since a person looks at these before anything is named. Only faces already embedded can be
@@ -1120,6 +1160,10 @@ mod imp {
         Ok(serde_json::json!({"active": false}))
     }
 
+    pub fn ranking(_: &mut Session, _: lightcraft_catalog::PhotoId, _: usize, _: &lightcraft_geom::Rect) -> Vec<(String, f32, usize)> {
+        Vec::new()
+    }
+
     pub fn similar(_: &mut Session, _: &str, _: usize) -> super::Similar {
         super::Similar { items: Vec::new(), ready: false, pending: 0 }
     }
@@ -1184,6 +1228,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{faces: [{photo, index}], name} → {named, photos} — name (or, with a null or empty name, clear) many face regions as one undoable step; the sidecar is not touched",
             super::always,
             name_faces
+        ),
+        cmd!(
+            query "faces.rank",
+            "Rank Names for a Face",
+            [],
+            None,
+            "{id?, index} → {photo, index, ranking: [{name, score, faces}]} — every named person ranked by how much they look like this face (best first; `score` is the similarity the name box shows as a percentage). Read-only: it uses what the background scan has embedded and embeds nothing, so a face the scan has not looked at, or recognition off, gives an empty `ranking`; errors for a missing photo or an index that is not a face",
+            super::always,
+            rank_face
         ),
         cmd!(
             query "faces.person",
