@@ -156,6 +156,9 @@ pub fn show(ctx: &egui::Context, at: Pos2, state: &mut NameBoxState, spec: &Name
                     let b = ui.add(button);
                     register(ui, format!("{}:pick:{}", spec.id, offer.name), b.rect);
                     if b.clicked() {
+                        // a click chooses the name as the arrow keys do: the box is touched, so a caller that treats an
+                        // untouched save as "confirm the suggestion" stores this name and not the one the box opened with
+                        state.picked = Some(i);
                         clicked = Some(Outcome::Save(rules::stored_spelling(&offer.name, spec.people, spec.current)));
                     }
                 }

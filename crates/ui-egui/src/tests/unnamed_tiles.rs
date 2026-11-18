@@ -87,6 +87,17 @@ pub(super) fn suggest(h: &mut Headless, who: &[(PhotoId, usize, &str)]) {
     step(h);
 }
 
+/// The people a face looks most like, as if recognition had ranked them: what its name box lists before anything is typed.
+fn closest(h: &mut Headless, id: PhotoId, index: usize, who: &[(&str, f32)]) {
+    let mut hints = crate::panels::faces::Hints::default();
+    let candidates = who.iter().map(|(n, s)| (n.to_string(), *s)).collect();
+    hints.by_index.insert(index, crate::panels::faces::Hint { suggestion: None, candidates });
+    h.app.caches.faces_active = true;
+    h.app.caches.faces_next_pump = f64::MAX;
+    h.app.caches.face_hints = Some((id.0, h.app.session.catalog.revision, h.app.caches.faces_indexed, Arc::new(hints)));
+    step(h);
+}
+
 fn selected(h: &Headless) -> usize {
     h.app.ui.unnamed_selected.len()
 }
@@ -134,6 +145,44 @@ fn a_tile_without_a_suggestion_opens_an_empty_box() {
     ok(&mut h, "ui.clickWidget", json!({"id": strip(p1, 1)}));
     assert_eq!(shown(&h), "");
     assert!(h.app.ui.name_edit.is_some());
+}
+
+#[test]
+fn a_click_on_a_listed_name_names_a_face_that_has_no_suggestion() {
+    let (mut h, [_, p1, _]) = people();
+    closest(&mut h, p1, 1, &[("Ann Lee", 0.4)]);
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": strip(p1, 1)}));
+    ok(&mut h, "ui.clickWidget", json!({"id": "tileName:pick:Ann Lee"}));
+    assert_eq!(names(&h, p1), [None, n("Ann Lee")]);
+    assert!(h.app.ui.name_edit.is_none());
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+}
+
+#[test]
+fn a_click_on_a_listed_name_names_the_face_that_and_not_its_suggestion() {
+    let (mut h, [_, p1, _]) = people();
+    suggest(&mut h, &[(p1, 0, "Bob Ray")]);
+    closest(&mut h, p1, 0, &[("Bob Ray", 0.8), ("Ann Lee", 0.4)]);
+    ok(&mut h, "ui.clickWidget", json!({"id": strip(p1, 0)}));
+    assert_eq!(shown(&h), "Bob Ray");
+    ok(&mut h, "ui.clickWidget", json!({"id": "tileName:pick:Ann Lee"}));
+    assert_eq!(names(&h, p1), [n("Ann Lee"), None], "the name clicked, not the one the box opened with");
+}
+
+#[test]
+fn a_click_on_a_listed_name_names_every_selected_face() {
+    let (mut h, [p0, p1, p2]) = people();
+    suggest(&mut h, &[(p1, 0, "Bob Ray")]);
+    closest(&mut h, p2, 0, &[("Ann Lee", 0.4)]);
+    for (id, i) in [(p1, 0), (p2, 0)] {
+        ok(&mut h, "ui.clickWidget", json!({"id": picture(id, i)}));
+    }
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": strip(p2, 0)}));
+    ok(&mut h, "ui.clickWidget", json!({"id": "tileName:pick:Ann Lee"}));
+    assert_eq!((names(&h, p0), names(&h, p1), names(&h, p2)), (vec![n("Ann Lee"), None], vec![n("Ann Lee"), None], vec![n("Ann Lee")]));
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one step for all of them");
 }
 
 #[test]
