@@ -85,6 +85,7 @@ mod name_box;
 mod offline;
 mod open_lightroom;
 pub(super) mod panels;
+mod people_scroll;
 mod person_tiles;
 mod preset_favorites;
 mod preset_import;

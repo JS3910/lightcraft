@@ -343,7 +343,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         let more_top = PAD + confirmed_rows as f32 * row_h + 12.0;
         let total_h = more_top + SECTION_H + more_rows as f32 * row_h + PAD;
         let (area, _) = ui.allocate_exact_size(vec2(width, total_h), Sense::hover());
-        let layout = Layout { name: &shown_name, viewport, cols, edge, ppp };
+        // the scroll area gives the viewport relative to its content; the grids are laid out on screen, so it goes there too
+        // (else the first row drawn runs ahead of the scroll offset, and far enough down no tile is drawn at all)
+        let layout = Layout { name: &shown_name, viewport: viewport.translate(area.min.to_vec2()), cols, edge, ppp };
         let origin = |top: f32| area.min + vec2(PAD, top);
         let confirmed: Vec<&Face> = lists.confirmed.iter().collect();
         let mut shown = draw_grid(app, ui, &Grid { gallery: &confirmed_gallery, faces: &confirmed, entries: confirmed_entries, origin: origin(PAD), layout: &layout }, &mut hit);
