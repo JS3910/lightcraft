@@ -243,10 +243,10 @@ struct Arranged {
     suggestions: std::collections::HashMap<(u64, usize), (String, f32)>,
 }
 
-/// `faces.unnamed {limit?: 600}`: the faces nobody has named, to be named a group at a time. With recognition running,
+/// `faces.unnamed {limit?: 3000}`: the faces nobody has named, to be named a group at a time. With recognition running,
 /// faces that look alike are next to each other, and a face the named faces recognise carries the name they suggest.
 fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
-    let limit = p.get("limit").and_then(Value::as_u64).map_or(600, |n| usize::try_from(n).unwrap_or(600)).clamp(1, MAX_UNNAMED);
+    let limit = p.get("limit").and_then(Value::as_u64).map_or(MAX_UNNAMED, |n| usize::try_from(n).unwrap_or(MAX_UNNAMED)).clamp(1, MAX_UNNAMED);
     let mut all: Vec<(u64, usize, lightcraft_geom::Rect)> = Vec::new();
     for ph in s.catalog.photos().filter(|ph| ph.in_library()) {
         for (index, r) in ph.meta.regions.iter().enumerate() {
@@ -1287,7 +1287,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Unnamed Faces",
             [],
             None,
-            "{limit?: 600} → {total, faces: [{photo, index, rect, view, suggestion: {name, score} | null}], ordered, ready} — the faces nobody has named; with recognition running, look-alikes are next to each other and a face the named ones recognise carries the name they suggest. `view` is the box to show the face by. Name them with `faces.nameFaces`",
+            "{limit?: 3000} → {total, faces: [{photo, index, rect, view, suggestion: {name, score} | null}], ordered, ready} — the faces nobody has named; with recognition running, look-alikes are next to each other and a face the named ones recognise carries the name they suggest. `view` is the box to show the face by. Name them with `faces.nameFaces`",
             super::always,
             unnamed
         ),

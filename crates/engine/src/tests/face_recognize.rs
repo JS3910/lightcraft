@@ -533,6 +533,18 @@ fn unnamed_faces_come_with_look_alikes_together_and_the_name_the_named_ones_sugg
 }
 
 #[test]
+fn without_a_limit_the_unnamed_faces_are_listed_up_to_the_most_the_command_gives() {
+    let d = temp("unnamed-many");
+    let (mut s, _) = setup(&d, 64);
+    s.execute("faces.enable", &json!({"enabled": false})).unwrap();
+    let (a, _) = two_photos(&s);
+    set_regions(&mut s, a, (0..700).map(|i| region(0.001 * f64::from(i), None)).collect());
+    let r = s.execute("faces.unnamed", &json!({})).unwrap();
+    assert_eq!((r["total"].clone(), r["faces"].as_array().unwrap().len()), (json!(700), 700), "more than the 600 it once stopped at");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn every_scanned_face_is_shown_by_the_same_kind_of_box() {
     let d = temp("view");
     let (mut s, _) = setup(&d, 64);
