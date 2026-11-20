@@ -1424,8 +1424,8 @@ impl Session {
         self.visible().to_vec()
     }
 
-    /// **The People view's photos**: the one definition every People view listing and every `scope: "visible"` face
-    /// command draws from (`faces.people`, `faces.unnamed`, `faces.person`, the cards, the scan order).
+    /// **The People view's photos**: the one definition the People view draws from: the cards, `faces.people`,
+    /// `view.people` and `faces.evaluate` with `scope: "visible"` (the unnamed faces, a person's page and the scan order follow in later changes).
     ///
     /// They are the photos the grid shows for the current source (a folder with its subfolders, an album…) and every
     /// filter (the filter bar, the search and the person filter), including the photos a held view holds
