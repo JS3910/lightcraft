@@ -36,9 +36,10 @@ pub(crate) fn fingerprint<T: Hash + ?Sized>(x: &T) -> u64 {
     h.finish()
 }
 
-/// The start of an embedding, as bits: enough to notice that a face was embedded again from other pixels.
-fn head_bits(e: &[f32]) -> [u32; 4] {
-    let mut out = [0u32; 4];
+/// The start of an embedding, as bits: enough to notice that a face was embedded again from other pixels (a new embedding
+/// differs in every number, and hashing all 512 of every face would cost the window tens of milliseconds for tens of thousands).
+fn head_bits(e: &[f32]) -> [u32; 16] {
+    let mut out = [0u32; 16];
     for (o, x) in out.iter_mut().zip(e) {
         *o = x.to_bits();
     }
