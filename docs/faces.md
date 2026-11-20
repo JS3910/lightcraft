@@ -410,35 +410,74 @@ by its own box.
 #### The cost of the order
 
 Putting the Unnamed faces in confidence order scores every embedded unnamed face in scope against every named person
-(the mean of the two closest faces of each person, as the name box ranks them), on every core, whether or not the face is
-listed: the work is unnamed faces times named faces times 512 numbers. Measured in a release build with synthetic
-embeddings (`cargo test --release -p lightcraft-engine --lib face_unnamed_cost -- --ignored --nocapture`;
-`RAYON_NUM_THREADS` sets the thread count), the first `faces.unnamed` call took:
+(the mean of the two closest faces of each person, as the name box ranks them), whether or not the face is listed: the work
+is unnamed faces times named faces times 512 numbers, and then a pass over every pair of the (at most 1,500) faces without a
+suggestion to put look-alikes together. It is the one part of the People view that grows with unnamed faces times named
+faces, so it never runs on the window's thread, and a change pays only for what it changed.
 
-| Unnamed faces | Named faces (people) | 32 threads (idle desktop) | 8 threads | 4 threads |
-|---|---|---|---|---|
-| 10,000 | 3,000 (300) | 0.42 s | 0.34 s | 0.55 s |
-| 30,000 | 3,000 (300) | 0.80 s | 0.93 s | 1.5 s |
-| 60,000 | 3,000 (300) | 1.9 s | 2.1 s | 3.2 s |
-| 30,000 | 6,000 (600) | 2.2 s | 2.8 s | 5.9 s |
+**What runs where.**
 
-The 8 and 4 thread columns were measured on the same 32-thread machine while other builds were running, so they overstate
-a quiet laptop with that many cores somewhat; a 4-core laptop that is busy will be no faster than the last column. The
-look-alike chain over the faces without a suggestion is capped at 1,500 faces and is a pass over every pair of them (a
-fixed cost on one core, not in the table).
+- *On the window's thread*, when the window asks (`faces.unnamed` with `wait: false`: once per catalog revision, once per
+  result taken in, and at most every ten seconds while the scan learns faces): listing the unnamed faces, looking up what was
+  already worked out for each, sorting, and building the answer. That is linear in the faces (a fingerprint of each one's box,
+  rejections and the start of its embedding, and of the named faces once), never faces times named faces. Nothing is scored there.
+- *On a thread of its own* (the **Putting unnamed faces in order** row in the activity stack: one run at a time, checking its
+  cancel flag between chunks of 256 faces, leaving one of rayon's threads to the window): the scoring and the look-alike
+  chain. `faces.pump` takes its result in. A run whose inputs changed while it ran is finished (what it kept is where the next
+  run starts), shown only as the best order there is and never as the complete one for the new inputs, and followed by a run
+  for them. A run is cancelled when another library is opened and when its row's cancel is pressed.
+- *On the caller's own wait*, for every caller that does not say `wait: false` (the command line, MCP, the control channel,
+  tests): the same run on all of rayon's threads, with the caller waiting for it, so it gets the complete order.
 
-This work runs on the UI thread, and it is the reason the order is kept between calls:
+**A change rescores only what it changed.** For each unnamed face the run keeps its four best people with their scores and a
+bound above everyone else's (about 150 bytes a face; a score for every person would be some 140 MB at 60,000 faces and 600
+people). Naming, un-naming, renaming (a change of capitalization alone too), merging two people, rejecting a name and moving or
+removing a box change the named faces of some people, or one face's own box or rejections. Faces are then scored again only
+against the people whose named faces changed (one person for a naming), and a face whose own box, embedding or rejections
+changed is scored against everybody. When a change leaves a face with fewer than two best people known for certain (a person
+fell out of its best four) that face is scored against everybody too. The result is exactly what scoring everything again
+gives, the same suggestion, score and order for every face: the tests compare after every step of random sequences of those
+changes, with many seeds. Another model is scored again from scratch; another bar for suggestions only changes which of the
+kept scores pass it.
 
-- Each embedded unnamed face's suggestion is remembered, and used again while the named faces (who, in which photo and
-  region, and the model) and the face's own box and rejections are the same. Asked again with nothing changed, or after the
-  scan has embedded more faces, only the new faces are scored: the repeat calls of the 60,000 face case took 60 to 120 ms
-  (the listing and fingerprints; nothing scored). The look-alike order is remembered while the faces without a suggestion are
-  the same faces.
-- Naming a face changes the named faces, so the next call scores every face again: one full pass, the time in the table.
-  Narrowing the source or filters (the point of the People view following the grid) is what keeps that pass small.
-- While the scan runs and learns faces, the list is asked for again every ten seconds at most, not every three.
-- Scoring on a worker thread, under an activity row, with the old order shown meanwhile, is not done: a first open with tens
-  of thousands of faces in scope waits for the pass in the table.
+Measured in a release build with synthetic embeddings (`cargo test --release -p lightcraft-engine --lib face_unnamed_cost --
+--ignored --nocapture`; `RAYON_NUM_THREADS` sets the thread count). Each cell is the time until the order was complete,
+before this change (all of it on the window's thread) and after it (on the thread of its own); the last column is how long
+`faces.unnamed` itself takes on the window's thread after the change (before, it took the whole time of its row's first
+three cells). Medians of two runs on a 32-thread machine that was also building other things, so the last digit means little:
+
+8 threads:
+
+| Unnamed faces | Named faces (people) | First arrangement | After one naming | Scan finds 2 % more | `faces.unnamed` on the window's thread |
+|---|---|---|---|---|---|
+| 10,000 | 3,000 (300) | 0.40 s, now 0.36 s | 0.32 s, now 0.04 s | 0.39 s, now 0.10 s | 17 to 31 ms |
+| 30,000 | 3,000 (300) | 1.05 s, now 0.84 s | 1.3 s, now 0.06 s | 1.65 s, now 0.13 s | 23 to 32 ms |
+| 60,000 | 3,000 (300) | 3.0 s, now 2.2 s | 2.9 s, now 0.15 s | 3.05 s, now 0.26 s | 38 to 70 ms |
+| 30,000 | 6,000 (600) | 5.85 s, now 5.9 s | 5.95 s, now 0.10 s | 6.2 s, now 0.32 s | 39 to 50 ms |
+
+4 threads:
+
+| Unnamed faces | Named faces (people) | First arrangement | After one naming | Scan finds 2 % more | `faces.unnamed` on the window's thread |
+|---|---|---|---|---|---|
+| 10,000 | 3,000 (300) | 0.59 s, now 0.68 s | 0.53 s, now 0.04 s | 0.58 s, now 0.10 s | 16 to 19 ms |
+| 30,000 | 3,000 (300) | 2.6 s, now 1.9 s | 3.0 s, now 0.10 s | 3.4 s, now 0.26 s | 22 to 48 ms |
+| 60,000 | 3,000 (300) | 5.6 s, now 5.9 s | 5.55 s, now 0.17 s | 5.4 s, now 0.35 s | 56 to 87 ms |
+| 30,000 | 6,000 (600) | 14 s, now 14 to 19 s | 12.9 s, now 0.11 s | 13 s, now 0.6 to 0.7 s | 35 to 57 ms |
+
+Reading the tables:
+
+- The first arrangement costs what it did (a little more with 4 threads, where the background run leaves one of them to the
+  window). It happens once for a view, in the background, with the Unnamed section showing a status meanwhile. After that a
+  naming, which was the same seconds again with every click, is 40 to 180 ms until the order is complete; scoring one
+  person against every face is a few milliseconds of that, the rest being the two listings of the faces. The scan finding faces
+  costs the new faces' scores and the look-alike pass again: 0.1 to 0.7 s, in the background.
+- What is left on the window's thread grows with the faces, not with the named faces as well: the listing, the fingerprints, the
+  named faces grouped once, the sort, and the answer for the 3,000 faces listed. It is 17 to 87 ms for 10,000 to 60,000 unnamed
+  faces (under five frames), about what asking again with nothing changed always cost. A view of several hundred thousand
+  unnamed faces is where it would be felt, and where the next step would be keeping the fingerprints between calls.
+- With 4 threads a first arrangement of 30,000 faces against 6,000 named takes 14 to 19 s in the background, the one case where
+  the Unnamed section shows its status for long; narrowing the source or the filters (the point of the People view following
+  the grid) keeps it small.
 
 ### A person's page
 

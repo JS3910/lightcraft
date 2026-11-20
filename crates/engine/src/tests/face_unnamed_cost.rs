@@ -113,6 +113,11 @@ fn time(unnamed: usize, named: usize) {
     let (photo, index) = first_face.expect("some face is listed");
     s.execute("faces.setName", &json!({"id": photo, "index": index, "name": "Person 0"})).unwrap();
     let (naming_call, naming) = settle(&mut s);
+    // More on the page of the first person (a person's page asks for the unnamed faces that look like them: out of scope here)
+    let started = Instant::now();
+    let page = s.execute("faces.person", &json!({"name": "Person 0"})).unwrap();
+    let more = started.elapsed();
+    let (their_faces, found) = (page["confirmed"].as_array().map_or(0, Vec::len), page["more"].as_array().map_or(0, Vec::len));
     // the scan finds more faces (2 % more)
     add(&mut s, &mut per_photo, unnamed / 50, &mut rng);
     let (refresh_call, refresh) = settle(&mut s);
@@ -125,6 +130,7 @@ fn time(unnamed: usize, named: usize) {
     println!("    first arrangement:       {first:>9.2?} until complete, {first_call:>9.2?} on the calling thread without waiting");
     println!("    asked again unchanged:   {idle:>9.2?} on the calling thread");
     println!("    after one naming:        {naming:>9.2?} until complete, {naming_call:>9.2?} on the calling thread");
+    println!("    More for a person of {their_faces} faces: {more:>9.2?} on the calling thread ({found} found)");
     println!("    scan finds {:>4} faces:   {refresh:>9.2?} until complete, {refresh_call:>9.2?} on the calling thread", unnamed / 50);
     let _ = std::fs::remove_dir_all(&d);
 }

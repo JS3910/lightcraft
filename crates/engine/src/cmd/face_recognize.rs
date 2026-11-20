@@ -975,7 +975,9 @@ mod imp {
         let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for ph in s.catalog.photos().filter(|ph| ph.in_library()) {
             for (index, r) in ph.meta.regions.iter().enumerate().filter(|(_, r)| r.kind == RegionKind::Face) {
-                let (Some(name), Some(e)) = (r.name.as_deref(), s.faces.index.get(ph.id.0, &r.rect)) else { continue };
+                // (the name first: most faces are unnamed, and looking up the embedding of each would be most of this)
+                let Some(name) = r.name.as_deref() else { continue };
+                let Some(e) = s.faces.index.get(ph.id.0, &r.rect) else { continue };
                 let key = name.to_lowercase();
                 let i = *at.entry(key.clone()).or_insert_with(|| {
                     people.push(Person::new(key, name.to_string()));
