@@ -72,12 +72,15 @@ fn choosing_an_album_narrows_the_unnamed_faces_to_its_photos() {
     show_album(&mut h, album);
     assert_eq!(h.app.ui.view, ViewMode::People);
     assert_eq!(ids(&mut h, "unnamed-face:"), [picture(p1, 0), picture(p1, 1)], "only the unnamed faces of the album's photos");
+    assert!(said(&h, "2") && !said(&h, "4"), "the header counts the faces within scope: {:?}", h.painted_text());
     let _ = (p0, p2);
     let other = album_of(&mut h, "Other", &[p2]);
     show_album(&mut h, other);
     assert_eq!(ids(&mut h, "unnamed-face:"), [picture(p2, 0)]);
+    assert!(said(&h, "1") && !said(&h, "2"), "{:?}", h.painted_text());
     run(&mut h, "library.source", json!({"kind": "all"}));
     assert_eq!(ids(&mut h, "unnamed-face:").len(), 4);
+    assert!(said(&h, "4"), "{:?}", h.painted_text());
 }
 
 #[test]
@@ -191,6 +194,7 @@ fn an_edit_that_drops_a_photo_removes_only_its_faces_from_what_the_view_holds() 
     run(&mut h, "album.removePhotos", json!({"id": album, "ids": [p1.0]}));
     let selected: Vec<(u64, usize)> = h.app.ui.unnamed_selected.iter().copied().collect();
     assert_eq!(selected, vec![(p2.0, 0)], "only the face of the photo that left is dropped");
+    assert!(!unnamed_photos(&h).contains(&p1.0) && unnamed_photos(&h).contains(&p2.0), "with the view not held, its faces leave the list at once");
     assert!(h.app.ui.rejected_unnamed.contains((p2.0, 0)) && !h.app.ui.rejected_unnamed.contains((p1.0, 0)));
     assert!(h.app.ui.name_edit.as_ref().is_some_and(|e| e.photo == p2.0));
     // and the box, still on photo 2's face, closes when that photo leaves

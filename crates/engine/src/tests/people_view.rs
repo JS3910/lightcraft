@@ -139,6 +139,29 @@ fn deleted_photos_and_photos_only_browsed_in_a_local_folder_do_not_count() {
     assert_eq!(r["hidden"], 6, "the library's six faces, not Dan's nor the deleted photo's: {r}");
 }
 
+#[test]
+fn a_folder_chosen_in_the_sidebar_narrows_the_unnamed_faces_and_includes_its_subfolders() {
+    let (mut s, ids) = library();
+    let e = add(&mut s, "/pics/2024/e.jpg", 2, &[("", 0.2)]);
+    let f = add(&mut s, "/pics/2025/f.jpg", 2, &[("", 0.2)]);
+    let listed = |s: &mut Session, scope: Option<&str>| -> (Vec<(u64, u64)>, u64) {
+        let p = scope.map_or(json!({}), |sc| json!({"scope": sc}));
+        let r = s.execute("faces.unnamed", &p).unwrap();
+        let mut v: Vec<(u64, u64)> =
+            r["faces"].as_array().unwrap().iter().map(|x| (x["photo"].as_u64().unwrap(), x["index"].as_u64().unwrap())).collect();
+        v.sort();
+        (v, r["total"].as_u64().unwrap())
+    };
+    s.execute("library.source", &json!({"kind": "libraryFolder", "path": "/pics/2024"})).unwrap();
+    let mut want = vec![(ids[1].0, 1), (e.0, 0)];
+    want.sort();
+    assert_eq!(listed(&mut s, Some("visible")), (want, 2), "the folder's photos, its subfolder's too");
+    s.execute("library.source", &json!({"kind": "libraryFolder", "path": "/pics/2025"})).unwrap();
+    assert_eq!(listed(&mut s, Some("visible")), (vec![(f.0, 0)], 1));
+    let (all, total) = listed(&mut s, None);
+    assert_eq!((all.len(), total), (3, 3), "no scope: the whole library");
+}
+
 /// A folder of two small PNGs on disk.
 fn png_folder(tag: &str, with_subfolder: bool) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("lc-people-view-{tag}-{}", std::process::id()));
