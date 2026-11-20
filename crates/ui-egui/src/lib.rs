@@ -656,6 +656,8 @@ pub struct Caches {
     /// count the Unnamed faces list was last asked at: a result that came in is a reason to ask again.
     pub faces_arranged: u64,
     pub unnamed_arranged: u64,
+    /// The Unnamed faces section's "Put in order again" was clicked: the next ask restarts a run that stopped.
+    pub unnamed_restart: bool,
     /// Whether that thread is still at work (the pump looks again soon, so its result is taken in at once).
     pub faces_ordering: bool,
     pub faces_next_pump: f64,

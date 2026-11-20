@@ -249,16 +249,22 @@ struct Arranged {
     ready: bool,
     /// The order is still being worked out on a thread of its own: what is listed is the best order there is now.
     ordering: bool,
+    /// What is listed is the final order: the last run was for these very faces and named faces (or there is nothing to score).
+    complete: bool,
+    /// No run is going and the order is not complete: the run was cancelled, died or could not be started. It is not started
+    /// again by itself (until a face or a name changes); `restart: true` asks for it.
+    stopped: bool,
     /// A name for some faces, when the faces already named say so with confidence: `(photo, index)` to `(name, score)`.
     suggestions: std::collections::HashMap<(u64, usize), (String, f32)>,
 }
 
-/// `faces.unnamed {limit?: 3000, scope?, wait?: true}`: the faces nobody has named, to be named a group at a time. With recognition
+/// `faces.unnamed {limit?: 3000, scope?, wait?: true, restart?: false}`: the faces nobody has named, to be named a group at a time. With recognition
 /// running, the faces the named faces recognise come first, the most confident first, each carrying the name they suggest;
 /// then the faces that suggest nothing, look-alikes next to each other; then the faces not embedded yet, in photo order.
 /// With `scope: "visible"` only the faces in the People view's photos are listed (and counted); what they are suggested
 /// still compares against every named face in the library. Scoring runs on a thread of its own; by default the call waits
-/// for the complete order, with `wait: false` it answers at once with the best order there is (`ordering` says more is coming).
+/// for the complete order, with `wait: false` it answers at once with the best order there is (`ordering` says more is coming;
+/// `complete` says the order is final; neither: the run was stopped, `stopped`, and `restart: true` starts it again).
 fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
     let limit = p.get("limit").and_then(Value::as_u64).map_or(MAX_UNNAMED, |n| usize::try_from(n).unwrap_or(MAX_UNNAMED)).clamp(1, MAX_UNNAMED);
     let mut all: Vec<(u64, usize, lightcraft_geom::Rect)> = Vec::new();
@@ -279,7 +285,8 @@ fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err(bad("faces.unnamed", "`wait` must be true or false")),
     };
-    let arranged = imp::arrange_unnamed(s, &mut all, wait, limit)?;
+    let restart = p.get("restart").and_then(Value::as_bool).unwrap_or(false);
+    let arranged = imp::arrange_unnamed(s, &mut all, wait, restart, limit)?;
     all.truncate(limit);
     let faces: Vec<Value> = all
         .iter()
@@ -296,6 +303,8 @@ fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
         "lookAlike": arranged.look_alike,
         "ready": arranged.ready,
         "ordering": arranged.ordering,
+        "complete": arranged.complete,
+        "stopped": arranged.stopped,
     }))
 }
 
@@ -973,13 +982,14 @@ mod imp {
     }
 
     /// Everyone named in the library with the embeddings of their faces, grouped once so that scoring a face does no
-    /// string work. A person's fingerprint (who, in which photo and region, where, what spelling) is the same for the same
+    /// string work. A person's fingerprint (who, in which photo, where, what spelling; not the region number, which removing
+    /// another box of the photo changes without any face of theirs changing) is the same for the same
     /// faces in any order the catalog lists them, and changes with any naming, un-naming, rename or merge of theirs.
     fn named_people(s: &Session) -> Vec<Person> {
         let mut people: Vec<Person> = Vec::new();
         let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for ph in s.catalog.photos().filter(|ph| ph.in_library()) {
-            for (index, r) in ph.meta.regions.iter().enumerate().filter(|(_, r)| r.kind == RegionKind::Face) {
+            for r in ph.meta.regions.iter().filter(|r| r.kind == RegionKind::Face) {
                 // (the name first: most faces are unnamed, and looking up the embedding of each would be most of this)
                 let Some(name) = r.name.as_deref() else { continue };
                 let Some(e) = s.faces.index.get(ph.id.0, &r.rect) else { continue };
@@ -990,7 +1000,7 @@ mod imp {
                 });
                 if let Some(p) = people.get_mut(i) {
                     // (the spelling counts: a rename that only changes the capitalization changes what is suggested)
-                    p.add(fingerprint(&(name, ph.id.0, index, rect_bits(&r.rect))), e.clone());
+                    p.add(fingerprint(&(name, ph.id.0, rect_bits(&r.rect))), e.clone());
                 }
             }
         }
@@ -1007,8 +1017,16 @@ mod imp {
     /// since), the faces not scored yet go with those that have none. With `wait` the run for these very faces is started
     /// if there is none and waited for, so the answer is complete; without it the run is started and the answer says
     /// (`ordering`) that it is not done, and `faces.pump` takes the result in.
-    pub fn arrange_unnamed(s: &mut Session, all: &mut Vec<(u64, usize, Rect)>, wait: bool, limit: usize) -> Result<super::Arranged> {
-        let none = super::Arranged { suggested: false, look_alike: false, ready: false, ordering: false, suggestions: Default::default() };
+    pub fn arrange_unnamed(s: &mut Session, all: &mut Vec<(u64, usize, Rect)>, wait: bool, restart: bool, limit: usize) -> Result<super::Arranged> {
+        let none = super::Arranged {
+            suggested: false,
+            look_alike: false,
+            ready: false,
+            ordering: false,
+            complete: true,
+            stopped: false,
+            suggestions: Default::default(),
+        };
         let Some(dir) = s.face_models_dir.clone() else { return Ok(none) };
         if !enabled_cached(s, &dir) {
             return Ok(none);
@@ -1017,20 +1035,31 @@ mod imp {
         let threshold = embedder.manifest().thresholds.match_cosine.unwrap_or(DEFAULT_THRESHOLD);
         let mut faces: Vec<Face> = Vec::new();
         let mut listed: Vec<Listed> = Vec::with_capacity(all.len());
+        // which of a photo's faces with one very box each is (nearly always the only one)
+        let mut same_box: std::collections::HashMap<(u64, [u64; 4]), u32> = std::collections::HashMap::new();
         for (photo, index, rect) in all.iter() {
+            let ord = {
+                let n = same_box.entry((*photo, rect_bits(rect))).or_insert(0);
+                let ord = *n;
+                *n = n.saturating_add(1);
+                ord
+            };
             let stamp = s.faces.index.get(*photo, rect).map(|e| {
                 let rejected = s.catalog.photo(PhotoId(*photo)).and_then(|p| p.meta.regions.get(*index)).map_or(&[][..], |r| &r.rejected[..]);
-                let face = Face::new(*photo, rect_bits(rect), e.clone(), rejected);
+                let face = Face::new(*photo, rect_bits(rect), ord, e.clone(), rejected);
                 let stamp = face.stamp;
                 faces.push(face);
                 stamp
             });
-            listed.push((*photo, *index, rect_bits(rect), stamp));
+            listed.push((*photo, *index, rect_bits(rect), ord, stamp));
         }
         let settings = Settings { model: fingerprint(&s.faces.index.tag), threshold, margin: DEFAULT_MARGIN };
         let people = named_people(s);
         let sig = signature(settings, &people, &faces);
         s.faces.arrange.take_in(false);
+        if restart {
+            s.faces.arrange.forget_stop(sig);
+        }
         // (with no embedded face there is nothing to score or to put next to look-alikes)
         let mut input = Some(Input { settings, people, faces }).filter(|i| !i.faces.is_empty());
         let scoring = input.is_some();
@@ -1061,11 +1090,14 @@ mod imp {
         {
             s.faces.arrange.start(&s.activity, input, false);
         }
-        let ordering = scoring && s.faces.arrange.is_running() && !s.faces.arrange.is_current(sig);
+        let complete = !scoring || s.faces.arrange.is_current(sig);
+        let ordering = !complete && s.faces.arrange.is_running();
+        // (a run that could not be started is marked stopped for these inputs, so no run and no result is a stop)
+        let stopped = !complete && !ordering;
         let a = s.faces.arrange.arrange(&listed, limit);
         let mut by_place: Vec<Option<(u64, usize, Rect)>> = all.drain(..).map(Some).collect();
         all.extend(a.order.iter().filter_map(|i| by_place.get_mut(*i).and_then(Option::take)));
-        Ok(super::Arranged { suggested: a.suggested, look_alike: a.look_alike, ready: true, ordering, suggestions: a.suggestions })
+        Ok(super::Arranged { suggested: a.suggested, look_alike: a.look_alike, ready: true, ordering, complete, stopped, suggestions: a.suggestions })
     }
 
     /// Whether face recognition is switched on, looked up at most once a second.
@@ -1432,8 +1464,16 @@ mod imp {
         super::Similar { items: Vec::new(), ready: false, pending: 0 }
     }
 
-    pub fn arrange_unnamed(_: &mut Session, _: &mut Vec<(u64, usize, lightcraft_geom::Rect)>, _: bool, _: usize) -> Result<super::Arranged> {
-        Ok(super::Arranged { suggested: false, look_alike: false, ready: false, ordering: false, suggestions: Default::default() })
+    pub fn arrange_unnamed(_: &mut Session, _: &mut Vec<(u64, usize, lightcraft_geom::Rect)>, _: bool, _: bool, _: usize) -> Result<super::Arranged> {
+        Ok(super::Arranged {
+            suggested: false,
+            look_alike: false,
+            ready: false,
+            ordering: false,
+            complete: true,
+            stopped: false,
+            suggestions: Default::default(),
+        })
     }
 }
 
@@ -1480,7 +1520,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Unnamed Faces",
             [],
             None,
-            "{limit?: 3000, scope?: \"visible\", wait?: true} → {total, faces: [{photo, index, rect, view, suggestion: {name, score} | null}], ordered, lookAlike, ready, ordering} — the faces nobody has named; with recognition running, in this order: the faces the named ones recognise, the most confident suggestion first (names mixed, ties by photo then region); then the faces without a suggestion, look-alikes next to each other (`lookAlike` says some are); then the faces not embedded yet, in photo order. Every embedded face is scored for the order, not only the ones listed, on a thread of its own (a `faceOrder` row in `activity.list`, which can be cancelled): a change (a naming, un-naming, rename, merge, rejected name, moved or removed box) scores again only the people whose named faces changed and the faces whose own box or rejections changed, with the result of scoring everything again. By default the call waits for the complete order. With `wait: false` it answers at once with the best order there is (faces keep the order and suggestions already worked out; a face whose box or rejections changed has no suggestion; faces not scored yet go with the faces that have none; a face just named is gone) and `ordering: true` says the rest is still being worked out; `faces.pump` takes the result in (its `arranged` count moves), and asking again then gives the order. With `scope: \"visible\"` only the faces in the photos the People view shows are listed and counted in `total` (the source chosen in the sidebar with its subfolders, every filter, the person filter, a held view, collapsed stacks with all their photos, library photos only); suggestions still compare against every named face in the library. Without a scope the whole library. `view` is the box to show the face by. Name them with `faces.nameFaces`",
+            "{limit?: 3000, scope?: \"visible\", wait?: true, restart?: false} → {total, faces: [{photo, index, rect, view, suggestion: {name, score} | null}], ordered, lookAlike, ready, ordering, complete, stopped} — the faces nobody has named; with recognition running, in this order: the faces the named ones recognise, the most confident suggestion first (names mixed, ties by photo then region); then the faces without a suggestion, look-alikes next to each other (`lookAlike` says some are); then the faces not embedded yet, in photo order. Every embedded face is scored for the order, not only the ones listed, on a thread of its own (a `faceOrder` row in `activity.list`, which can be cancelled): a change (a naming, un-naming, rename, merge, rejected name, moved or removed box) scores again only the people whose named faces changed and the faces whose own box or rejections changed, with the result of scoring everything again. By default the call waits for the complete order. With `wait: false` it answers at once with the best order there is (faces keep the order and suggestions already worked out; a face whose box or rejections changed has no suggestion; faces not scored yet go with the faces that have none; a face just named is gone) and `ordering: true` says the rest is still being worked out; `faces.pump` takes the result in (its `arranged` count moves), and asking again then gives the order. `complete` is true when what is listed is the final order (the run was for these very faces and names, or there is nothing to score); with neither `ordering` nor `complete` the run was cancelled, died or could not be started: `stopped` is true, nothing starts it again until a face or a name changes, and `restart: true` starts it again (a cancelled run is not lost work: the order is worked out again when asked for) With `scope: \"visible\"` only the faces in the photos the People view shows are listed and counted in `total` (the source chosen in the sidebar with its subfolders, every filter, the person filter, a held view, collapsed stacks with all their photos, library photos only); suggestions still compare against every named face in the library. Without a scope the whole library. `view` is the box to show the face by. Name them with `faces.nameFaces`",
             super::always,
             unnamed
         ),

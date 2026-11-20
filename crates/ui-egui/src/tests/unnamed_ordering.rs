@@ -186,3 +186,87 @@ fn with_no_list_on_screen_and_an_order_that_is_not_final_the_section_shows_no_ti
     assert_eq!(widgets(&mut h, "unnamed:selectAll"), 0);
     assert_eq!(widgets(&mut h, "unnamed:status"), 1, "the status is drawn");
 }
+
+#[test]
+fn with_nobody_named_yet_the_status_comes_first_not_the_empty_view_then_the_tiles() {
+    let (mut h, [p0, _, _], hold, dir) = recognising("nobody");
+    // nobody is named: the first face of photo 0 is not
+    set_regions(&mut h, p0, vec![region(0.1, None), region(0.5, None)]);
+    hold.store(true, Ordering::Relaxed);
+    h.request("ui.set", json!({"view": "people"}), T);
+    for _ in 0..6 {
+        h.step();
+    }
+    assert_eq!(widgets(&mut h, "unnamed:status"), 1, "the status is drawn (the empty view draws no section at all)");
+    assert_eq!(widgets(&mut h, "unnamed-face:"), 0);
+    hold.store(false, Ordering::Relaxed);
+    run_ended(&mut h);
+    assert!(frames_until(&mut h, 40, |h| !shown(h).is_empty()).is_some(), "the tiles never came");
+    h.settle(T);
+    assert_eq!((widgets(&mut h, "unnamed:status"), shown(&h).len()), (0, 5));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_empty_list_on_screen_is_not_a_list_to_keep_places_in_when_the_first_faces_arrive_half_ordered() {
+    let (mut h, ids, hold, dir) = recognising("empty-first");
+    for id in ids {
+        set_regions(&mut h, id, Vec::new());
+    }
+    h.request("ui.set", json!({"view": "people"}), T);
+    h.settle(T);
+    let empty = h.app.caches.unnamed.as_ref().map(|(_, _, _, l)| l.clone()).expect("asked");
+    assert!(empty.faces.is_empty() && empty.complete && empty.total == 0, "{empty:?}");
+    // the scan finds faces while the run for them is held
+    hold.store(true, Ordering::Relaxed);
+    set_regions(&mut h, ids[1], vec![region(0.3, None), region(0.6, None)]);
+    h.app.session.test_face_embedding(ids[1], &region(0.3, None).rect, unit(&[(5, 1.0)]));
+    h.app.session.test_face_embedding(ids[1], &region(0.6, None).rect, unit(&[(5, 0.99), (7, 0.1)]));
+    for _ in 0..6 {
+        h.step();
+    }
+    assert_eq!(widgets(&mut h, "unnamed-face:"), 0, "no tiles in an order that is half done");
+    assert_eq!(widgets(&mut h, "unnamed:status"), 1);
+    hold.store(false, Ordering::Relaxed);
+    run_ended(&mut h);
+    assert!(frames_until(&mut h, 40, |h| !shown(h).is_empty()).is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn while_the_scan_keeps_finding_faces_a_result_taken_in_does_not_start_the_next_run_before_the_refresh() {
+    let (mut h, ids, _hold, dir) = recognising("scan-refresh");
+    // five boxes the scan has not embedded yet
+    let boxes: Vec<_> = (0..5).map(|i| region(0.02 + 0.07 * f64::from(i), None)).collect();
+    let mut regions = vec![region(0.3, None)];
+    regions.extend(boxes.iter().cloned());
+    set_regions(&mut h, ids[2], regions);
+    let pump = |h: &mut Headless| {
+        let v = h.app.session.execute("faces.pump", &json!({})).unwrap();
+        h.app.caches.faces_arranged = v["arranged"].as_u64().unwrap_or(0);
+    };
+    // the first ask starts a run; it ends and its result is taken in
+    let status = faces(&mut h.app, 0.0);
+    assert!(status.ordering && status.faces.is_empty(), "{status:?}");
+    run_ended(&mut h);
+    pump(&mut h);
+    let taken = h.app.caches.faces_arranged;
+    assert!(taken > 0);
+    // a status asks again at once when the result came in, whatever the scan has learned meanwhile
+    h.app.caches.faces_indexed += 1;
+    let first = faces(&mut h.app, 0.5);
+    assert!(first.complete && !first.faces.is_empty(), "{first:?}");
+    for (i, b) in boxes.iter().enumerate() {
+        // the scan embeds one more face every second (the catalog does not change)
+        h.app.session.test_face_embedding(ids[2], &b.rect, unit(&[(10 + i, 1.0)]));
+        h.app.caches.faces_indexed += 1;
+        let again = faces(&mut h.app, 1.0 + i as f64);
+        assert!(Arc::ptr_eq(&first, &again), "asked again after {i} seconds although the result came in and the scan is still finding faces");
+        run_ended(&mut h);
+        pump(&mut h);
+        assert_eq!(h.app.caches.faces_arranged, taken, "no run was started");
+    }
+    let later = faces(&mut h.app, 12.0);
+    assert!(!Arc::ptr_eq(&first, &later), "after the refresh it is asked for again");
+    let _ = std::fs::remove_dir_all(&dir);
+}

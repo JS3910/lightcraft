@@ -73,9 +73,11 @@ fn settled(s: &mut Session) -> Value {
     for _ in 0..20 {
         let was = taken(s);
         let r = ask(s, false);
-        if r["ordering"] == false {
+        if r["complete"] == true {
+            assert_eq!((r["ordering"].clone(), r["stopped"].clone()), (json!(false), json!(false)), "{r}");
             return r;
         }
+        assert_eq!(r["ordering"], true, "an order that is not complete is being worked out (or the run stopped): {r}");
         take_in(s, was);
     }
     panic!("the order never settled");
@@ -102,10 +104,16 @@ fn without_waiting_the_faces_come_at_once_and_the_order_is_taken_in_when_it_is_w
     let r = ask(&mut s, false);
     assert_eq!(r["ordering"], true, "{r}");
     assert_eq!(r["total"], 5);
+    assert_eq!((r["complete"].clone(), r["stopped"].clone()), (json!(false), json!(false)), "{r}");
+    assert_eq!(
+        (r["lookAlike"].clone(), r["ordered"].clone()),
+        (json!(false), json!(false)),
+        "faces not scored yet are in no order but photo order: {r}"
+    );
     assert_eq!(keys(&r), vec![(a.0, 2), (b.0, 0), (b.0, 1), (c.0, 0), (c.0, 1)], "nothing worked out yet: the faces in photo order");
     assert!(r["faces"].as_array().unwrap().iter().all(|f| f["suggestion"].is_null()), "{r}");
     let r = settled(&mut s);
-    assert_eq!(r["ordering"], false);
+    assert_eq!((r["ordering"].clone(), r["complete"].clone()), (json!(false), json!(true)));
     let order = keys(&r);
     assert_eq!(&order[..2], &[(a.0, 2), (b.0, 0)], "the faces Ann is suggested for come first: {order:?}");
     assert_eq!(suggestion(&r, a, 2).as_deref(), Some("Ann"));
@@ -241,9 +249,16 @@ fn cancelling_the_row_stops_the_job_and_nothing_of_it_is_applied() {
     assert!(ended, "the cancelled run never ended");
     let r = ask(&mut s, false);
     assert_eq!(r["ordering"], false, "a cancelled run is not started again by itself: {r}");
+    assert_eq!((r["complete"].clone(), r["stopped"].clone()), (json!(false), json!(true)), "the reply says the order was stopped, not final: {r}");
+    assert_eq!(rows(&mut s), 0);
     assert_eq!(suggestion(&r, a, 2), None);
-    // a caller that waits still gets a complete order
+    // asking to restart starts it again
     s.faces.arrange.hold = None;
+    let r = s.execute("faces.unnamed", &json!({"wait": false, "restart": true})).unwrap();
+    assert_eq!((r["ordering"].clone(), r["stopped"].clone()), (json!(true), json!(false)), "{r}");
+    let done = settled(&mut s);
+    assert_eq!(suggestion(&done, a, 2).as_deref(), Some("Ann"));
+    // a caller that waits still gets a complete order
     let waited = s.execute("faces.unnamed", &json!({})).unwrap();
     assert_eq!(suggestion(&waited, a, 2).as_deref(), Some("Ann"));
     let _ = std::fs::remove_dir_all(&d);
@@ -271,6 +286,79 @@ fn a_call_that_waits_is_given_an_error_when_its_run_is_cancelled_dies_or_cannot_
     s.faces.arrange.fail = None;
     let r = s.execute("faces.unnamed", &json!({})).unwrap();
     assert_eq!((r["ordering"].clone(), suggestion(&r, a, 2).as_deref().map(str::to_string)), (json!(false), Some("Ann".to_string())));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_thread_that_cannot_be_started_is_a_stop_that_keeps_what_was_kept_and_is_not_tried_on_every_ask() {
+    let (mut s, d, [a, _, _]) = library("bg-spawn");
+    settled(&mut s);
+    s.execute("faces.setName", &json!({"id": a.0, "index": 2, "name": "Ann"})).unwrap();
+    s.faces.arrange.fail = Some(Fail::Spawn);
+    let r = ask(&mut s, false);
+    assert_eq!((r["ordering"].clone(), r["complete"].clone(), r["stopped"].clone()), (json!(false), json!(false), json!(true)), "{r}");
+    assert_eq!(rows(&mut s), 0, "no row is left");
+    // the failure is gone, but nothing starts by itself for the same inputs
+    s.faces.arrange.fail = None;
+    let r = ask(&mut s, false);
+    assert_eq!((r["ordering"].clone(), r["stopped"].clone()), (json!(false), json!(true)), "not tried again on every ask: {r}");
+    assert_eq!(rows(&mut s), 0);
+    // restarting works, from what the last run kept (only Ann's change is worked out, for the 4 faces left)
+    let r = s.execute("faces.unnamed", &json!({"wait": false, "restart": true})).unwrap();
+    assert_eq!(r["ordering"], true, "{r}");
+    settled(&mut s);
+    assert_eq!(s.faces.arrange.last_scored, 4);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn removing_a_box_in_front_of_a_named_face_scores_nobody_again() {
+    let (mut s, d, [_, _, c]) = library("bg-remove-named");
+    // photo c: an unnamed face, then Cy (its second face, named)
+    set_regions(&mut s, c, vec![region(0.1, None), region(0.5, Some("Cy"))]);
+    s.execute("faces.unnamed", &json!({})).unwrap();
+    s.execute("faces.removeBoxes", &json!({"faces": [{"photo": c.0, "index": 0}]})).unwrap();
+    assert_eq!(s.catalog.photo(c).unwrap().meta.regions.len(), 1, "Cy is region 0 now");
+    s.execute("faces.unnamed", &json!({})).unwrap();
+    assert_eq!(s.faces.arrange.last_scored, 0, "Cy's faces did not change, only their region number");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn opening_another_library_leaves_nothing_of_the_old_one() {
+    let (mut s, d, [a, _, _]) = library("bg-library");
+    let hold = Arc::new(AtomicBool::new(false));
+    s.faces.arrange.hold = Some(hold.clone());
+    settled(&mut s);
+    // a result is kept, then a run is held
+    hold.store(true, Ordering::Relaxed);
+    s.execute("faces.setName", &json!({"id": a.0, "index": 2, "name": "Bob"})).unwrap();
+    assert_eq!(ask(&mut s, false)["ordering"], true);
+    let was = taken(&s);
+    s.faces.library_changed();
+    assert!(s.faces.arrange.is_empty(), "no run, result, state or stop is kept");
+    assert_ne!(taken(&s), was, "a window asks again");
+    assert!(row_gone(&mut s), "the held run saw its flag and ended");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn closing_the_session_stops_a_running_job() {
+    let (mut s, d, _) = library("bg-drop");
+    let hold = Arc::new(AtomicBool::new(true));
+    s.faces.arrange.hold = Some(hold);
+    assert_eq!(ask(&mut s, false)["ordering"], true);
+    let activity = s.activity.clone();
+    drop(s);
+    let mut gone = false;
+    for _ in 0..3000 {
+        if activity.list().iter().all(|t| t.kind != "faceOrder") {
+            gone = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(gone, "the held run saw its flag when the session went away");
     let _ = std::fs::remove_dir_all(&d);
 }
 

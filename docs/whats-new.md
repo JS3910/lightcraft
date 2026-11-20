@@ -35,6 +35,15 @@
   out; without it every caller (CLI, MCP, control channel) still gets the complete order, or an error when the run it waits
   for is cancelled or cannot start. `wait` must be `true` or `false`. `faces.pump` reports `arranged` (results taken in) and
   `ordering`; the window takes a finished order in within a few frames, without a mouse move.
+- `faces.unnamed` also says `complete` (the list is the final order) and `stopped` (no run is going and the order is not
+  final: the run was cancelled, died or could not be started). A stopped order is never shown as final: the section says so
+  and offers **Put in order again** (`restart: true`); nothing restarts it by itself until a face or a name changes. Quitting
+  does not ask about the "Putting unnamed faces in order" row, since its result is worked out again when needed.
+- Fixed: removing a face box no longer makes the scores of everyone named in a later region of that photo be worked out
+  again, two faces of a photo with the very same box are each scored for themselves, what is kept for a face stays small when
+  many people tie exactly, the first faces the scan finds while the People view is open show a status (not tiles in a half
+  done order that would then stay), and a finished run no longer starts the next one before the ten-second refresh while the
+  scan is still finding faces.
 
 ### Editing a photo out of the view keeps your place
 - Any edit that takes the open photo out of the view now moves on to the photo after it (the one before it at the end of the view): un-naming a face in the loupe under a person filter, removing a keyword under a keyword filter, changing a caption under a search, and the like. Before, only a rating, flag or colour label did, and the loupe kept showing a photo the filmstrip no longer had. Compare and Survey still keep showing the photo you edit, and so does View ▸ Hold View Until Refreshed.
