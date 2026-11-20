@@ -64,11 +64,15 @@ pub fn parse(v: &Value) -> Unnamed {
 /// carries one, look-alikes next to each other when ordered, else none).
 fn order_sentence(list: &Unnamed) -> &'static str {
     if list.ordered && list.faces.iter().any(|f| f.suggestion.is_some()) {
-        "The likeliest names come first, then faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones)."
+        crate::i18n::tr(
+            "The likeliest names come first, then faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones).",
+        )
     } else if list.ordered {
-        "Faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones)."
+        crate::i18n::tr(
+            "Faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones).",
+        )
     } else {
-        "Click faces to select them, Shift-click for a range; click the name under a face to name it (or the selected ones)."
+        crate::i18n::tr("Click faces to select them, Shift-click for a range; click the name under a face to name it (or the selected ones).")
     }
 }
 
@@ -109,7 +113,7 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
     } else if list.faces.is_empty() {
         crate::i18n::tr("No unnamed faces. Faces found in your photos appear here until you name them.").to_string()
     } else {
-        crate::i18n::tr(order_sentence(list)).to_string()
+        order_sentence(list).to_string()
     };
     p.text(pos2(at.x, at.y + 24.0), Align2::LEFT_CENTER, sub, t.font(12.0), t.text_dim);
     if !list.ready && list.faces.is_empty() {
