@@ -194,6 +194,92 @@ fn changing_the_source_or_a_filter_clears_the_selection_the_rejections_and_the_n
     let _ = p0;
 }
 
+/// [`people`] with Ann Lee also named in photos 1 and 2, so her page has a confirmed face in each of the three photos.
+fn ann_everywhere() -> (Headless, [PhotoId; 3]) {
+    use super::unnamed_tiles::{region, set_regions};
+    let (mut h, [p0, p1, p2]) = people();
+    set_regions(&mut h, p1, vec![region(0.3, Some("Ann Lee")), region(0.6, None)]);
+    set_regions(&mut h, p2, vec![region(0.3, Some("Ann Lee"))]);
+    h.settle(T);
+    (h, [p0, p1, p2])
+}
+
+/// On Ann Lee's page: her confirmed faces in `photos` selected and rejected in place, the second face of photo 1 rejected in
+/// place among More, and a name box open on the first of them. What is held is checked to stay over a few frames, so a test
+/// that sees it gone afterwards knows what took it.
+fn hold_on_the_page(h: &mut Headless, photos: &[PhotoId], p1: PhotoId) {
+    let face = |p: PhotoId, index| Face { photo: p.0, index, rect: lightcraft_geom::Rect { x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 }, score: 0.0 };
+    for p in photos {
+        h.app.ui.unnamed_selected.insert((p.0, 0));
+        h.app.ui.rejected_confirmed.remember(&face(*p, 0), 0);
+    }
+    h.app.ui.rejected_faces.remember(&face(p1, 1), 0);
+    h.app.ui.face_gallery = Some(Gallery::Confirmed("Ann Lee".into()));
+    h.step();
+    h.step();
+    // the name box on the first of them, opened as a click on its strip does
+    let r = h.request("ui.clickWidget", json!({"id": format!("person-name:{}:0", photos[0].0)}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    for _ in 0..4 {
+        h.step();
+    }
+    assert!(
+        held_on_the_page(h, photos),
+        "the page keeps what it holds while nothing changes: selected {:?}, rejected {}, box {}, page {:?}",
+        h.app.ui.unnamed_selected,
+        photos.iter().filter(|p| h.app.ui.rejected_confirmed.contains((p.0, 0))).count(),
+        h.app.ui.name_edit.is_some(),
+        h.app.caches.person_page.as_ref().map(|c| c.4.confirmed.iter().map(|f| (f.photo, f.index)).collect::<Vec<_>>())
+    );
+    assert!(h.app.ui.rejected_faces.contains((p1.0, 1)));
+}
+
+fn held_on_the_page(h: &Headless, photos: &[PhotoId]) -> bool {
+    photos.iter().all(|p| h.app.ui.unnamed_selected.contains(&(p.0, 0)) && h.app.ui.rejected_confirmed.contains((p.0, 0)))
+        && h.app.ui.name_edit.is_some()
+}
+
+fn nothing_held_on_the_page(h: &Headless) -> bool {
+    h.app.ui.unnamed_selected.is_empty()
+        && h.app.ui.rejected_faces.is_empty()
+        && h.app.ui.rejected_confirmed.is_empty()
+        && h.app.ui.name_edit.is_none()
+}
+
+#[test]
+fn on_a_persons_page_changing_the_source_or_a_filter_clears_what_it_holds_and_the_page_stays() {
+    let (mut h, [p0, p1, p2]) = ann_everywhere();
+    run(&mut h, "view.person", json!({"name": "Ann Lee"}));
+    hold_on_the_page(&mut h, &[p0, p1, p2], p1);
+    let album = album_of(&mut h, "Some", &[p0, p1, p2]);
+    show_album(&mut h, album);
+    assert!(nothing_held_on_the_page(&h), "a source change clears the selection, the rejections and the name box");
+    assert_eq!(h.app.ui.person_page.as_deref(), Some("Ann Lee"));
+    hold_on_the_page(&mut h, &[p0, p1, p2], p1);
+    run(&mut h, "library.filter", json!({"text": "a"}));
+    assert!(nothing_held_on_the_page(&h), "and so does a filter change");
+    assert_eq!(h.app.ui.person_page.as_deref(), Some("Ann Lee"));
+}
+
+#[test]
+fn on_a_persons_page_an_edit_that_drops_a_photo_removes_only_its_faces_from_what_the_page_holds() {
+    let (mut h, [p0, p1, p2]) = ann_everywhere();
+    let album = album_of(&mut h, "Three", &[p0, p1, p2]);
+    show_album(&mut h, album);
+    run(&mut h, "view.person", json!({"name": "Ann Lee"}));
+    hold_on_the_page(&mut h, &[p2, p0, p1], p1);
+    run(&mut h, "album.removePhotos", json!({"id": album, "ids": [p1.0]}));
+    assert!(held_on_the_page(&h, &[p2, p0]), "what the page holds of the photos still there stays");
+    assert!(!h.app.ui.unnamed_selected.contains(&(p1.0, 0)), "the photo that left leaves the selection");
+    assert!(!h.app.ui.rejected_confirmed.contains((p1.0, 0)) && !h.app.ui.rejected_faces.contains((p1.0, 1)), "and the rejections");
+    assert!(h.app.ui.name_edit.as_ref().is_some_and(|e| e.photo == p2.0), "the box on photo 2 stays");
+    // the photo with the box leaves: the box closes, and the page stays open
+    run(&mut h, "album.removePhotos", json!({"id": album, "ids": [p2.0]}));
+    assert!(h.app.ui.name_edit.is_none());
+    assert!(h.app.ui.rejected_confirmed.contains((p0.0, 0)));
+    assert_eq!(h.app.ui.person_page.as_deref(), Some("Ann Lee"));
+}
+
 #[test]
 fn an_edit_that_drops_a_photo_removes_only_its_faces_from_what_the_view_holds() {
     let (mut h, [p0, p1, p2]) = people();
