@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### People: the likeliest names first
+- The Unnamed faces now start with the faces the named people recognise, the most confident suggestion first (different
+  names mixed), as Lightroom Classic's Suggested Name order does. Faces nothing is suggested for follow, look-alikes
+  next to each other so you can still name a group at once, and faces not looked at yet come last. The up arrow on a
+  tile now confirms every suggestion at least as confident as that one in a single click. `faces.unnamed` lists them
+  in the same order.
+
 ### Flatpak updates
 - Help ▸ Check for Updates can now reach the release service and update standalone Flatpak bundles.
   This permissions repair must first arrive through your existing host-side update method. Flatpaks
