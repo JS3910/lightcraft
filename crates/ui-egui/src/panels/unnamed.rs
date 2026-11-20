@@ -1,5 +1,5 @@
-//! The unnamed faces in the People view: every face nobody has named, as cropped pictures, with look-alikes next to each
-//! other (once recognition has looked at them), each a tile (`face_tile.rs`) with a name strip below the picture. Click
+//! The unnamed faces in the People view: every face nobody has named, as cropped pictures, the likeliest names first, then
+//! look-alikes next to each other (once recognition has looked at them), each a tile (`face_tile.rs`) with a name strip below the picture. Click
 //! faces to select them (Shift-click selects a range); a click on a strip opens the name box on that tile, which names the
 //! selected faces together when the tile is selected, else just that face. A face the named ones recognise carries the
 //! name they suggest on its strip.
@@ -31,7 +31,7 @@ pub struct Unnamed {
     /// Unnamed faces in the library (more than are listed when the list was cut).
     pub total: usize,
     pub faces: Vec<UnnamedFace>,
-    /// Look-alikes are next to each other.
+    /// The faces are in confidence order: suggested ones first, then look-alikes next to each other.
     pub ordered: bool,
     /// Recognition is running.
     pub ready: bool,
@@ -60,8 +60,24 @@ pub fn parse(v: &Value) -> Unnamed {
     }
 }
 
+/// The subtitle for a non-empty list: it names only the order the list is really in (suggested names first when any face
+/// carries one, look-alikes next to each other when ordered, else none).
+fn order_sentence(list: &Unnamed) -> &'static str {
+    if list.ordered && list.faces.iter().any(|f| f.suggestion.is_some()) {
+        crate::i18n::tr(
+            "The likeliest names come first, then faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones).",
+        )
+    } else if list.ordered {
+        crate::i18n::tr(
+            "Faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones).",
+        )
+    } else {
+        crate::i18n::tr("Click faces to select them, Shift-click for a range; click the name under a face to name it (or the selected ones).")
+    }
+}
+
 /// The unnamed faces, asked for again only when the catalog changed, or (while the scan runs and learns more faces) at
-/// most every few seconds, since putting look-alikes together looks at every pair.
+/// most every few seconds, since arranging them scores every face against the named ones and looks at every pair of the rest.
 pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
     let (rev, indexed) = (app.session.catalog.revision, app.caches.faces_indexed);
     if let Some((r, i, at, list)) = &app.caches.unnamed
@@ -96,11 +112,8 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
         crate::i18n::tr_format!("Looking through your photos… {n} left", n = app.caches.faces_pending)
     } else if list.faces.is_empty() {
         crate::i18n::tr("No unnamed faces. Faces found in your photos appear here until you name them.").to_string()
-    } else if list.ordered {
-        crate::i18n::tr("Faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones).").to_string()
     } else {
-        crate::i18n::tr("Click faces to select them, Shift-click for a range; click the name under a face to name it (or the selected ones).")
-            .to_string()
+        order_sentence(list).to_string()
     };
     p.text(pos2(at.x, at.y + 24.0), Align2::LEFT_CENTER, sub, t.font(12.0), t.text_dim);
     if !list.ready && list.faces.is_empty() {
@@ -199,6 +212,23 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_subtitle_names_only_the_order_the_list_is_in() {
+        let face = |s: Option<&str>| UnnamedFace {
+            photo: 1,
+            index: 0,
+            view: lightcraft_geom::Rect { x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 },
+            suggestion: s.map(str::to_string),
+        };
+        let list = |ordered, faces| Unnamed { total: 2, faces, ordered, ready: true };
+        let suggested = order_sentence(&list(true, vec![face(Some("Jane")), face(None)]));
+        assert!(suggested.starts_with("The likeliest names come first"), "{suggested}");
+        let alike = order_sentence(&list(true, vec![face(None), face(None)]));
+        assert!(alike.starts_with("Faces that look alike") && !alike.contains("likeliest"), "{alike}");
+        let plain = order_sentence(&list(false, vec![face(None)]));
+        assert!(plain.starts_with("Click faces") && !plain.contains("alike"), "{plain}");
+    }
 
     #[test]
     fn the_engines_answer_becomes_a_list_and_odd_entries_are_left_out() {

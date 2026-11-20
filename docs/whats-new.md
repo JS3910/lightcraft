@@ -4,6 +4,12 @@
 
 ### Editing a photo out of the view keeps your place
 - Any edit that takes the open photo out of the view now moves on to the photo after it (the one before it at the end of the view): un-naming a face in the loupe under a person filter, removing a keyword under a keyword filter, changing a caption under a search, and the like. Before, only a rating, flag or colour label did, and the loupe kept showing a photo the filmstrip no longer had. Compare and Survey still keep showing the photo you edit, and so does View ▸ Hold View Until Refreshed.
+### People: the likeliest names first
+- The Unnamed faces now start with the faces the named people recognise, the most confident suggestion first (different
+  names mixed), as Lightroom Classic's Suggested Name order does. Faces nothing is suggested for follow, look-alikes
+  next to each other so you can still name a group at once, and faces not looked at yet come last. The up arrow on a
+  tile now confirms every suggestion at least as confident as that one in a single click. `faces.unnamed` lists them
+  in the same order.
 
 ### Flatpak updates
 - Help ▸ Check for Updates can now reach the release service and update standalone Flatpak bundles.
