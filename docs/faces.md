@@ -348,8 +348,8 @@ Below the cards come the **Unnamed faces**: every face nobody has named in those
 named ones recognise come first, the most confident suggestion first (different names mixed, ties by photo and then by
 face), each carrying its suggested name on its name strip; then the faces nothing is suggested for, faces that look alike
 next to each other (put in order by looking at every pair, for up to the first 1,500 of them); then the faces not
-embedded yet, in photo order. Every embedded unnamed face is scored against the named people for this order, on every
-core, not only the ones listed (see *The cost of the order* below). Every tile has that strip under its picture, always
+embedded yet, in photo order. Every embedded unnamed face is scored against the named people for this order, not only the
+ones listed, on a thread of its own, never on the window's (see *The cost of the order* below). Every tile has that strip under its picture, always
 shown: the suggested name followed by a question mark (**Jane Doe?**), or a lone **?** when there is no suggestion. Faces are
 named in place: click a strip and the shared name box opens on that tile (a suggestion is filled in and selected, so the
 first letter you type replaces it); Tab and Shift-Tab move the box to the next and previous tile without confirming
@@ -374,6 +374,19 @@ face whose suggested name was rejected stays a **?** in place. A face the scan f
 inside the faces in view. Scrolling does not re-sort; what scrolls into view has already been put in its place. The subtitle
 under **Unnamed faces** names only the order the list really is in: the likeliest names first when any face has a suggestion,
 look-alikes next to each other when some faces have none.
+
+**The order is worked out in the background.** The window asks for the list without waiting (`faces.unnamed` with
+`wait: false`), so a click never waits for the scoring. The answer is the best order there is now: every face that is still
+unnamed keeps the order and the suggestion already worked out for it (a face whose box or rejections changed shows no old
+suggestion), faces not scored yet go with the faces that have no suggestion, and a face you just named is gone at once, so its
+tile leaves and the tiles after it move up one place. The answer says `ordering: true` until the thread (the **Putting unnamed
+faces in order** row in the activity stack, which can be cancelled) is done; `faces.pump`, which the window calls every frame,
+takes the result in and counts it (`arranged`), and the window asks again when that count moves, and not on every frame. The
+new list is merged like any other, so the tiles in view keep their places. When the People view is opened, or the source or a
+filter changes, there is no list on screen to keep places in and the list is sorted afresh; while that order is not complete
+the section shows **Putting the faces in order…** instead of tiles, since tiles shown now would jump when the order came in.
+Every other caller (the command line, MCP, the control channel, tests) gets the complete order by default: `faces.unnamed`
+without `wait: false` waits for the thread.
 
 Click the name under a person's card to rename them in place: the shared name box opens there with the name selected
 and offers the people already named (no face to rank them by, so no suggestions). A name nobody has renames every face

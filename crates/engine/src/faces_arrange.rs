@@ -153,12 +153,19 @@ impl Crowd<'_> {
     }
 }
 
-/// `face` scored against everybody.
-fn full(face: &Face, crowd: &[Crowd]) -> Entry {
-    let top = crowd.iter().filter_map(|c| Some((c.pid, c.score(face)?))).collect();
-    let mut e = Entry { stamp: face.stamp, top, bound: None };
-    e.trim();
-    e
+/// `face` scored against everybody. `scratch` holds the scores meanwhile (it is reused from face to face, so that what is
+/// kept is as small as it is: a list of every person's score per face would be most of a gigabyte for tens of thousands
+/// of faces).
+fn full(face: &Face, crowd: &[Crowd], scratch: &mut Vec<(u32, f32)>) -> Entry {
+    scratch.clear();
+    scratch.extend(crowd.iter().filter_map(|c| Some((c.pid, c.score(face)?))));
+    scratch.sort_unstable_by(by_score);
+    // the best KEPT, and anyone tied with the last of them (see `Entry::trim`)
+    let cut = match scratch.get(KEPT.saturating_sub(1)) {
+        Some((_, last)) => scratch.iter().position(|(_, s)| s < last).unwrap_or(scratch.len()),
+        None => scratch.len(),
+    };
+    Entry { stamp: face.stamp, top: scratch.get(..cut).unwrap_or_default().to_vec(), bound: scratch.get(cut).map(|(_, s)| *s) }
 }
 
 /// `old` (what was kept for the same face) after the scores against the `changed` people were worked out again. `None`
@@ -247,15 +254,15 @@ impl Scorer {
             progress(n * CHUNK, faces.len());
             let done: Vec<(Entry, Option<(String, f32)>, usize)> = chunk
                 .par_iter()
-                .map(|face| {
+                .map_init(Vec::new, |scratch, face| {
                     let kept = old.get(&(face.photo, face.index)).filter(|e| !fresh && e.stamp == face.stamp);
                     let (entry, work) = match kept {
                         Some(e) if changed.is_empty() => (e.clone(), 0),
                         Some(e) => match delta(e, face, &changed, &by_pid) {
                             Some(d) => (d, changed.len()),
-                            None => (full(face, &crowd), changed.len() + crowd.len()),
+                            None => (full(face, &crowd, scratch), changed.len() + crowd.len()),
                         },
-                        None => (full(face, &crowd), crowd.len()),
+                        None => (full(face, &crowd, scratch), crowd.len()),
                     };
                     let suggestion = resolve(&entry, &names, settings);
                     (entry, suggestion, work)
@@ -511,19 +518,19 @@ impl Jobs {
     ///
     /// Faces the last run scored at the same stamp keep their suggestion, the likeliest first. The others without one
     /// are in look-alike order where the last run had them in it, then in photo order, then the faces not embedded.
-    pub fn arrange(&self, listed: &[(u64, usize, Option<u64>)]) -> Arrangement {
+    ///
+    /// The names of the suggestions are copied for the first `limit` faces of the order only.
+    pub fn arrange(&self, listed: &[(u64, usize, Option<u64>)], limit: usize) -> Arrangement {
         let last = self.last.as_ref();
         // (group, position in the look-alike order, score, place in `listed`)
         let mut keyed: Vec<(u8, usize, f32, usize)> = Vec::with_capacity(listed.len());
-        let mut suggestions = HashMap::new();
         for (at, (photo, index, stamp)) in listed.iter().enumerate() {
             let key = (*photo, *index);
             let Some(stamp) = stamp else {
                 keyed.push((3, 0, 0.0, at));
                 continue;
             };
-            if let Some((_, name, score)) = last.and_then(|l| l.suggestions.get(&key)).filter(|(was, _, _)| was == stamp) {
-                suggestions.insert(key, (name.clone(), *score));
+            if let Some((_, _, score)) = last.and_then(|l| l.suggestions.get(&key)).filter(|(was, _, _)| was == stamp) {
                 keyed.push((0, 0, *score, at));
             } else if let Some(pos) = last.and_then(|l| l.chain.get(&key)) {
                 keyed.push((1, *pos, 0.0, at));
@@ -533,8 +540,14 @@ impl Jobs {
         }
         // `listed` is in photo and region order, so the place in it is that order
         keyed.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.total_cmp(&a.2)).then(a.1.cmp(&b.1)).then(a.3.cmp(&b.3)));
+        let mut suggestions = HashMap::new();
+        for (photo, index, _) in keyed.iter().take(limit).filter(|k| k.0 == 0).filter_map(|k| listed.get(k.3)) {
+            if let Some((_, name, score)) = last.and_then(|l| l.suggestions.get(&(*photo, *index))) {
+                suggestions.insert((*photo, *index), (name.clone(), *score));
+            }
+        }
         Arrangement {
-            suggested: !suggestions.is_empty(),
+            suggested: keyed.first().is_some_and(|k| k.0 == 0),
             look_alike: keyed.iter().filter(|k| k.0 == 1).count() >= 2,
             order: keyed.into_iter().map(|k| k.3).collect(),
             suggestions,

@@ -296,3 +296,17 @@ fn after_every_random_change_the_suggestions_are_what_scoring_everyone_again_giv
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn with_no_face_embedded_there_is_nothing_to_order_and_no_run_is_started() {
+    let d = temp("bg-none");
+    let (mut s, _) = setup(&d, 64);
+    s.execute("faces.index", &json!({"budgetMs": 0})).unwrap();
+    let (a, _) = two_photos(&s);
+    set_regions(&mut s, a, vec![region(0.1, None), region(0.4, None)]);
+    let r = ask(&mut s, false);
+    assert_eq!((r["ready"].clone(), r["ordering"].clone(), r["total"].clone()), (json!(true), json!(false), json!(2)), "{r}");
+    let tasks = s.execute("activity.list", &json!({})).unwrap();
+    assert!(tasks["tasks"].as_array().unwrap().iter().all(|t| t["kind"] != "faceOrder"), "{tasks}");
+    let _ = std::fs::remove_dir_all(&d);
+}
