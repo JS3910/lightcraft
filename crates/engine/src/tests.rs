@@ -22,6 +22,7 @@ pub(super) mod face_recognize;
 pub(super) mod face_rejections;
 #[cfg(not(target_arch = "wasm32"))]
 mod face_tiles;
+mod face_unnamed_cost;
 mod filesystem_history;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod focus_scan;

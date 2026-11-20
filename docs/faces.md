@@ -322,9 +322,12 @@ name; without a scope the command covers the whole library. It also reports `hid
 library photos the source and filters leave out. In the engine the definition is `Session::people_view_photos`.
 
 **People** shows a card for each named person (their face, with the number of photos they are in on the picture) and, below
-a line, the **Unnamed faces**: every face nobody has named, as cropped pictures. With recognition running, faces that look
-alike are next to each other (put in order by looking at every pair, for up to the first 1,500 embedded faces), and a face
-the named ones recognise carries the name they suggest on its name strip. Every tile has that strip under its picture, always
+a line, the **Unnamed faces**: every face nobody has named, as cropped pictures. With recognition running, the faces the
+named ones recognise come first, the most confident suggestion first (different names mixed, ties by photo and then by
+face), each carrying its suggested name on its name strip; then the faces nothing is suggested for, faces that look alike
+next to each other (put in order by looking at every pair, for up to the first 1,500 of them); then the faces not
+embedded yet, in photo order. Every embedded unnamed face is scored against the named people for this order, on every
+core, not only the ones listed (see *The cost of the order* below). Every tile has that strip under its picture, always
 shown: the suggested name followed by a question mark (**Jane Doe?**), or a lone **?** when there is no suggestion. Faces are
 named in place: click a strip and the shared name box opens on that tile (a suggestion is filled in and selected, so the
 first letter you type replaces it); Tab and Shift-Tab move the box to the next and previous tile without confirming
@@ -357,6 +360,24 @@ The thumbnail-size slider in the bottom bar sizes the faces here too, with limit
 same kind of box: the detector's own box once the scan has looked at it (kept beside its embedding), so a loosely drawn box
 from another tool does not make one face look farther away than the next; before the scan has looked at a face it is shown
 by its own box.
+
+#### The cost of the order
+
+Putting the Unnamed faces in confidence order scores every embedded unnamed face in scope against every named person
+(the mean of the two closest faces of each person, as the name box ranks them), on every core, whether or not the face is
+listed: the work is unnamed faces times named faces times 512 numbers. Measured in a release build on a 32-thread
+machine with synthetic embeddings (`cargo test --release -p lightcraft-engine --lib face_unnamed_cost -- --ignored
+--nocapture`), one `faces.unnamed` call took:
+
+| Unnamed faces | Named faces (people) | Time |
+|---|---|---|
+| 10,000 | 3,000 (300) | 0.42 s |
+| 30,000 | 3,000 (300) | 0.80 s |
+| 60,000 | 3,000 (300) | 1.9 s |
+| 30,000 | 6,000 (600) | 2.2 s |
+
+The look-alike chain over the faces without a suggestion is capped at 1,500 faces, so it adds a fixed cost. The People
+view asks for the list when it opens and when something changes, not every frame.
 
 ### A person's page
 
@@ -456,7 +477,7 @@ reuses the pictures of its step instead of rendering every face again.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, look-alikes together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, the most confident suggestions first, then the look-alikes together, then the faces not embedded yet; with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 

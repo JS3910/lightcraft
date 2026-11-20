@@ -533,6 +533,60 @@ fn unnamed_faces_come_with_look_alikes_together_and_the_name_the_named_ones_sugg
 }
 
 #[test]
+fn unnamed_faces_put_the_suggested_ones_first_by_score_then_look_alikes_then_the_unembedded() {
+    let d = temp("unnamed-order");
+    let (mut s, _) = setup(&d, 64);
+    s.execute("faces.index", &json!({"budgetMs": 0})).unwrap();
+    let (a, b) = two_photos(&s);
+    let c = s.catalog.photos().map(|p| p.id).find(|id| *id != a && *id != b).unwrap();
+    // a: Ann, Bob (named), a face like Bob, an unembedded face, two strangers
+    set_regions(
+        &mut s,
+        a,
+        vec![region(0.1, Some("Ann")), region(0.2, Some("Bob")), region(0.3, None), region(0.4, None), region(0.5, None), region(0.6, None)],
+    );
+    // b: a face very like Ann, a stranger, an unembedded face, another stranger
+    set_regions(&mut s, b, vec![region(0.1, None), region(0.2, None), region(0.3, None), region(0.4, None)]);
+    // c: a face fairly like Ann, a face like Bob scoring the same as the one in a (a tie)
+    set_regions(&mut s, c, vec![region(0.1, None), region(0.2, None)]);
+    let put = |s: &mut Session, id: lightcraft_catalog::PhotoId, x: f64, v: Vec<f32>| s.faces.index.insert(id.0, &region(x, None).rect, v);
+    put(&mut s, a, 0.1, unit64(&[(0, 1.0)])); // Ann
+    put(&mut s, a, 0.2, unit64(&[(1, 1.0)])); // Bob
+    put(&mut s, a, 0.3, unit64(&[(1, 0.97), (3, 0.2)])); // like Bob
+    put(&mut s, a, 0.5, unit64(&[(5, 1.0)])); // a stranger
+    put(&mut s, a, 0.6, unit64(&[(6, 1.0)])); // another kind of stranger
+    put(&mut s, b, 0.1, unit64(&[(0, 0.99), (2, 0.1)])); // very like Ann
+    put(&mut s, b, 0.2, unit64(&[(5, 0.99), (7, 0.1)])); // looks like the first stranger
+    put(&mut s, b, 0.4, unit64(&[(6, 0.99), (7, 0.1)])); // looks like the other stranger
+    put(&mut s, c, 0.1, unit64(&[(0, 0.95), (4, 0.3)])); // fairly like Ann
+    put(&mut s, c, 0.2, unit64(&[(1, 0.97), (3, 0.2)])); // like Bob, as much as a's
+    let r = s.execute("faces.unnamed", &json!({})).unwrap();
+    let faces = r["faces"].as_array().unwrap();
+    let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
+    let order: Vec<(u64, u64)> = faces.iter().map(at).collect();
+    // suggested faces first, the most confident first, with Ann's and Bob's mixed; the tie goes to the earlier photo
+    let (first, second) = if a.0 < c.0 { ((a.0, 2), (c.0, 1)) } else { ((c.0, 1), (a.0, 2)) };
+    assert_eq!(&order[..4], &[(b.0, 0), first, second, (c.0, 0)], "{order:?}");
+    let names: Vec<&str> = faces[..4].iter().map(|f| f["suggestion"]["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Ann", "Bob", "Bob", "Ann"]);
+    let scores: Vec<f64> = faces[..4].iter().map(|f| f["suggestion"]["score"].as_f64().unwrap()).collect();
+    assert!(scores.windows(2).all(|w| w[0] >= w[1]), "{scores:?}");
+    // then the faces nobody is suggested for, look-alikes together; the unembedded ones last, in photo order
+    let rest = &order[4..];
+    assert!(faces[4..].iter().all(|f| f["suggestion"].is_null()));
+    let pos = |x: (u64, u64)| rest.iter().position(|o| *o == x).unwrap();
+    assert_eq!(pos((a.0, 4)).abs_diff(pos((b.0, 1))), 1, "{rest:?}");
+    assert_eq!(pos((a.0, 5)).abs_diff(pos((b.0, 3))), 1, "{rest:?}");
+    let mut unembedded = [(a.0, 3), (b.0, 2)];
+    unembedded.sort();
+    assert_eq!(&rest[rest.len() - 2..], &unembedded[..], "{rest:?}");
+    // a limit still cuts from the front, so the likeliest are what is kept
+    let r = s.execute("faces.unnamed", &json!({"limit": 2})).unwrap();
+    let kept: Vec<(u64, u64)> = r["faces"].as_array().unwrap().iter().map(at).collect();
+    assert_eq!(kept, vec![(b.0, 0), first]);
+    let _ = std::fs::remove_dir_all(&d);
+}
+#[test]
 fn without_a_limit_the_unnamed_faces_are_listed_up_to_the_most_the_command_gives() {
     let d = temp("unnamed-many");
     let (mut s, _) = setup(&d, 64);
