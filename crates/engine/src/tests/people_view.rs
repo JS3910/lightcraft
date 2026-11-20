@@ -128,9 +128,127 @@ fn deleted_photos_and_photos_only_browsed_in_a_local_folder_do_not_count() {
     for scope in [None, Some("visible")] {
         let r = cards(&mut s, scope);
         assert_eq!(summary(&r), owned(&[("Ann", 2), ("Bob", 2), ("Cat", 1)]), "{scope:?}: {r}");
+        assert_eq!(r["hidden"], 0, "neither Dan's face nor the deleted photo's face is counted as left out: {r}");
     }
-    s.source = crate::LibrarySource::RecentlyDeleted;
-    assert!(s.people_view_photos().is_empty(), "a deleted photo is not in the People view's photos");
+    // Recently Deleted shows the deleted photo, which is still not a library photo
+    s.execute("library.source", &json!({"kind": "recentlyDeleted"})).unwrap();
+    assert_eq!(s.visible().len(), 1, "the grid shows the deleted photo");
+    let r = cards(&mut s, Some("visible"));
+    assert_eq!(summary(&r), owned(&[]), "{r}");
+    assert_eq!(r["hidden"], 6, "the library's six faces, not Dan's nor the deleted photo's: {r}");
+}
+
+/// A folder of two small PNGs on disk.
+fn png_folder(tag: &str, with_subfolder: bool) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("lc-people-view-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("in")).unwrap();
+    for (name, seed) in [("a.png", 1u8), ("b.png", 2)] {
+        let img = lightcraft_raster::Rgba8::from_fn(16, 12, |x, y| [(x * 9) as u8, (y * 11) as u8, seed, 255]);
+        let opts = crate::export::ExportOptions { format: crate::export::ExportFormat::Png, ..Default::default() };
+        let bytes = crate::export::encode_image(&img, &opts).unwrap();
+        let target = if with_subfolder && name == "b.png" { dir.join("in").join(name) } else { dir.join(name) };
+        std::fs::write(target, bytes).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn a_browsed_local_folder_shows_only_its_library_photos_in_the_cards() {
+    let (s, _) = library();
+    let mut s = s.with_fs();
+    let dir = png_folder("local", false);
+    s.execute("library.browse", &json!({"path": dir.to_string_lossy()})).unwrap();
+    let mut browsed: Vec<PhotoId> = s.catalog.photos().filter(|p| p.local).map(|p| p.id).collect();
+    browsed.sort();
+    assert_eq!(browsed.len(), 2);
+    let (local, mine) = (browsed[0], browsed[1]);
+    s.execute("photo.addToLibrary", &json!({"ids": [mine.0]})).unwrap();
+    for (id, name) in [(local, "Dan"), (mine, "Eve")] {
+        let mut meta = s.catalog.photo(id).unwrap().meta.clone();
+        meta.regions = vec![face(0.2, Some(name))];
+        s.catalog.apply(Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+    }
+    s.execute("library.browse", &json!({"path": dir.to_string_lossy()})).unwrap();
+    assert!(s.visible().contains(&local), "the grid shows the Local photo");
+    assert_eq!(s.people_view_photos(), vec![mine], "the browsed photo is not a library photo");
+    let r = cards(&mut s, Some("visible"));
+    assert_eq!(summary(&r), owned(&[("Eve", 1)]), "{r}");
+    assert_eq!(r["hidden"], 7, "the library's seven faces in /pics, not Dan's: {r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_local_folder_source_includes_its_subfolders_only_when_asked() {
+    for subfolders in [false, true] {
+        let (s, _) = library();
+        let mut s = s.with_fs();
+        let dir = png_folder(&format!("sub{subfolders}"), true);
+        s.execute("library.browse", &json!({"path": dir.to_string_lossy(), "subfolders": subfolders})).unwrap();
+        assert_eq!(s.visible().len(), if subfolders { 2 } else { 1 }, "subfolders {subfolders}: the grid's photos");
+        let mut browsed: Vec<PhotoId> = s.catalog.photos().filter(|p| p.local).map(|p| p.id).collect();
+        browsed.sort();
+        // add every browsed photo to My Photos, with a named face each
+        let all: Vec<u64> = browsed.iter().map(|i| i.0).collect();
+        s.execute("photo.addToLibrary", &json!({"ids": all})).unwrap();
+        for (n, id) in browsed.iter().enumerate() {
+            let mut meta = s.catalog.photo(*id).unwrap().meta.clone();
+            meta.regions = vec![face(0.2, Some(if n == 0 { "Top" } else { "Deep" }))];
+            s.catalog.apply(Op::SetMeta { id: *id, meta: Box::new(meta) }).unwrap();
+        }
+        s.execute("library.browse", &json!({"path": dir.to_string_lossy(), "subfolders": subfolders})).unwrap();
+        let r = cards(&mut s, Some("visible"));
+        let names: Vec<String> = summary(&r).into_iter().map(|(n, _)| n).filter(|n| n == "Top" || n == "Deep").collect();
+        assert_eq!(names.len(), if subfolders { 2 } else { 1 }, "subfolders {subfolders}: {r}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Photo 0 (Ann, Bob) has every attribute a filter-bar field looks for; photo 1 (Cat) has none of them.
+#[test]
+fn each_filter_bar_field_narrows_the_cards() {
+    let cases = [
+        json!({"flag": "pick"}),
+        json!({"flags": ["pick"]}),
+        json!({"label": "red"}),
+        json!({"labels": ["red"]}),
+        json!({"kind": "image"}),
+        json!({"edited": true}),
+        json!({"date": "2024"}),
+        json!({"dateFrom": "2024-01-01", "dateTo": "2024-12"}),
+        json!({"keyword": "travel"}),
+        json!({"camera": "Acme X1"}),
+        json!({"lens": "50mm"}),
+        json!({"rating": 4, "ratingOp": "atLeast"}),
+    ];
+    for filter in cases {
+        let mut s = Session::new();
+        let id = s.catalog.alloc_photo_id();
+        let mut a = Photo::new(id, Source::File { path: "/pics/a.jpg".into() }, "a.jpg", "JPEG", 100, 100, "2024-05-01T10:00:00");
+        a.flag = lightcraft_catalog::Flag::Pick;
+        a.label = Some(lightcraft_catalog::ColorLabel::Red);
+        a.edited = Some("2024-05-02T10:00:00".into());
+        std::sync::Arc::make_mut(&mut a.develop).light.exposure = 0.7;
+        a.rating = 5;
+        a.captured = Some("2024-05-01T10:00:00".into());
+        a.meta.keywords = vec!["travel|italy".into()];
+        a.meta.camera = "Acme X1".into();
+        a.meta.lens = "50mm".into();
+        a.meta.regions = vec![face(0.2, Some("Ann")), face(0.1, Some("Bob"))];
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(a) }).unwrap();
+        let bid = s.catalog.alloc_photo_id();
+        let mut b = Photo::new(bid, Source::File { path: "/pics/b.mov".into() }, "b.mov", "MOV", 100, 100, "2025-05-01T10:00:00");
+        b.kind = lightcraft_catalog::MediaKind::Video;
+        b.rating = 1;
+        b.captured = Some("2025-05-01T10:00:00".into());
+        b.meta.regions = vec![face(0.2, Some("Cat"))];
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(b) }).unwrap();
+        let r = s.execute("library.filter", &filter).unwrap();
+        assert_eq!(r["count"], 1, "{filter}: the filter leaves one photo: {r}");
+        let r = cards(&mut s, Some("visible"));
+        assert_eq!(summary(&r), owned(&[("Ann", 1), ("Bob", 1)]), "{filter}: {r}");
+        assert_eq!(r["hidden"], 1, "{filter}: Cat's face is left out: {r}");
+    }
 }
 
 #[test]
@@ -150,5 +268,6 @@ fn a_held_view_keeps_the_photos_the_grid_holds_and_a_refreshed_one_drops_them() 
         } else {
             assert_eq!(summary(&r), owned(&[("Ann", 1), ("Bob", 1)]), "not held: {r}");
         }
+        assert_eq!(r["hidden"], if hold { 3 } else { 5 }, "hold {hold}: {r}");
     }
 }

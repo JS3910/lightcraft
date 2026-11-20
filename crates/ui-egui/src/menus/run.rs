@@ -360,7 +360,7 @@ fn ui_commands_2(app: &mut LightcraftApp, ctx: &egui::Context, id: &str, p: &Val
             Ok(json!({"show": app.ui.face_boxes}))
         }
         "view.people" => {
-            // Everyone; the page just left stays one click away (the chip next to the title)
+            // Every card of the People view's photos; the page just left stays one click away (the chip next to the title)
             if let Some(name) = app.ui.person_page.take() {
                 app.ui.last_person = Some(name);
             }

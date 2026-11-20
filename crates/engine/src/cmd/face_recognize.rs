@@ -640,8 +640,9 @@ mod imp {
             .unwrap_or_else(|| (4..=16).map(|i| i as f32 * 0.05).collect());
         let budget = Duration::from_millis(p.get("budgetMs").and_then(Value::as_u64).unwrap_or(0).min(3_600_000));
         let started = Instant::now();
-        // `scope: "visible"` looks only at the photos the current filter shows (say one year, or one album)
-        let scope: Option<std::collections::HashSet<PhotoId>> = (str_scope(p) == Some("visible")).then(|| s.visible_cloned().into_iter().collect());
+        // `scope: "visible"` looks only at the People view's photos (see `Session::people_view_photos`)
+        let scope: Option<std::collections::HashSet<PhotoId>> =
+            (str_scope(p) == Some("visible")).then(|| s.people_view_photos().into_iter().collect());
         let in_scope = |id: PhotoId| scope.as_ref().is_none_or(|v| v.contains(&id));
         let todo: Vec<PhotoId> = pending(s, &[], false).into_iter().filter(|id| in_scope(*id)).collect();
         let mut done = 0;
