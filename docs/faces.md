@@ -341,9 +341,10 @@ Changing the source or any filter starts the faces afresh: the selection, the fa
 are cleared, and the Unnamed faces are sorted afresh; an open person's page stays open. An edit that takes photos out of the
 view is narrower: only those photos' faces leave the selection, the faces rejected in place and an open name box. Opening the
 People view again sorts the Unnamed faces afresh too.
+Refresh View, and turning Hold View Until Refreshed on or off, ask the Unnamed faces and an open person's page again, as they
+ask the cards, so what a held view lets go of leaves them too; the tiles on screen keep their places.
 
-a line, the **Unnamed faces**: every face nobody has named in those photos, as cropped pictures. With recognition running, the faces the
-a line, the **Unnamed faces**: every face nobody has named, as cropped pictures. With recognition running, the faces the
+Below the cards come the **Unnamed faces**: every face nobody has named in those photos, as cropped pictures. With recognition running, the faces the
 named ones recognise come first, the most confident suggestion first (different names mixed, ties by photo and then by
 face), each carrying its suggested name on its name strip; then the faces nothing is suggested for, faces that look alike
 next to each other (put in order by looking at every pair, for up to the first 1,500 of them); then the faces not

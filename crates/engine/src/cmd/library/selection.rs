@@ -4,12 +4,17 @@ use super::{AlbumId, Flag, Op, PhotoId, Result, Selection, Session, Value, bad, 
 /// Its callers end an open edit (a slider drag) before their own change, as moving to the next
 /// photo does, so it is its own undo step and comes first.
 pub(super) fn select_after_deletion(s: &mut Session, before: &[PhotoId]) {
-    let at = before.iter().position(|id| Some(*id) == s.selection.active);
+    // each photo's place in the view, looked up (the view and the selection can both be large)
+    let mut places: std::collections::HashMap<PhotoId, usize> = std::collections::HashMap::with_capacity(before.len());
+    for (i, id) in before.iter().enumerate() {
+        places.entry(*id).or_insert(i);
+    }
+    let at = s.selection.active.and_then(|id| places.get(&id).copied());
     let remaining: std::collections::HashSet<_> = s.visible_cloned().into_iter().collect();
     s.selection.ids.retain(|id| remaining.contains(id));
     s.selection.active = s.selection.active.filter(|id| remaining.contains(id)).or_else(|| {
         // the selected photo nearest the one that left: the first after its place, else the last before it
-        let place = |id: &PhotoId| before.iter().position(|b| b == id);
+        let place = |id: &PhotoId| places.get(id).copied();
         let (after, earlier): (Vec<_>, Vec<_>) =
             s.selection.ids.iter().filter_map(|id| place(id).map(|p| (p, *id))).partition(|(p, _)| Some(*p) >= at);
         after

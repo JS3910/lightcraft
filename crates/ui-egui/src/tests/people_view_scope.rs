@@ -309,3 +309,149 @@ fn changing_the_source_sorts_the_faces_afresh() {
     let engine: Vec<(u64, usize)> = engine_order(&mut h).iter().map(|(p, i)| (*p, *i as usize)).collect();
     assert_eq!(shown, engine);
 }
+
+/// The boxes of the faces named `(photo, index)`, as the catalog has them now.
+fn boxes(h: &Headless, list: &[(u64, usize)]) -> Vec<[f64; 4]> {
+    list.iter()
+        .map(|(p, i)| {
+            let r = h.app.session.catalog.photo(PhotoId(*p)).and_then(|ph| ph.meta.regions.get(*i).map(|r| r.rect)).unwrap();
+            [r.x0, r.y0, r.x1, r.y1]
+        })
+        .collect()
+}
+
+#[test]
+fn removing_a_box_above_the_screen_and_undoing_it_leave_the_tiles_on_screen_showing_the_same_faces() {
+    let (mut h, [_, p1, _]) = scrolled();
+    let before = tiles(&mut h);
+    let seen = boxes(&h, &before);
+    let shown = h.app.caches.unnamed_shown.unwrap();
+    assert!(shown.above > 0);
+    // the face just above the screen goes: the later regions of its photo are renumbered, but no tile on screen changes its face
+    let list = h.app.caches.unnamed.as_ref().unwrap().3.clone();
+    let gone = &list.faces[shown.above - 1];
+    assert_eq!(gone.photo, p1.0, "a face of the photo the screen is in");
+    run(&mut h, "faces.removeBoxes", json!({"faces": [{"photo": gone.photo, "index": gone.index}]}));
+    let after = tiles(&mut h);
+    assert_eq!(boxes(&h, &after)[..seen.len()], seen[..], "the tiles on screen show the faces they showed: {before:?} then {after:?}");
+    run(&mut h, "edit.undo", json!({}));
+    let back = tiles(&mut h);
+    assert_eq!(boxes(&h, &back)[..seen.len()], seen[..], "so does undo");
+}
+
+#[test]
+fn removing_a_box_on_screen_makes_its_tile_leave_and_the_tiles_after_it_move_up() {
+    let (mut h, [_, p1, _]) = scrolled();
+    let before = tiles(&mut h);
+    let seen = boxes(&h, &before);
+    let at = before.len() / 2;
+    assert_eq!(before[at].0, p1.0);
+    run(&mut h, "faces.removeBoxes", json!({"faces": [{"photo": before[at].0, "index": before[at].1}]}));
+    let after = tiles(&mut h);
+    let now = boxes(&h, &after);
+    assert_eq!(now[..at], seen[..at], "nothing before it moved");
+    assert_eq!(now[at..seen.len() - 1], seen[at + 1..], "each later tile is one place up");
+}
+
+#[test]
+fn a_refresh_with_a_changed_order_while_scrolled_keeps_the_tiles_on_screen() {
+    let (mut h, [_, p1, _]) = scrolled();
+    let before = tiles(&mut h);
+    let seen = boxes(&h, &before);
+    assert!(h.app.caches.unnamed_shown.unwrap().above > 0, "scrolled part-way down");
+    // a face the scan found sorts into the middle of the tiles on screen (and renumbers the later regions of its photo)
+    let at = before[before.len() / 2];
+    assert_eq!(at.0, p1.0);
+    let mut regions = h.app.session.catalog.photo(p1).unwrap().meta.regions.clone();
+    regions.insert(at.1, super::person_tiles::region(0.9, None));
+    super::person_tiles::set_regions(&mut h, p1, regions);
+    h.step();
+    h.step();
+    let after = tiles(&mut h);
+    assert_eq!(boxes(&h, &after)[..seen.len()], seen[..], "the tiles on screen still show the faces they showed");
+    let shown: Vec<(u64, usize)> = h.app.caches.unnamed.as_ref().unwrap().3.faces.iter().map(|f| (f.photo, f.index)).collect();
+    let engine: Vec<(u64, usize)> = engine_order(&mut h).iter().map(|(p, i)| (*p, *i as usize)).collect();
+    assert_ne!(shown, engine, "the list shown is not in the engine's order: the new face waits below the tiles in view");
+    assert_eq!(shown.len(), engine.len());
+}
+
+/// The photos whose faces the Unnamed faces list on screen now.
+fn unnamed_photos(h: &Headless) -> Vec<u64> {
+    let mut v: Vec<u64> = h.app.caches.unnamed.as_ref().map(|c| c.3.faces.iter().map(|f| f.photo).collect()).unwrap_or_default();
+    v.dedup();
+    v.sort_unstable();
+    v
+}
+
+/// Photos 1 and 2 (or the ones given) are picks and shown with Hold View Until Refreshed on.
+fn hold_picks(h: &mut Headless, photos: &[PhotoId]) {
+    let ids: Vec<u64> = photos.iter().map(|p| p.0).collect();
+    run(h, "library.select", json!({"ids": ids, "active": ids[0]}));
+    run(h, "photo.flag", json!({"ids": ids, "flag": "pick", "keepActive": true}));
+    run(h, "library.filter", json!({"flag": "pick"}));
+    run(h, "library.holdView", json!({"on": true}));
+}
+
+#[test]
+fn a_refresh_drops_a_held_photos_faces_from_the_unnamed_faces_as_it_does_from_the_cards() {
+    let (mut h, [_, p1, p2]) = people();
+    hold_picks(&mut h, &[p1, p2]);
+    assert!(unnamed_photos(&h).contains(&p1.0) && unnamed_photos(&h).contains(&p2.0));
+    // photo 2 stops being a pick: the held view keeps it, and so do the faces
+    run(&mut h, "photo.flag", json!({"ids": [p2.0], "flag": "none", "keepActive": true}));
+    assert!(unnamed_photos(&h).contains(&p2.0), "a held photo keeps its faces");
+    // Refresh View lets it go, with no catalog revision to say so
+    run(&mut h, "library.refresh", json!({}));
+    assert!(!unnamed_photos(&h).contains(&p2.0), "refreshed, the faces of the photo that left are gone");
+    assert!(unnamed_photos(&h).contains(&p1.0));
+    // turning the hold off is the same
+    run(&mut h, "library.holdView", json!({"on": true}));
+    run(&mut h, "photo.flag", json!({"ids": [p1.0], "flag": "none", "keepActive": true}));
+    assert!(unnamed_photos(&h).contains(&p1.0));
+    run(&mut h, "library.holdView", json!({"on": false}));
+    assert!(!unnamed_photos(&h).contains(&p1.0), "no longer held");
+}
+
+#[test]
+fn a_refresh_drops_a_held_photos_faces_from_a_persons_page_too() {
+    let (mut h, [p0, p1, _]) = people();
+    hold_picks(&mut h, &[p0, p1]);
+    run(&mut h, "view.person", json!({"name": "Ann Lee"}));
+    assert!(!said(&h, "Ann Lee has no named faces in these photos."), "{:?}", h.painted_text());
+    run(&mut h, "photo.flag", json!({"ids": [p0.0], "flag": "none", "keepActive": true}));
+    assert!(!said(&h, "Ann Lee has no named faces in these photos."), "held: her face is still on the page");
+    run(&mut h, "library.refresh", json!({}));
+    assert!(said(&h, "Ann Lee has no named faces in these photos."), "{:?}", h.painted_text());
+}
+
+#[test]
+fn an_edit_on_a_persons_page_keeps_the_selection_and_name_box_of_their_more_faces_under_their_own_person_filter() {
+    let (mut h, [_, p1, p2]) = people();
+    // photos with Ann: only photo 0; the faces in photos 1 and 2 are More faces, outside that filter
+    run(&mut h, "library.filter", json!({"person": "Ann Lee"}));
+    run(&mut h, "view.person", json!({"name": "Ann Lee"}));
+    let more = h.app.session.people_view_photos_for_more("Ann Lee");
+    assert!(more.contains(&p1) && more.contains(&p2), "{more:?}");
+    h.app.ui.unnamed_selected.insert((p1.0, 0));
+    h.app.ui.unnamed_selected.insert((p2.0, 0));
+    h.app.ui.face_gallery = Some(Gallery::More("Ann Lee".into()));
+    // one of them is confirmed as Ann (the catalog changed): what the page held of the other stays
+    h.app.session.execute("faces.nameFaces", &json!({"faces": [{"photo": p1.0, "index": 0}], "name": "Ann Lee"})).unwrap();
+    crate::panels::people::drop_left_photos(&mut h.app);
+    let selected: Vec<(u64, usize)> = h.app.ui.unnamed_selected.iter().copied().collect();
+    assert!(selected.contains(&(p2.0, 0)), "the other More face stays selected: {selected:?}");
+}
+
+#[test]
+fn in_a_narrow_window_the_header_keeps_the_source_the_chip_and_the_count_apart() {
+    let (mut h, [p0, _, _]) = super::unnamed_tiles::people_in([420.0, 700.0]);
+    h.app.ui.last_person = Some("Ann Lee".into());
+    let album = album_of(&mut h, "An album with a rather long name for a narrow window", &[p0]);
+    show_album(&mut h, album);
+    let by = |h: &mut Headless, id: &str| widgets(h, id).into_iter().find(|(i, _)| i == id).map(|(_, r)| r);
+    let source = by(&mut h, "people:source").expect("the source name is drawn");
+    let chip = by(&mut h, "people:last").expect("the back chip is drawn");
+    assert!(source[2] <= chip[0] + 0.5, "the source {source:?} ends before the chip {chip:?}");
+    // the count is painted at the right edge: the chip leaves room for it
+    assert!(chip[2] < 420.0 - 8.0, "the chip {chip:?} stays inside the panel");
+}

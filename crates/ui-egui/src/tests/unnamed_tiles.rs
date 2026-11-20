@@ -46,9 +46,14 @@ fn key(h: &mut Headless, key: &str) {
 /// The People view over a demo library: photo 0 has Ann Lee and one unnamed face, photos 1 and 2 only unnamed faces
 /// (four unnamed faces in all: (p0,1), (p1,0), (p1,1), (p2,0)).
 pub(super) fn people() -> (Headless, [PhotoId; 3]) {
+    people_in([1400.0, 900.0])
+}
+
+/// [`people`] in a window of `size`.
+pub(super) fn people_in(size: [f32; 2]) -> (Headless, [PhotoId; 3]) {
     let services = Services { png: None, write_shared: Some(Arc::new(|_: &str, _: &[u8]| Ok(()))), ..Default::default() };
     let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
-    let mut h = Headless::new(app, [1400.0, 900.0], 1.0);
+    let mut h = Headless::new(app, size, 1.0);
     h.settle(T);
     let ids: Vec<PhotoId> = h.app.session.catalog.photos().map(|p| p.id).take(3).collect();
     set_regions(&mut h, ids[0], vec![region(0.1, Some("Ann Lee")), region(0.5, None)]);

@@ -95,13 +95,15 @@ pub struct Shown {
 /// So a face that left (named, or its box removed) just disappears and the tiles after it move up one place, a face the scan
 /// found takes its sorted place out of sight, and what is out of sight is sorted again as confidences change.
 pub fn keep_places(old: &Unnamed, new: Unnamed, shown: Shown) -> Unnamed {
-    let key = |f: &UnnamedFace| (f.photo, f.index);
+    // A face is told apart by its photo and its box, not by its region index: removing a box (or undoing that) renumbers the
+    // later regions of the photo, and a tile must stay with its face, not with a slot.
+    let key = |f: &UnnamedFace| (f.photo, [f.view.x0.to_bits(), f.view.y0.to_bits(), f.view.x1.to_bits(), f.view.y1.to_bits()]);
     let start = shown.above.min(old.faces.len());
     let end = start.saturating_add(shown.on_screen).min(old.faces.len());
-    let mut latest: std::collections::HashMap<(u64, usize), &UnnamedFace> = new.faces.iter().map(|f| (key(f), f)).collect();
+    let mut latest: std::collections::HashMap<_, &UnnamedFace> = new.faces.iter().map(|f| (key(f), f)).collect();
     // the faces in view, in their order, as far as the new list still has them
     let kept: Vec<UnnamedFace> = old.faces.get(start..end).unwrap_or_default().iter().filter_map(|f| latest.remove(&key(f)).cloned()).collect();
-    let in_view: std::collections::HashSet<(u64, usize)> = kept.iter().map(key).collect();
+    let in_view: std::collections::HashSet<_> = kept.iter().map(key).collect();
     let mut rest = new.faces.iter().filter(|f| !in_view.contains(&key(f))).cloned().collect::<Vec<_>>();
     let below = rest.split_off(start.min(rest.len()));
     let mut faces = rest;

@@ -671,7 +671,7 @@ pub struct Caches {
     /// what a new list keeps in place ([`panels::unnamed::keep_places`]).
     pub unnamed_shown: Option<panels::unnamed::Shown>,
     /// The question the grid asked (`Session::view_question`) and the generation of the photos it answered with, when the
-    /// People view last looked: a different question starts the faces afresh, only a different answer drops the faces of
+    /// People view last looked (and the catalog revision then): a different question starts the faces afresh, only a different answer drops the faces of
     /// photos that left (`panels::people::follow_view`).
     pub people_seen: Option<(String, u64, u64)>,
     /// The most photos the face scan has had left at once since it last finished (the progress bar's whole).

@@ -163,3 +163,41 @@ fn a_changed_set_of_named_faces_or_a_rejection_changes_the_suggestions_after_the
     assert_eq!(suggestion(&mut s, b, 1), "Ann");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn a_rename_that_only_changes_the_capitalization_changes_the_name_suggested() {
+    let (mut s, [a, b, _], _, d) = library("scope-case");
+    let suggestion = |s: &mut Session, photo: PhotoId, index: u64| -> Value {
+        let r = s.execute("faces.unnamed", &json!({})).unwrap();
+        r["faces"].as_array().unwrap().iter().find(|f| f["photo"] == photo.0 && f["index"] == index).unwrap()["suggestion"]["name"].clone()
+    };
+    assert_eq!(suggestion(&mut s, b, 1), "Ann");
+    s.execute("faces.renamePerson", &json!({"from": "Ann", "to": "ANN"})).unwrap();
+    assert_eq!(suggestion(&mut s, b, 1), "ANN", "the suggestion is spelled as the person is now");
+    assert_eq!(suggestion(&mut s, a, 1), "ANN");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn more_draws_from_the_photos_a_held_view_holds_while_ignoring_the_person_filter() {
+    let (mut s, [a, _, c], _, d) = library("scope-more-held");
+    // the photos `a` and `c` are picks; the view is picks with Ann in them (only `a`), held
+    s.execute("library.select", &json!({"ids": [a.0, c.0], "active": a.0})).unwrap();
+    s.execute("photo.flag", &json!({"ids": [a.0, c.0], "flag": "pick", "keepActive": true})).unwrap();
+    s.execute("library.filter", &json!({"flag": "pick", "person": "Ann"})).unwrap();
+    s.execute("library.holdView", &json!({"on": true})).unwrap();
+    assert_eq!(s.people_view_photos(), vec![a]);
+    let r = s.execute("faces.person", &json!({"name": "Ann", "scope": "visible"})).unwrap();
+    assert_eq!(faces(&r, "more"), vec![(a.0, 1)], "{r}");
+    // `a` stops being a pick: the held view keeps it, so More keeps looking in it
+    s.execute("photo.flag", &json!({"ids": [a.0], "flag": "none", "keepActive": true})).unwrap();
+    assert_eq!(s.people_view_photos(), vec![a], "the held view still holds it");
+    let r = s.execute("faces.person", &json!({"name": "Ann", "scope": "visible"})).unwrap();
+    assert_eq!(faces(&r, "more"), vec![(a.0, 1)], "More takes the held photo too: {r}");
+    // refreshed, it is gone from both
+    s.execute("library.refresh", &json!({})).unwrap();
+    assert_eq!(s.people_view_photos(), vec![]);
+    let r = s.execute("faces.person", &json!({"name": "Ann", "scope": "visible"})).unwrap();
+    assert_eq!(faces(&r, "more"), vec![], "{r}");
+    let _ = std::fs::remove_dir_all(&d);
+}
