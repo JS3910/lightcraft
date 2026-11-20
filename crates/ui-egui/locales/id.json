@@ -2425,5 +2425,8 @@
   "Top bar": "Bilah atas",
   "Tool strip": "Bilah alat",
   "Bottom bar": "Bilah bawah",
-  "Stopped at the scan limit: there may be more photos": "Berhenti pada batas pemindaian: mungkin masih ada foto"
+  "Stopped at the scan limit: there may be more photos": "Berhenti pada batas pemindaian: mungkin masih ada foto",
+  "Putting unnamed faces in order": "Mengurutkan wajah tanpa nama",
+  "Putting the faces in order…": "Mengurutkan wajah…",
+  "Looking through your photos… {n} left": "Memeriksa foto Anda… {n} lagi"
 }

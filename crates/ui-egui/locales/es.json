@@ -2454,5 +2454,8 @@
   "Start the app with --control 7980 (or LIGHTCRAFT_CONTROL_PORT), then lightcraft-cli mcp --connect attaches one to it.": "Inicia la aplicación con --control 7980 (o LIGHTCRAFT_CONTROL_PORT), y lightcraft-cli mcp --connect conecta un agente a ella.",
   "Welcome": "Bienvenido",
   "Next": "Siguiente",
-  "Get Started": "Empezar"
+  "Get Started": "Empezar",
+  "Putting unnamed faces in order": "Ordenando las caras sin nombre",
+  "Putting the faces in order…": "Ordenando las caras…",
+  "Looking through your photos… {n} left": "Revisando tus fotos… faltan {n}"
 }

@@ -29,6 +29,10 @@ struct Inner {
     next: AtomicU64,
 }
 
+/// Kinds of task that only work out something derived (the order of the Unnamed faces), so quitting while one runs loses
+/// nothing and asks no question.
+const DERIVED: [&str; 1] = ["faceOrder"];
+
 /// How a task can be cancelled.
 pub enum Cancel {
     /// Not at all (no ✕): the face scan, AI Denoise.
@@ -73,7 +77,7 @@ impl Unit {
 pub struct TaskInfo {
     pub id: u64,
     /// A stable id: `import`, `export`, `scan`, `previews`, `smartPreviews`, `lightroom`, `merge`, `download`,
-    /// `faces`, `denoise`, `findMissing`, `applePhotos`, `cache`, `focus`.
+    /// `faces`, `faceOrder`, `denoise`, `findMissing`, `applePhotos`, `cache`, `focus`.
     pub kind: &'static str,
     /// English; the frontend translates it.
     pub label: String,
@@ -213,9 +217,10 @@ impl Activity {
         tasks.iter().filter(|e| e.try_cancel()).count()
     }
 
-    /// Tasks that quitting would cut short: cancellable ones not already stopping.
+    /// Tasks that quitting would cut short: cancellable ones not already stopping, except those whose result is derived from
+    /// what is saved and worked out again when it is next asked for ([`DERIVED`]): cutting those short loses nothing.
     pub fn running_cancellable(&self) -> Vec<TaskInfo> {
-        lock(&self.inner.tasks).iter().filter(|e| e.is_cancellable() && !e.is_cancelled()).map(|e| e.info()).collect()
+        lock(&self.inner.tasks).iter().filter(|e| e.is_cancellable() && !e.is_cancelled() && !DERIVED.contains(&e.kind)).map(|e| e.info()).collect()
     }
 }
 
@@ -358,6 +363,16 @@ mod tests {
         let (_x, _y, _z) = (a.start("export", "E", Cancel::Yes), a.start("import", "I", Cancel::Yes), a.start("faces", "F", Cancel::No));
         assert_eq!(a.cancel_all(), 2);
         assert!(a.running_cancellable().is_empty());
+    }
+
+    #[test]
+    fn a_derived_task_does_not_make_quitting_ask_but_still_cancels() {
+        let a = Activity::default();
+        let order = a.start("faceOrder", "Putting unnamed faces in order", Cancel::Flag(Arc::new(AtomicBool::new(false))));
+        assert!(a.running_cancellable().is_empty(), "the order is worked out again when asked for: nothing is lost");
+        let _export = a.start("export", "E", Cancel::Yes);
+        assert_eq!(a.running_cancellable().len(), 1);
+        assert_eq!(a.cancel(order.id()), Ok(()), "its row can still be cancelled");
     }
 
     #[test]

@@ -348,8 +348,8 @@ Below the cards come the **Unnamed faces**: every face nobody has named in those
 named ones recognise come first, the most confident suggestion first (different names mixed, ties by photo and then by
 face), each carrying its suggested name on its name strip; then the faces nothing is suggested for, faces that look alike
 next to each other (put in order by looking at every pair, for up to the first 1,500 of them); then the faces not
-embedded yet, in photo order. Every embedded unnamed face is scored against the named people for this order, on every
-core, not only the ones listed (see *The cost of the order* below). Every tile has that strip under its picture, always
+embedded yet, in photo order. Every embedded unnamed face is scored against the named people for this order, not only the
+ones listed, on a thread of its own, never on the window's (see *The cost of the order* below). Every tile has that strip under its picture, always
 shown: the suggested name followed by a question mark (**Jane Doe?**), or a lone **?** when there is no suggestion. Faces are
 named in place: click a strip and the shared name box opens on that tile (a suggestion is filled in and selected, so the
 first letter you type replaces it); Tab and Shift-Tab move the box to the next and previous tile without confirming
@@ -375,6 +375,33 @@ inside the faces in view. Scrolling does not re-sort; what scrolls into view has
 under **Unnamed faces** names only the order the list really is in: the likeliest names first when any face has a suggestion,
 look-alikes next to each other when some faces have none.
 
+**The order is worked out in the background.** The window asks for the list without waiting (`faces.unnamed` with
+`wait: false`), so a click never waits for the scoring. The answer is the best order there is now: every face that is still
+unnamed keeps the order and the suggestion already worked out for it (a face whose box or rejections changed shows no old
+suggestion), faces not scored yet go with the faces that have no suggestion, and a face you just named is gone at once, so its
+tile leaves and the tiles after it move up one place. The answer says `ordering: true` until the thread (the **Putting unnamed
+faces in order** row in the activity stack, which can be cancelled) is done; `faces.pump` takes the result in and
+counts it (`arranged`), and the window asks again when that count moves, and not on every frame. The window calls `faces.pump`
+on every frame that is drawn, but the pump itself looks only every 50 ms while the scan has work or an order is being worked
+out and about every second otherwise; asking for an order that is not complete wakes it at once and asks for a frame every
+50 ms until the order is in, so a result is taken in within a few frames, with the mouse still. The
+new list is merged like any other, so the tiles in view keep their places. When the People view is opened, or the source or a
+filter changes, there is no list on screen to keep places in and the list is sorted afresh; while that order is not complete
+the section shows **Putting the faces in order…** instead of tiles, since tiles shown now would jump when the order came in.
+Every other caller (the command line, MCP, the control channel, tests) gets the complete order by default: `faces.unnamed`
+without `wait: false` waits for the thread, and gets an error, not a half order, when the run it waits for is cancelled
+from the activity stack, ends without a result or cannot be started. `wait` must be `true` or `false`; anything else is refused.
+
+A run that is cancelled, dies or cannot be started is not the final order. The answer then says `complete: false`,
+`ordering: false` and `stopped: true`: with no list on screen the section says **Putting the faces in order was stopped.** with
+a **Put in order again** button, and with tiles on screen the subtitle says the order is not final and the same button is
+there. Nothing starts the run again by itself for the same faces and names (so a thread that cannot be started is not
+tried on every ask, and what the last run kept is not lost by the failure); the button asks with `restart: true`. When the
+catalog revision moves while a list is on screen the list is asked for again, and so is it when a result is taken in, except
+that while the scan is still finding faces a result taken in does not make the window ask before the ten seconds are up (asking
+would start the next run at once, and the scan would keep one going all the time); a status with no tiles under it asks at once.
+Quitting does not ask about the order's row in the activity stack: its result is worked out again when it is next asked for.
+
 Click the name under a person's card to rename them in place: the shared name box opens there with the name selected
 and offers the people already named (no face to rank them by, so no suggestions). A name nobody has renames every face
 of that person at once, as one undo step; a change of capitalization alone counts. The name of another person asks
@@ -397,35 +424,82 @@ by its own box.
 #### The cost of the order
 
 Putting the Unnamed faces in confidence order scores every embedded unnamed face in scope against every named person
-(the mean of the two closest faces of each person, as the name box ranks them), on every core, whether or not the face is
-listed: the work is unnamed faces times named faces times 512 numbers. Measured in a release build with synthetic
-embeddings (`cargo test --release -p lightcraft-engine --lib face_unnamed_cost -- --ignored --nocapture`;
-`RAYON_NUM_THREADS` sets the thread count), the first `faces.unnamed` call took:
+(the mean of the two closest faces of each person, as the name box ranks them), whether or not the face is listed: the work
+is unnamed faces times named faces times 512 numbers, and then a pass over every pair of the (at most 1,500) faces without a
+suggestion to put look-alikes together. It is the one part of the People view that grows with unnamed faces times named
+faces, so it never runs on the window's thread, and a change pays only for what it changed.
 
-| Unnamed faces | Named faces (people) | 32 threads (idle desktop) | 8 threads | 4 threads |
-|---|---|---|---|---|
-| 10,000 | 3,000 (300) | 0.42 s | 0.34 s | 0.55 s |
-| 30,000 | 3,000 (300) | 0.80 s | 0.93 s | 1.5 s |
-| 60,000 | 3,000 (300) | 1.9 s | 2.1 s | 3.2 s |
-| 30,000 | 6,000 (600) | 2.2 s | 2.8 s | 5.9 s |
+**What runs where.**
 
-The 8 and 4 thread columns were measured on the same 32-thread machine while other builds were running, so they overstate
-a quiet laptop with that many cores somewhat; a 4-core laptop that is busy will be no faster than the last column. The
-look-alike chain over the faces without a suggestion is capped at 1,500 faces and is a pass over every pair of them (a
-fixed cost on one core, not in the table).
+- *On the window's thread*, when the window asks (`faces.unnamed` with `wait: false`: once per catalog revision, once per
+  result taken in, and at most every ten seconds while the scan learns faces, a result taken in then included): listing the unnamed faces, looking up what was
+  already worked out for each, sorting, and building the answer. That is linear in the faces (a fingerprint of each one's box,
+  rejections and the start of its embedding, and of the named faces once), never faces times named faces. Nothing is scored there.
+- *On a thread of its own* (the **Putting unnamed faces in order** row in the activity stack: one run at a time, checking its
+  cancel flag between chunks of 256 faces, leaving one of rayon's threads to the window): the scoring and the look-alike
+  chain. `faces.pump` takes its result in. A run whose inputs changed while it ran is finished (what it kept is where the next
+  run starts), shown only as the best order there is and never as the complete one for the new inputs, and followed by a run
+  for them. A run is cancelled when another library is opened and when its row's cancel is pressed.
+- *On the caller's own wait*, for every caller that does not say `wait: false` (the command line, MCP, the control channel,
+  tests): the same run on all of rayon's threads, with the caller waiting for it, so it gets the complete order.
 
-This work runs on the UI thread, and it is the reason the order is kept between calls:
+**A change rescores only what it changed.** For each unnamed face the run keeps its four best people with their scores and a
+bound above everyone else's (about 150 bytes a face; a score for every person would be some 140 MB at 60,000 faces and 600
+people). Naming, un-naming, renaming (a change of capitalization alone too), merging two people, rejecting a name and moving or
+removing a box change the named faces of some people, or one face's own box or rejections. Faces are then scored again only
+against the people whose named faces changed (one person for a naming), and a face whose own box, embedding or rejections
+changed is scored against everybody. When a change leaves a face with fewer than two best people known for certain (a person
+fell out of its best four) that face is scored against everybody too. The result is exactly what scoring everything again
+gives, the same suggestion, score and order for every face: the tests compare after every step of random sequences of those
+changes, with many seeds. Another model is scored again from scratch; another bar for suggestions only changes which of the
+kept scores pass it (that rescores nothing, and the result is the same as scoring everything again). A face's entry is cut to
+16 people when more than that tie exactly (identical embeddings, one photo under many names), and that face is scored against
+everybody again on the next run, so what is kept stays bounded. A named face is told apart by its photo and box, not its region
+number, so removing a box scores nobody again; faces of one photo with the very same box are told apart by their order.
 
-- Each embedded unnamed face's suggestion is remembered, and used again while the named faces (who, in which photo and
-  region, and the model) and the face's own box and rejections are the same. Asked again with nothing changed, or after the
-  scan has embedded more faces, only the new faces are scored: the repeat calls of the 60,000 face case took 60 to 120 ms
-  (the listing and fingerprints; nothing scored). The look-alike order is remembered while the faces without a suggestion are
-  the same faces.
-- Naming a face changes the named faces, so the next call scores every face again: one full pass, the time in the table.
-  Narrowing the source or filters (the point of the People view following the grid) is what keeps that pass small.
-- While the scan runs and learns faces, the list is asked for again every ten seconds at most, not every three.
-- Scoring on a worker thread, under an activity row, with the old order shown meanwhile, is not done: a first open with tens
-  of thousands of faces in scope waits for the pass in the table.
+Measured in a release build with synthetic embeddings, on the final code (`cargo test --release -p lightcraft-engine --lib
+face_unnamed_cost -- --ignored --nocapture`; `RAYON_NUM_THREADS` sets the thread count; one run each on a 32-thread machine
+with other work going on, so figures vary with load and the last digit means little). Each of the first three columns is the
+time until the order was complete, in the background (what the window does not wait for); "Before" is the same work as it was
+before the order moved to its own thread, when all of it was on the window's thread (measured on that earlier code, not rerun
+here). The last two columns are what the calling thread waits for: `faces.unnamed` without waiting, which lists, looks up what was
+worked out and sorts, and **More** on a person's page (`faces.person`, out of scope of this change and still on the calling
+thread; a person of 11 faces, listed so the cost can be compared).
+
+8 threads:
+
+| Unnamed faces | Named faces (people) | First arrangement (before) | After one naming (before) | Scan finds 2 % more (before) | `faces.unnamed` on the calling thread (first / unchanged / after a naming) | More |
+|---|---|---|---|---|---|---|
+| 10,000 | 3,000 (300) | 0.32 s (0.40 s) | 41 ms (0.32 s) | 88 ms (0.39 s) | 19 / 17 / 19 ms | 4 ms |
+| 30,000 | 3,000 (300) | 0.81 s (1.05 s) | 74 ms (1.3 s) | 0.14 s (1.65 s) | 31 / 34 / 35 ms | 14 ms |
+| 60,000 | 3,000 (300) | 1.6 s (3.0 s) | 0.12 s (2.9 s) | 0.14 s (3.05 s) | 56 / 56 / 62 ms | 26 ms |
+| 30,000 | 6,000 (600) | 1.7 s (5.85 s) | 74 ms (5.95 s) | 0.15 s (6.2 s) | 32 / 32 / 37 ms | 13 ms |
+
+4 threads:
+
+| Unnamed faces | Named faces (people) | First arrangement (before) | After one naming (before) | Scan finds 2 % more (before) | `faces.unnamed` on the calling thread (first / unchanged / after a naming) | More |
+|---|---|---|---|---|---|---|
+| 10,000 | 3,000 (300) | 0.63 s (0.59 s) | 38 ms (0.53 s) | 0.11 s (0.58 s) | 16 / 19 / 17 ms | 4 ms |
+| 30,000 | 3,000 (300) | 1.8 s (2.6 s) | 75 ms (3.0 s) | 0.16 s (3.4 s) | 29 / 34 / 35 ms | 15 ms |
+| 60,000 | 3,000 (300) | 3.4 s (5.6 s) | 0.12 s (5.55 s) | 0.21 s (5.4 s) | 48 / 56 / 58 ms | 28 ms |
+| 30,000 | 6,000 (600) | 3.8 s (14 s) | 73 ms (12.9 s) | 0.22 s (13 s) | 30 / 33 / 35 ms | 15 ms |
+
+Reading the tables:
+
+- The first arrangement is no slower than it was (with 4 threads, where the background run leaves one thread to the window,
+  the smallest case is a little slower). It happens once for a view, in the background, with the Unnamed section showing a
+  status meanwhile. After that a naming, which was the same seconds again with every click, is 40 to 125 ms until the order
+  is complete; scoring one person against every face is a few milliseconds of that, the rest being the two listings of the
+  faces. The scan finding faces costs the new faces' scores and the look-alike pass again: 0.09 to 0.22 s, in the background.
+- What the calling thread waits for does not grow with the named faces, only with the unnamed faces: the listing, the
+  fingerprints, the named faces grouped once, the sort and the answer for the 3,000 faces listed. It is 16 to 62 ms for 10,000
+  to 60,000 unnamed faces (under four frames) whether it is the first ask, asked again unchanged or asked after a naming (the
+  same list work each time, which is why the three figures match). A view of several hundred thousand unnamed faces is where it
+  would be felt, and where the next step would be keeping the fingerprints between calls.
+- **More** on a person's page is out of scope here: it is the person's unnamed look-alikes against every face of theirs,
+  on the calling thread, and costs 4 to 28 ms at these sizes (more for a person with thousands of faces).
+- A first arrangement of 30,000 faces against 6,000 named takes 1.7 s with 8 threads and 3.8 s with 4: the longest the Unnamed
+  section shows its status; narrowing the source or the filters (the People view follows the grid) keeps it small.
 
 ### A person's page
 
@@ -534,7 +608,7 @@ reuses the pictures of its step instead of rendering every face again.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?, scope?}` (a person's faces and the unnamed faces that look like them; `scope: "visible"` limits them to the People view's photos), `faces.unnamed {limit?, scope?}` (every unnamed face, or with `scope: "visible"` only those in the People view's photos, the most confident suggestions first, then the look-alikes together, then the faces not embedded yet; with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?, scope?}` (a person's faces and the unnamed faces that look like them; `scope: "visible"` limits them to the People view's photos), `faces.unnamed {limit?, scope?, wait?}` (every unnamed face, or with `scope: "visible"` only those in the People view's photos, the most confident suggestions first, then the look-alikes together, then the faces not embedded yet; with suggested names; `wait: false` answers at once with the best order there is and `ordering: true`), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 

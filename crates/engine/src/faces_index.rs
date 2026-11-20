@@ -384,6 +384,23 @@ impl Drop for Scanned {
     }
 }
 
+/// What another crate's tests need to drive the face index and the runs that put the Unnamed faces in order without a real
+/// scan (feature `test-hooks`, which no build of the app turns on).
+#[cfg(feature = "test-hooks")]
+impl crate::Session {
+    /// Hold every run that puts the Unnamed faces in order while `hold` is true.
+    #[doc(hidden)]
+    pub fn test_hold_face_order(&mut self, hold: Option<Arc<std::sync::atomic::AtomicBool>>) {
+        self.faces.arrange.hold = hold;
+    }
+
+    /// Put an embedding in the face index as the scan would.
+    #[doc(hidden)]
+    pub fn test_face_embedding(&mut self, photo: lightcraft_catalog::PhotoId, rect: &Rect, embedding: Vec<f32>) {
+        self.faces.index.insert_with_view(photo.0, rect, embedding, rect);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,20 +571,6 @@ mod tests {
     }
 }
 
-/// What putting the Unnamed faces in order worked out, so asking again costs only what changed: the name each embedded
-/// unnamed face suggests (valid while the named faces, the model and the face's own rejections are the same), and the
-/// look-alike order of the faces without a suggestion (valid while those are the same faces).
-#[derive(Default)]
-pub(crate) struct ArrangeCache {
-    /// A fingerprint of the named faces (who, where, which model) the scores below were worked out against.
-    pub named: u64,
-    /// `(photo, region)` to a fingerprint of the face's box and rejections, and the name and score it was suggested.
-    pub scores: std::collections::HashMap<(u64, usize), (u64, Option<(String, f32)>)>,
-    /// A fingerprint of the faces in look-alike order, and their order.
-    pub chain_of: u64,
-    pub chain: Vec<(u64, usize)>,
-}
-
 /// What the recognition commands keep between calls: the loaded model and the embeddings made with it.
 #[derive(Default)]
 pub(crate) struct FacesState {
@@ -588,8 +591,8 @@ pub(crate) struct FacesState {
     pub queue_stamp: Option<u64>,
     /// What the grid showed (its source and filters) when `queue` was made: the photos of the People view are scanned first.
     pub queue_view: Option<String>,
-    /// What arranging the Unnamed faces worked out, kept for the next time the same things are asked.
-    pub arranged: ArrangeCache,
+    /// The runs that put the Unnamed faces in order, and what the last one worked out.
+    pub arrange: crate::faces_arrange::Jobs,
     /// When the index was last written to its cache file by the background pump.
     pub saved_at: Option<std::time::Instant>,
     /// Bumped when another library is opened: what a worker was making for the old one is dropped.
@@ -616,7 +619,7 @@ impl FacesState {
         self.queue.clear();
         self.queue_stamp = None;
         self.queue_view = None;
-        self.arranged = ArrangeCache::default();
+        self.arrange.reset();
         self.in_flight.clear();
         self.retry_at = None;
         self.saved_at = None;

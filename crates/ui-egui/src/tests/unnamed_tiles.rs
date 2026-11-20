@@ -12,7 +12,7 @@ use crate::{LightcraftApp, Services};
 
 const T: Duration = Duration::from_secs(20);
 
-fn region(x: f64, name: Option<&str>) -> lightcraft_meta::Region {
+pub(super) fn region(x: f64, name: Option<&str>) -> lightcraft_meta::Region {
     lightcraft_meta::Region {
         rect: lightcraft_geom::Rect { x0: x, y0: 0.2, x1: x + 0.2, y1: 0.6 },
         kind: lightcraft_meta::RegionKind::Face,
@@ -22,7 +22,7 @@ fn region(x: f64, name: Option<&str>) -> lightcraft_meta::Region {
     }
 }
 
-fn set_regions(h: &mut Headless, id: PhotoId, regions: Vec<lightcraft_meta::Region>) {
+pub(super) fn set_regions(h: &mut Headless, id: PhotoId, regions: Vec<lightcraft_meta::Region>) {
     let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
     meta.regions = regions;
     h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
