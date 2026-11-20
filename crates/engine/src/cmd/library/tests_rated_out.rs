@@ -93,11 +93,11 @@ fn several_photos_rated_out_go_on_after_the_active_one() {
 }
 
 #[test]
-fn named_photos_and_a_held_view_keep_the_selection() {
-    // Photos named by `ids` leave the selection to the caller (Compare and Survey keep the photo they show)
+fn keep_active_and_a_held_view_keep_the_selection() {
+    // `keepActive` (Compare and Survey) keeps the photo they show
     let mut s = one_star().unwrap();
     s.execute("library.select", &json!({"ids": [5, 6], "active": 6})).unwrap();
-    s.execute("photo.rate", &json!({"ids": [6], "rating": 0})).unwrap();
+    s.execute("photo.rate", &json!({"ids": [6], "rating": 0, "keepActive": true})).unwrap();
     assert_eq!(s.selection, Selection { ids: vec![PhotoId(5), PhotoId(6)], active: Some(PhotoId(6)) });
     // A held view keeps the photo, so the selection stays with it
     let mut s = one_star().unwrap();

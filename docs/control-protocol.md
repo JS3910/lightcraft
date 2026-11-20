@@ -175,6 +175,15 @@ painting on the current mask. `{"new": true}` creates a separate brush mask; `{"
 paint mode with the overlay visible. Brush Erase (or Alt while painting) removes strokes' coverage
 within that brush component; it is distinct from subtracting the component from the whole mask.
 
+### The open photo and the view
+
+After any command that changes photos, if the open (active) photo is no longer in the view (the filter bar, a person
+filter, a search, Picks or a smart album shows it no more), `engine.execute` makes the photo after it active, the one
+before it at the end, or none when the view is empty. This holds for every command, whether or not the call names its
+photos (`photo.rate`, `photo.setMeta`, `faces.setName`, ...). A held view (View > Hold View Until Refreshed) still shows
+the photo, so nothing moves. A call with `"keepActive": true` opts out: Compare and Survey pass it so they keep showing
+the photo they rate or tag.
+
 ### When the library can't be saved
 
 With a persistent library, every command that changes something is written to the catalog journal (fsynced) before

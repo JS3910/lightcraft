@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Editing a photo out of the view keeps your place
+- Any edit that takes the open photo out of the view now moves on to the photo after it (the one before it at the end of the view): un-naming a face in the loupe under a person filter, removing a keyword under a keyword filter, changing a caption under a search, and the like. Before, only a rating, flag or colour label did, and the loupe kept showing a photo the filmstrip no longer had. Compare and Survey still keep showing the photo you edit, and so does View ▸ Hold View Until Refreshed.
+
 ### Flatpak updates
 - Help ▸ Check for Updates can now reach the release service and update standalone Flatpak bundles.
   This permissions repair must first arrive through your existing host-side update method. Flatpaks

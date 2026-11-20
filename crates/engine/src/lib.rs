@@ -591,11 +591,17 @@ impl Session {
         }
         let empty = Value::Object(Default::default());
         let params = if params.is_null() { &empty } else { params };
-        self.run_command(id, spec.journal.then_some(params), |s| (spec.run)(s, params)).map_err(|e| match e {
+        // the one rule of an open photo the view no longer has (see `move_on_if_left`), for every command
+        let before = (self.depth == 0).then(|| cmd::library::watch_active(self, params)).flatten();
+        let r = self.run_command(id, spec.journal.then_some(params), |s| (spec.run)(s, params)).map_err(|e| match e {
             // a shared parameter check ([`Session::targets`]) names the command it ran for
             EngineError::BadParams { cmd, msg } if cmd.is_empty() => EngineError::BadParams { cmd: id.to_string(), msg },
             e => e,
-        })
+        });
+        if r.is_ok() {
+            cmd::library::move_on_if_left(self, before);
+        }
+        r
     }
 
     /// Run `f` as command `id` with what [`Session::execute`] does around every command: the

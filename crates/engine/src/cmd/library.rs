@@ -11,6 +11,7 @@ mod filters;
 mod gps;
 mod import;
 mod selection;
+pub(crate) use selection::{move_on_if_left, watch_active};
 mod specs;
 
 pub(crate) use filters::covers_other_disks;
@@ -40,3 +41,7 @@ mod enable_filters_tests;
 #[cfg(test)]
 #[path = "library/tests_source_album_filter.rs"]
 mod source_album_filter_tests;
+
+#[cfg(test)]
+#[path = "library/tests_active_moves_on.rs"]
+mod active_moves_on_tests;
