@@ -5382,3 +5382,37 @@ fn the_face_boxes_button_and_its_text_sit_in_the_left_group() {
     }
     assert_eq!(h.app.ui.face_summary, "Johan Strom, Sasha Brown, Alexandra Longname, Maximilian Verylongname");
 }
+
+/// Compare and Survey keep showing the photo they rate when a filter no longer has it (`keepActive`, set by
+/// `target_active`); the loupe moves on.
+#[test]
+fn culling_views_keep_the_photo_they_reject_out_of_a_picks_view() {
+    let mut h = demo([1000.0, 700.0]);
+    let t = Duration::from_secs(10);
+    let vis: Vec<u64> = h.app.session.visible_cloned().iter().map(|p| p.0).collect();
+    h.request("engine.execute", json!({"command": "photo.pick", "params": {"ids": [vis[0], vis[1], vis[2], vis[3], vis[4]]}}), t);
+    h.request("engine.execute", json!({"command": "library.filter", "params": {"flag": "pick"}}), t);
+    let in_view = |h: &mut Headless, id: u64| h.app.session.visible_cloned().iter().any(|p| p.0 == id);
+    assert!(in_view(&mut h, vis[1]));
+    // Compare: X rejects the candidate; it stays shown and selected
+    h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[0], vis[1]]}}), t);
+    h.request("engine.execute", json!({"command": "view.compare"}), t);
+    h.request("ui.key", json!({"key": "x"}), t);
+    assert!(!in_view(&mut h, vis[1]), "the reject takes the photo out of the picks");
+    assert_eq!(h.app.session.selection.active.map(|p| p.0), Some(vis[1]));
+    assert_eq!(h.app.session.selection.ids.len(), 2);
+    assert_eq!(h.app.ui.compare, Some((vis[0], vis[1])));
+    // Survey: the same for the active photo of a selection
+    h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[2], vis[3], vis[4]], "active": vis[3]}}), t);
+    h.request("engine.execute", json!({"command": "view.survey"}), t);
+    h.request("ui.key", json!({"key": "x"}), t);
+    assert!(!in_view(&mut h, vis[3]));
+    assert_eq!(h.app.session.selection.active.map(|p| p.0), Some(vis[3]));
+    assert_eq!(h.app.session.selection.ids.len(), 3);
+    // Detail: the same key moves on to the photo after it
+    h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[2]]}}), t);
+    h.request("ui.set", json!({"view": "detail"}), t);
+    h.request("ui.key", json!({"key": "x"}), t);
+    assert_eq!(h.app.session.selection.active.map(|p| p.0), Some(vis[4]));
+    h.settle(SETTLE);
+}

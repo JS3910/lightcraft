@@ -1412,7 +1412,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Name Face",
             [],
             None,
-            "{id?, index, name} — name a face region (null or empty clears it); undoable; the sidecar is not touched",
+            "{id?, index, name, keepActive?: bool} — name a face region (null or empty clears it); undoable; the sidecar is not touched; when this takes the active photo out of the view, the selection moves on unless `keepActive` is true",
             super::always,
             set_name
         ),

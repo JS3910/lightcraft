@@ -177,13 +177,17 @@ pub fn advance(app: &mut LightcraftApp, was: Option<PhotoId>) {
     };
 }
 
-/// In the culling views, point a photo command at the active photo only (not the whole selection).
+/// In the culling views, point a photo command at the active photo only (not the whole selection), and keep it active:
+/// Compare and Survey keep showing a photo they rate or tag when the view no longer has it (`keepActive`, the engine's
+/// one opt-out from moving on).
 pub fn target_active(app: &LightcraftApp, params: &mut Value) {
-    if culling(app)
-        && params.get("ids").is_none()
-        && let Some(a) = app.session.active()
-    {
-        params["ids"] = json!([a.0]);
+    if culling(app) {
+        if params.get("ids").is_none()
+            && let Some(a) = app.session.active()
+        {
+            params["ids"] = json!([a.0]);
+        }
+        params["keepActive"] = json!(true);
     }
 }
 

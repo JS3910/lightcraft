@@ -216,3 +216,18 @@ fn a_preset_that_cannot_be_written_counts_as_unsaved_until_it_is() {
     assert!(s.unsaved().is_none(), "written once the disk works again");
     assert!(String::from_utf8_lossy(&stored(&files)).contains("Mine"));
 }
+
+#[test]
+fn a_photo_edited_out_of_the_view_moves_on_even_when_the_save_fails() {
+    let store = Flaky::default();
+    let mut s = open(&store, true);
+    let ids = s.visible_cloned();
+    s.execute("photo.setMeta", &json!({"ids": ids.iter().map(|i| i.0).collect::<Vec<_>>(), "caption": "zzq"})).unwrap();
+    s.execute("library.filter", &json!({"text": "zzq"})).unwrap();
+    s.execute("library.select", &json!({"ids": [ids[1].0]})).unwrap();
+    store.set_failing(true);
+    let e = s.execute("photo.setMeta", &json!({"caption": "other"})).unwrap_err();
+    assert!(matches!(e, EngineError::NotSaved(_)), "{e:?}");
+    assert!(!s.visible_cloned().contains(&ids[1]));
+    assert_eq!(s.selection.active, Some(ids[2]));
+}

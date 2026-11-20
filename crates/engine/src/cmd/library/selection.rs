@@ -7,7 +7,18 @@ pub(super) fn select_after_deletion(s: &mut Session, before: &[PhotoId]) {
     let at = before.iter().position(|id| Some(*id) == s.selection.active);
     let remaining: std::collections::HashSet<_> = s.visible_cloned().into_iter().collect();
     s.selection.ids.retain(|id| remaining.contains(id));
-    s.selection.active = s.selection.active.filter(|id| remaining.contains(id)).or_else(|| s.selection.ids.first().copied());
+    s.selection.active = s.selection.active.filter(|id| remaining.contains(id)).or_else(|| {
+        // the selected photo nearest the one that left: the first after its place, else the last before it
+        let place = |id: &PhotoId| before.iter().position(|b| b == id);
+        let (after, earlier): (Vec<_>, Vec<_>) =
+            s.selection.ids.iter().filter_map(|id| place(id).map(|p| (p, *id))).partition(|(p, _)| Some(*p) >= at);
+        after
+            .into_iter()
+            .min_by_key(|(p, _)| *p)
+            .or_else(|| earlier.into_iter().max_by_key(|(p, _)| *p))
+            .map(|(_, id)| id)
+            .or_else(|| s.selection.ids.first().copied())
+    });
     if s.selection.active.is_none()
         && let Some(at) = at
     {
@@ -122,28 +133,56 @@ pub(super) fn change_flag(s: &mut Session, p: &Value, label: &str, step: impl Fn
     Ok(json!({"changed": n}))
 }
 
-/// Rate, flag or label (`edit`), then `advance`. When the edit took the active photo out of the view (the filter bar,
-/// Picks or a smart album shows it no more), culling goes on from its place, as after a delete: the photo after it is
-/// active, or the one before it at the end (#2312), not the view's first photo. That photo is the next one, so
-/// `advance` doesn't step past it. Photos named by `ids` / `id` leave the selection to the caller: Compare and Survey
-/// keep showing the photo they rate.
+/// The active photo and the view it was in, taken before a command runs: what [`move_on_if_left`] needs.
+pub(crate) type ViewBefore = (PhotoId, std::sync::Arc<[PhotoId]>, u64);
+
+/// Whether a call says Compare or Survey show the photo it edits (`keepActive`): they keep showing a photo they rate or
+/// tag even when the view no longer has it. Every other caller, naming its photos or not, gets [`move_on_if_left`].
+pub(crate) fn keeps_active(p: &Value) -> bool {
+    bool_or(p, "keepActive", false)
+}
+
+/// The view as it is before a command, when the rule may need it: the call doesn't keep the active photo and one is open.
+pub(crate) fn watch_active(s: &mut Session, p: &Value) -> Option<ViewBefore> {
+    let active = s.selection.active.filter(|_| !keeps_active(p))?;
+    // while a slider drag is open, measure from the view before the drag, so the command that ends it (or undoes it)
+    // sees the photo the drag itself took out of the view
+    if let Some(i) = s.interaction.as_ref().filter(|i| i.view.0 == active) {
+        return Some(i.view.clone());
+    }
+    let (_, view) = s.visible_shared();
+    Some((active, view, s.catalog.revision))
+}
+
+/// THE rule for every command: an edit that took the active photo out of the view (the filter bar, a person filter, a
+/// search, Picks or a smart album shows it no more) goes on from its place, as after a delete: the photo after it is
+/// active, or the one before it at the end, or nothing for an empty view. A held view still shows the photo, so nothing
+/// moves. Nothing moves either when the command changed no photo, moved the selection itself, or left a slider drag open.
+/// Returns whether the selection moved. Idempotent: the photo it moved to is in the view.
+pub(crate) fn move_on_if_left(s: &mut Session, before: Option<ViewBefore>) -> bool {
+    let Some((active, view, revision)) = before else { return false };
+    if s.catalog.revision == revision || s.selection.active != Some(active) || s.interaction.is_some() {
+        return false;
+    }
+    if !view.contains(&active) || s.visible().contains(&active) {
+        return false;
+    }
+    select_after_deletion(s, &view);
+    s.active_mask = None;
+    s.active_spot = None;
+    true
+}
+
+/// Rate, flag or label (`edit`), then `advance`. When the edit took the active photo out of the view, the rule of
+/// [`move_on_if_left`] applies (#2312); that photo is the next one, so `advance` doesn't step past it. An open drag ends
+/// first, as its own undo step, unless the call keeps the active photo (Compare and Survey).
 pub(super) fn cull(s: &mut Session, p: &Value, edit: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
-    let named = [p.get("ids"), p.get("id")].into_iter().any(|t| t.is_some_and(|t| !t.is_null()));
-    // the view as it was, then an open drag ends first, as its own undo step (the selection may
-    // move on; the drag itself can take the photo out of the view)
-    let before = (!named).then(|| s.visible_shared().1);
-    if !named {
+    let before = watch_active(s, p);
+    if !keeps_active(p) {
         s.end_interaction()?;
     }
-    let active = s.selection.active;
     let v = edit(s)?;
-    if let Some(before) = before
-        && active.is_some_and(|a| before.contains(&a) && !s.visible().contains(&a))
-    {
-        select_after_deletion(s, &before);
-        s.active_mask = None;
-        s.active_spot = None;
-    } else {
+    if !move_on_if_left(s, before) {
         advance_if(s, p);
     }
     Ok(v)

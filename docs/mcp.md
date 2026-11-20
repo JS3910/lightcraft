@@ -367,3 +367,11 @@ an input error, even when output fails.
 
 Connect mode and exports inside `command_batch` remain synchronous and do not report MCP
 progress or cancellation. Use a direct headless export call for this behavior.
+
+### The open photo and the view
+
+Every command that edits photos (`cmd_photo_rate`, `cmd_photo_setMeta`, `cmd_faces_setName`, ...) moves the active photo
+on to the next one in the view when the edit takes it out of the view (a filter, a person filter or a search no longer
+shows it), whether or not the call names its photos with `ids`. Pass `"keepActive": true` to any of them to keep the
+selection as it is. A slider drag that does this moves on when it ends. See
+[control-protocol.md](control-protocol.md#the-open-photo-and-the-view).
