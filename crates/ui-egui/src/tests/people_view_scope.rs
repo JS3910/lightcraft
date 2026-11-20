@@ -147,6 +147,11 @@ fn a_person_with_no_named_faces_in_these_photos_keeps_their_page_and_it_says_so(
     assert_eq!(h.app.ui.person_page.as_deref(), Some("Ann Lee"), "the page stays open across a source change");
     assert!(said(&h, "Ann Lee has no named faces in these photos."), "{:?}", h.painted_text());
     assert!(!said(&h, "No faces by that name"), "she is named in the library");
+    // and across a filter change
+    run(&mut h, "library.filter", json!({"text": "a"}));
+    assert_eq!(h.app.ui.person_page.as_deref(), Some("Ann Lee"), "the page stays open across a filter change");
+    run(&mut h, "library.filter", json!({"rating": 3, "ratingOp": "atLeast"}));
+    assert_eq!(h.app.ui.person_page.as_deref(), Some("Ann Lee"), "and across another filter");
     // a person nobody has named has no page to keep
     run(&mut h, "view.person", json!({"name": "Nobody At All"}));
     assert!(said(&h, "No faces by that name"), "{:?}", h.painted_text());
