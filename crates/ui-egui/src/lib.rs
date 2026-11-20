@@ -97,7 +97,7 @@ mod services;
 #[cfg(test)]
 use app::{import_tick_allowed, sam_download_ended, shot_ready};
 pub(crate) use caches::key_of;
-pub use caches::{FilterValues, LibraryCounts, RulesView};
+pub use caches::{Cards, FilterValues, LibraryCounts, RulesView};
 use clock::AppClock;
 pub use clock::{monotonic_ms, now_ms};
 #[cfg(target_os = "linux")]
@@ -617,7 +617,7 @@ pub struct Caches {
     /// The Keyword List's tick boxes, by library revision and selection.
     keyword_ticks: Option<(u64, u64, std::sync::Arc<panels::keyword_list::Ticks>)>,
     folder_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::FolderNode>>)>,
-    people: Option<(u64, u64, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
+    people: Option<(u64, u64, std::sync::Arc<caches::Cards>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
     /// What the Add keyword box offers for the text typed in it, by library revision, the
     /// selection's keywords and that text.
@@ -667,6 +667,13 @@ pub struct Caches {
     pub person_page: Option<(String, u64, u64, f64, std::sync::Arc<panels::person::PersonPage>)>,
     /// The unnamed faces: (catalog revision, faces indexed, when it was asked for, the list).
     pub unnamed: Option<(u64, u64, f64, std::sync::Arc<panels::unnamed::Unnamed>)>,
+    /// How the unnamed faces list lies on the screen (the tiles above the window and those partly in it), as last drawn:
+    /// what a new list keeps in place ([`panels::unnamed::keep_places`]).
+    pub unnamed_shown: Option<panels::unnamed::Shown>,
+    /// The question the grid asked (`Session::view_question`) and the generation of the photos it answered with, when the
+    /// People view last looked: a different question starts the faces afresh, only a different answer drops the faces of
+    /// photos that left (`panels::people::follow_view`).
+    pub people_seen: Option<(String, u64, u64)>,
     /// The most photos the face scan has had left at once since it last finished (the progress bar's whole).
     pub faces_peak: u64,
     person_names: Option<(u64, std::sync::Arc<Vec<String>>)>,

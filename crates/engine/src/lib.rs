@@ -1460,7 +1460,8 @@ impl Session {
     }
 
     /// **The People view's photos**: the one definition the People view draws from: the cards, `faces.people`,
-    /// `view.people` and `faces.evaluate` with `scope: "visible"` (the unnamed faces, a person's page and the scan order follow in later changes).
+    /// `view.people`, `faces.unnamed`, `faces.person` (its confirmed faces; More leaves out a person filter for the open person,
+    /// [`Session::people_view_photos_for_more`]), `faces.evaluate` with `scope: "visible"`, and the scan's queue (see `fill_queue`).
     ///
     /// They are the photos the grid shows for the current source (a folder with its subfolders, an album…) and every
     /// filter (the filter bar, the search and the person filter), including the photos a held view holds
@@ -1470,6 +1471,33 @@ impl Session {
     pub fn people_view_photos(&mut self) -> Vec<PhotoId> {
         self.visible();
         self.visible_unstacked.iter().copied().filter(|id| self.catalog.photo(*id).is_some_and(|p| p.in_library())).collect()
+    }
+
+    /// What the grid asks for, as text: its source and filters. It changes when the source or any filter does (and not
+    /// when an edit changes which photos match), so whatever was made for one question can be told from the next.
+    pub fn view_question(&self) -> String {
+        format!("{:?}|{:?}|{:?}|{:?}", self.source, self.filter, self.browse, self.library_folder)
+    }
+
+    /// [`Session::people_view_photos`] for More on the page of `person`: a person filter naming that same person (trimmed,
+    /// any capitalization) is left out, so filtering to someone still shows the faces that might be them; every other
+    /// filter, and a person filter naming anyone else, still applies. With that exception the photos are asked for
+    /// afresh (a held view's held photos are not added to them).
+    pub fn people_view_photos_for_more(&mut self, person: &str) -> Vec<PhotoId> {
+        let key = person.trim().to_lowercase();
+        if !self.filter.person.as_deref().is_some_and(|n| n.trim().to_lowercase() == key) {
+            return self.people_view_photos();
+        }
+        let filter = Filter { person: None, ..self.filter.clone() };
+        lightcraft_catalog::rules::set_now(Some((self.clock)()));
+        let f = self.view_filter(self.source, &filter);
+        let mut ids = self.catalog.query(&f, &self.sort);
+        if self.source == LibrarySource::Missing {
+            let (cat, avail) = (&self.catalog, &self.media.availability);
+            ids.retain(|id| cmd::missing::is_missing(cat, avail, *id));
+        }
+        ids.retain(|id| self.catalog.photo(*id).is_some_and(|p| p.in_library()));
+        ids
     }
 
     /// After the source changes, the active photo follows the rule every source shares: it stays

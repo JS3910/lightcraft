@@ -1032,6 +1032,7 @@ fn person_more_confirms_all_above_with_one_undo_step() {
     let page = crate::panels::person::PersonPage {
         name: "Jane Doe".into(),
         total: 1,
+        in_library: 1,
         confirmed: vec![crate::panels::person::Face { photo: ids[0].0, index: 0, rect: region(None).rect, score: 0.0 }],
         more: ids[1..6]
             .iter()
