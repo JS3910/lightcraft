@@ -981,7 +981,8 @@ mod imp {
             for (index, r) in ph.meta.regions.iter().enumerate().filter(|(_, r)| r.kind == RegionKind::Face) {
                 let (Some(name), Some(e)) = (r.name.as_deref(), s.faces.index.get(ph.id.0, &r.rect)) else { continue };
                 let key = name.to_lowercase();
-                sum = sum.wrapping_add(fingerprint(&(&key, ph.id.0, index, rect_bits(&r.rect))));
+                // (the spelling counts: a rename that only changes the capitalization changes what is suggested)
+                sum = sum.wrapping_add(fingerprint(&(&key, name, ph.id.0, index, rect_bits(&r.rect))));
                 let i = *at.entry(key.clone()).or_insert_with(|| {
                     people.push(Named { key, shown: name.to_string(), faces: Vec::new() });
                     people.len() - 1

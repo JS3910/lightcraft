@@ -76,7 +76,7 @@ pub(super) fn fit(painter: &egui::Painter, text: &str, font: egui::FontId, max_w
 }
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
-    follow_view(app, ui.ctx());
+    follow_view(app);
     if let Some(name) = app.ui.person_page.clone() {
         return super::person::show(app, ui, &name);
     }
@@ -89,12 +89,22 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let title =
         ui.painter().text(pos2(head.left() + PAD, head.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Named People"), t.semibold(15.0), t.text);
     // where the faces come from, as the grid names it
-    let source = fit(ui.painter(), &crate::i18n::source_title(&app.session), t.font(13.0), 260.0);
+    // (nothing here may reach the count at the right: the source name gives way first, then the chip's label)
+    let count = people.len().to_string();
+    let count_w = ui.painter().layout_no_wrap(count.clone(), t.font(13.0), Color32::WHITE).size().x;
+    let limit = head.right() - PAD - count_w - 12.0;
+    let last = app.ui.last_person.clone().filter(|n| people.iter().any(|p| p.name.to_lowercase() == n.to_lowercase()));
+    // (the back chip keeps room for its arrow at least)
+    let chip_room = if last.is_some() { 44.0 + 14.0 } else { 0.0 };
+    let source_max = (limit - (title.right() + 12.0) - chip_room).clamp(0.0, 260.0);
+    let source = fit(ui.painter(), &crate::i18n::source_title(&app.session), t.font(13.0), source_max);
     let source_at = ui.painter().text(pos2(title.right() + 12.0, head.center().y), Align2::LEFT_CENTER, source, t.font(13.0), t.text_dim);
     register(ui, "people:source", Rect::from_min_max(pos2(title.right() + 12.0, head.top()), pos2(source_at.right(), head.bottom())));
     // the person page last left (a face opened from it, or its back button): one click returns to it
-    if let Some(last) = app.ui.last_person.clone().filter(|n| people.iter().any(|p| p.name.to_lowercase() == n.to_lowercase())) {
-        let label = fit(ui.painter(), &last, t.font(13.0), 224.0);
+    let room = limit - (source_at.right() + 14.0);
+    if let Some(last) = last {
+        let label_room = (room - 44.0).clamp(0.0, 224.0);
+        let label = if label_room < 24.0 { String::new() } else { fit(ui.painter(), &last, t.font(13.0), label_room) };
         let width = ui.painter().layout_no_wrap(label.clone(), t.font(13.0), Color32::WHITE).size().x + 44.0;
         let r = Rect::from_min_size(pos2(source_at.right() + 14.0, head.center().y - 12.0), vec2(width, 24.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
@@ -104,7 +114,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let _ = app.run("view.person", json!({"name": last}));
         }
     }
-    ui.painter().text(pos2(head.right() - PAD, head.center().y), Align2::RIGHT_CENTER, people.len().to_string(), t.font(13.0), t.text_dim);
+    ui.painter().text(pos2(head.right() - PAD, head.center().y), Align2::RIGHT_CENTER, count, t.font(13.0), t.text_dim);
     // until face recognition is set up: what it takes, and a button that does the next step
     super::faces::setup_banner(app, ui);
     // the filters narrowing the list (a date, a keyword…), removable here
@@ -196,34 +206,50 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 ///   (sorted afresh). An open person's page stays open.
 /// - The same question with different photos (an edit took some out, or let some in): only the faces of the photos that left
 ///   are dropped from those; everything else stays.
-/// - The People view was not drawn since the last time (it is opened again): the Unnamed faces are sorted afresh.
-pub(crate) fn follow_view(app: &mut LightcraftApp, ctx: &egui::Context) {
+///   Both lists (the Unnamed faces and an open person's page) are also asked again whenever the photos change without a catalog
+///   revision (View ▸ Refresh View, Hold View Until Refreshed turned on or off, a clock-driven filter), as the cards are; the
+///   Unnamed faces then keep the tiles on screen in their places ([`super::unnamed::keep_places`]).
+/// - The People view was not drawn since the last time (it is opened again): the Unnamed faces are sorted afresh; that is done
+///   by [`left`], which the central panel calls in every frame that draws another view.
+pub(crate) fn follow_view(app: &mut LightcraftApp) {
     let ask = app.session.view_question();
     let generation = app.session.visible_shared().0;
-    let pass = ctx.cumulative_pass_nr();
-    if let Some((was, seen, last)) = app.caches.people_seen.clone() {
+    let revision = app.session.catalog.revision;
+    if let Some((was, seen, seen_revision)) = app.caches.people_seen.clone() {
         if was != ask {
             super::face_tile::forget_positions(app);
             app.caches.unnamed = None;
             app.caches.unnamed_shown = None;
             app.caches.person_page = None;
-        } else {
-            if pass > last.saturating_add(1) {
-                app.caches.unnamed = None;
-                app.caches.unnamed_shown = None;
+        } else if seen != generation {
+            // (a new catalog revision asks the lists again by itself: only photos that changed without one need this)
+            if seen_revision == revision {
+                app.caches.person_page = None;
+                if let Some(cached) = app.caches.unnamed.as_mut() {
+                    // out of date (no revision is u64::MAX), but still what the tiles on screen are kept against
+                    cached.0 = u64::MAX;
+                }
             }
-            if seen != generation {
-                drop_left_photos(app);
-            }
+            drop_left_photos(app);
         }
     }
-    app.caches.people_seen = Some((ask, generation, pass));
+    app.caches.people_seen = Some((ask, generation, revision));
+}
+
+/// Another view than the People view is drawn: opening the People view again sorts the Unnamed faces afresh.
+pub(crate) fn left(app: &mut LightcraftApp) {
+    app.caches.unnamed = None;
+    app.caches.unnamed_shown = None;
 }
 
 /// An edit took photos out of the People view: their faces leave the selection, the faces rejected in place and an open name
 /// box, which are otherwise left as they were.
-fn drop_left_photos(app: &mut LightcraftApp) {
-    let inside: std::collections::HashSet<u64> = app.session.people_view_photos().into_iter().map(|p| p.0).collect();
+pub(crate) fn drop_left_photos(app: &mut LightcraftApp) {
+    let mut inside: std::collections::HashSet<u64> = app.session.people_view_photos().into_iter().map(|p| p.0).collect();
+    // on a person's page More looks at the photos outside a person filter naming them: their faces are in the view too
+    if let Some(name) = app.ui.person_page.clone() {
+        inside.extend(app.session.people_view_photos_for_more(&name).into_iter().map(|p| p.0));
+    }
     app.ui.unnamed_selected.retain(|(photo, _)| inside.contains(photo));
     for set in [&mut app.ui.rejected_faces, &mut app.ui.rejected_unnamed, &mut app.ui.rejected_confirmed] {
         set.retain_photos(&inside);

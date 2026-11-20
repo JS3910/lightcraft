@@ -434,6 +434,9 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
             t.grid_bg
         };
         crate::panels::compare::prepare(app);
+        if app.ui.view != crate::state::ViewMode::People {
+            crate::panels::people::left(app);
+        }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| match app.ui.view {
             crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid => crate::panels::grid::show(app, ui),
             crate::state::ViewMode::Detail => crate::panels::detail::show(app, ui),

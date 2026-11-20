@@ -253,6 +253,8 @@ pub struct Session {
     visible_key: Option<(u64, String)>,
     /// The minute used for a cached view whose rules depend on the session clock.
     visible_clock_minute: Option<String>,
+    /// [`Self::people_view_photos_for_more`] for the generation of [`Self::visible`] it was worked out from and the person.
+    more_photos: Option<(u64, String, Vec<PhotoId>)>,
     /// A view holds the photos it shows until it is refreshed (`library.holdView`): an edit that makes a photo stop
     /// matching a smart album's rules, Picks or the filter bar leaves it where it is. Off: the photo goes at once.
     pub hold_view: bool,
@@ -484,6 +486,7 @@ impl Session {
             visible_unstacked: Vec::new().into(),
             visible_key: None,
             visible_clock_minute: None,
+            more_photos: None,
             hold_view: false,
             base: None,
             view_followed: 0,
@@ -1215,6 +1218,38 @@ impl Session {
         self.shelved_filter.is_some()
     }
 
+    /// The source asks a question rather than being a place (Picks, a smart album): an edit can take a photo out of it.
+    fn source_asks(&self) -> bool {
+        matches!(self.source, LibrarySource::Picks)
+            || matches!(self.source, LibrarySource::Album(a) if self.catalog.album(a).is_some_and(|al| al.is_smart()))
+    }
+
+    /// Where a held view looks for the photos it holds, for the question `f` (the source with the filter): in the library
+    /// for a view that is only a question (`asks`), else in the album or folder shown.
+    fn held_scope(&self, f: &Filter, asks: bool) -> Filter {
+        if asks {
+            self.view_filter(LibrarySource::All, &Filter::default())
+        } else if self.source == LibrarySource::RecentlyAdded {
+            // (how far back it reaches was worked out for `f`: not a second pass over the library)
+            Filter { imported_from: f.imported_from.clone(), ..Default::default() }
+        } else {
+            self.view_filter(self.source, &Filter::default())
+        }
+    }
+
+    /// The photos matching `f` in the session's order; with `held` (the photos a held view holds, and where it looks for
+    /// them) the held photos that stopped matching stay. The one query behind [`Self::visible`] and
+    /// [`Self::people_view_photos_for_more`].
+    fn query_view(&self, f: &Filter, held: Option<(&[PhotoId], &Filter)>) -> Vec<PhotoId> {
+        match held {
+            Some((held, within)) => {
+                let keep: std::collections::HashSet<PhotoId> = held.iter().copied().collect();
+                self.catalog.query_keeping(f, &self.sort, &keep, within)
+            }
+            None => self.catalog.query(f, &self.sort),
+        }
+    }
+
     /// Photos shown in the grid/filmstrip for the current source, filter and sort.
     pub fn visible(&mut self) -> &[PhotoId] {
         let mut key =
@@ -1222,8 +1257,7 @@ impl Session {
         // What a held view is told apart by: what is shown and how, and for a smart album its rules (rules that were
         // changed ask something else). Not the checks of Missing Photos below: they fill the view in, they are
         // no other view.
-        let asks = matches!(self.source, LibrarySource::Picks)
-            || matches!(self.source, LibrarySource::Album(a) if self.catalog.album(a).is_some_and(|al| al.is_smart()));
+        let asks = self.source_asks();
         let rules = match self.source {
             LibrarySource::Album(a) if asks => self.catalog.album(a).map(|al| format!("{:?}", al.smart)).unwrap_or_default(),
             _ => String::new(),
@@ -1252,16 +1286,7 @@ impl Session {
             // (only a view that asks something can lose a photo to an edit: the others are queried as ever, at no
             // cost for the hold)
             let holds = self.hold_view && (asks || self.filter != Filter::default());
-            let within = holds.then(|| {
-                if asks {
-                    self.view_filter(LibrarySource::All, &Filter::default())
-                } else if self.source == LibrarySource::RecentlyAdded {
-                    // (how far back it reaches was worked out for `f`: not a second pass over the library)
-                    Filter { imported_from: f.imported_from.clone(), ..Default::default() }
-                } else {
-                    self.view_filter(self.source, &Filter::default())
-                }
-            });
+            let within = holds.then(|| self.held_scope(&f, asks));
             // Views whose order or photos are not the query's alone are worked out whole each time: an album in
             // its own order, Recently Added (how far back it reaches moves with every import), Missing Photos.
             let own_order = matches!(self.source, LibrarySource::Album(a) if self.sort.key == lightcraft_catalog::SortKey::CaptureDate
@@ -1286,11 +1311,8 @@ impl Session {
             }
             let mut visible = match (followed, &base, &within) {
                 (Some(ids), _, _) => ids,
-                (None, Some((_, _, held)), Some(within)) => {
-                    let keep: std::collections::HashSet<PhotoId> = held.iter().copied().collect();
-                    self.catalog.query_keeping(&f, &self.sort, &keep, within)
-                }
-                _ => self.catalog.query(&f, &self.sort),
+                (None, Some((_, _, held)), Some(within)) => self.query_view(&f, Some((held, within))),
+                _ => self.query_view(&f, None),
             };
             // what the view shows now is what the next edit is followed from, and what it holds until it is
             // refreshed (taken before stacks are arranged, so a photo folded into a stack is held with it)
@@ -1467,7 +1489,8 @@ impl Session {
     /// filter (the filter bar, the search and the person filter), including the photos a held view holds
     /// ([`Session::hold_view`]), with two differences from [`Session::visible`]:
     /// - a collapsed stack counts with all its photos in the view, not as its one top photo;
-    /// - library photos only: a photo only browsed in a Local folder and a deleted photo are left out.
+    /// - library photos only: a photo only browsed in a Local folder and a deleted photo are left out (so what draws from
+    ///   this list need not check that again).
     pub fn people_view_photos(&mut self) -> Vec<PhotoId> {
         self.visible();
         self.visible_unstacked.iter().copied().filter(|id| self.catalog.photo(*id).is_some_and(|p| p.in_library())).collect()
@@ -1481,22 +1504,36 @@ impl Session {
 
     /// [`Session::people_view_photos`] for More on the page of `person`: a person filter naming that same person (trimmed,
     /// any capitalization) is left out, so filtering to someone still shows the faces that might be them; every other
-    /// filter, and a person filter naming anyone else, still applies. With that exception the photos are asked for
-    /// afresh (a held view's held photos are not added to them).
+    /// filter, and a person filter naming anyone else, still applies. With that exception the photos are the view's with the
+    /// person filter left out: the same question asked by [`Self::query_view`], so a held view holds the same photos here
+    /// as in the grid (the photos it holds are those it showed, which the person filter may have narrowed: a held photo
+    /// that only the person filter had left out is not among them). Worked out again when the grid's photos change.
     pub fn people_view_photos_for_more(&mut self, person: &str) -> Vec<PhotoId> {
         let key = person.trim().to_lowercase();
         if !self.filter.person.as_deref().is_some_and(|n| n.trim().to_lowercase() == key) {
             return self.people_view_photos();
         }
+        // (brings the held photos, `self.base`, up to date)
+        self.visible();
+        if let Some((generation, of, ids)) = &self.more_photos
+            && *generation == self.visible_gen
+            && *of == key
+        {
+            return ids.clone();
+        }
         let filter = Filter { person: None, ..self.filter.clone() };
         lightcraft_catalog::rules::set_now(Some((self.clock)()));
         let f = self.view_filter(self.source, &filter);
-        let mut ids = self.catalog.query(&f, &self.sort);
+        let holds = self.hold_view && (self.source_asks() || filter != Filter::default());
+        let within = holds.then(|| self.held_scope(&f, self.source_asks()));
+        let held = self.base.as_ref().map(|(_, _, ids)| ids.as_slice()).zip(within.as_ref());
+        let mut ids = self.query_view(&f, held);
         if self.source == LibrarySource::Missing {
             let (cat, avail) = (&self.catalog, &self.media.availability);
             ids.retain(|id| cmd::missing::is_missing(cat, avail, *id));
         }
         ids.retain(|id| self.catalog.photo(*id).is_some_and(|p| p.in_library()));
+        self.more_photos = Some((self.visible_gen, key, ids.clone()));
         ids
     }
 
