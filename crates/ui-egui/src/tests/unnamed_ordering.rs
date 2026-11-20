@@ -233,6 +233,90 @@ fn an_empty_list_on_screen_is_not_a_list_to_keep_places_in_when_the_first_faces_
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The list on screen (or the status), as the window last asked for it.
+fn list(h: &Headless) -> Arc<Unnamed> {
+    h.app.caches.unnamed.as_ref().map(|(_, _, _, l)| l.clone()).expect("the list was asked for")
+}
+
+/// Cancel the run that puts the faces in order (its row's ✕), let it end, and draw frames until the window shows the stop.
+fn cancel_the_run(h: &mut Headless, hold: &AtomicBool) {
+    let rows = h.app.session.execute("activity.list", &json!({})).unwrap();
+    let id = rows["tasks"].as_array().unwrap().iter().find(|t| t["kind"] == "faceOrder").expect("a run is going")["id"].as_u64().unwrap();
+    h.app.session.activity.cancel(id).unwrap();
+    hold.store(false, Ordering::Relaxed);
+    run_ended(h);
+    assert!(frames_until(h, 40, |h| list(h).stopped).is_some(), "the window never showed the stop: {:?}", list(h));
+}
+
+#[test]
+fn a_stopped_order_with_no_list_on_screen_says_so_and_put_in_order_again_brings_the_tiles() {
+    let (mut h, [p0, _, _], hold, dir) = recognising("stopped");
+    hold.store(true, Ordering::Relaxed);
+    h.request("ui.set", json!({"view": "people"}), T);
+    for _ in 0..6 {
+        h.step();
+    }
+    assert_eq!(widgets(&mut h, "unnamed:status"), 1);
+    cancel_the_run(&mut h, &hold);
+    // a status that says the order was stopped, with the button, and no tiles of a half order
+    for _ in 0..20 {
+        h.step();
+    }
+    let stopped = list(&h);
+    assert!(stopped.stopped && !stopped.ordering && !stopped.complete && stopped.faces.is_empty(), "{stopped:?}");
+    assert_eq!(widgets(&mut h, "unnamed:status"), 1);
+    assert_eq!(widgets(&mut h, "unnamed:restart"), 1, "Put in order again is offered");
+    assert_eq!(widgets(&mut h, "unnamed-face:"), 0);
+    // nothing starts the run again by itself
+    let rows = h.app.session.execute("activity.list", &json!({})).unwrap();
+    assert!(rows["tasks"].as_array().unwrap().iter().all(|t| t["kind"] != "faceOrder"), "{rows}");
+    // the button starts it, and the tiles come in the finished order
+    assert_eq!(h.request("ui.clickWidget", json!({"id": "unnamed:restart"}), T)["ok"], true);
+    assert!(frames_until(&mut h, 400, |h| !shown(h).is_empty()).is_some(), "the tiles never came: {:?}", list(&h));
+    h.settle(T);
+    let done = list(&h);
+    assert!(done.complete && !done.stopped && !done.ordering, "{done:?}");
+    assert_eq!(shown(&h)[0], (p0.0, 1), "the face that looks like Ann Lee comes first");
+    assert_eq!((widgets(&mut h, "unnamed:status"), widgets(&mut h, "unnamed:restart")), (0, 0));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_stopped_order_with_tiles_on_screen_keeps_them_says_so_and_put_in_order_again_finishes_it() {
+    let (mut h, [_, p1, _], hold, dir) = recognising("stopped-tiles");
+    h.request("ui.set", json!({"view": "people"}), T);
+    assert!(frames_until(&mut h, 400, |h| h.app.caches.unnamed.as_ref().is_some_and(|(_, _, _, l)| !l.faces.is_empty() && !l.ordering)).is_some());
+    h.settle(T);
+    // a naming starts a run, which is held and then cancelled
+    hold.store(true, Ordering::Relaxed);
+    h.app.session.execute("faces.setName", &json!({"id": p1.0, "index": 0, "name": "Ann Lee"})).unwrap();
+    for _ in 0..6 {
+        h.step();
+    }
+    let before = shown(&h);
+    assert_eq!(before.len(), 3);
+    cancel_the_run(&mut h, &hold);
+    for _ in 0..20 {
+        h.step();
+    }
+    assert_eq!(shown(&h), before, "the tiles stay where they were");
+    assert_eq!(widgets(&mut h, "unnamed:status"), 0, "tiles are on screen: no status");
+    assert_eq!(widgets(&mut h, "unnamed:restart"), 1, "Put in order again is offered beside the tiles");
+    assert_eq!(h.request("ui.clickWidget", json!({"id": "unnamed:restart"}), T)["ok"], true);
+    assert!(
+        frames_until(&mut h, 400, |h| h.app.caches.unnamed.as_ref().is_some_and(|(_, _, _, l)| l.complete && !l.ordering)).is_some(),
+        "the order was never finished: {:?}",
+        list(&h)
+    );
+    h.settle(T);
+    assert_eq!(widgets(&mut h, "unnamed:restart"), 0);
+    let (mut now, mut expect) = (shown(&h), before);
+    now.sort();
+    expect.sort();
+    assert_eq!(now, expect, "the same faces");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn while_the_scan_keeps_finding_faces_a_result_taken_in_does_not_start_the_next_run_before_the_refresh() {
     let (mut h, ids, _hold, dir) = recognising("scan-refresh");
