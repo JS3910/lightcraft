@@ -235,7 +235,8 @@ const MAX_UNNAMED: usize = 3000;
 
 /// How the unnamed faces were laid out.
 struct Arranged {
-    /// Faces that look alike are next to each other (only the ones already embedded can be).
+    /// The list is in confidence order: suggested faces first, then look-alikes next to each other (only the ones
+    /// already embedded can be arranged). True when either group is non-empty.
     ordered: bool,
     /// Recognition is on and a model is loaded.
     ready: bool,
