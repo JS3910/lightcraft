@@ -163,3 +163,17 @@ fn a_selection_hands_on_to_the_nearest_survivor_after_the_photo_or_else_before_i
     s.execute("faces.setName", &json!({"id": 5, "index": 0, "name": null})).unwrap();
     assert_eq!(s.selection, Selection { ids: vec![PhotoId(3)], active: Some(PhotoId(3)) });
 }
+
+#[test]
+fn a_drag_that_itself_takes_the_photo_out_of_the_view_moves_on_when_the_command_ends_it() {
+    let mut s = tagged();
+    s.execute("library.filter", &json!({"edited": false})).unwrap();
+    open(&mut s, 4);
+    s.begin_interaction("Exposure").unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.4})).unwrap();
+    assert!(!s.visible_cloned().contains(&PhotoId(4)), "the drag itself edits the photo out of Unedited");
+    assert_eq!(s.selection, Selection::single(PhotoId(4)), "a drag in progress keeps its photo");
+    s.execute("develop.endInteraction", &json!({})).unwrap();
+    assert_eq!(s.selection, Selection::single(PhotoId(5)));
+    assert_eq!(s.previous_active, Some(PhotoId(4)));
+}

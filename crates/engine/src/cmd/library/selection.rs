@@ -145,6 +145,11 @@ pub(crate) fn keeps_active(p: &Value) -> bool {
 /// The view as it is before a command, when the rule may need it: the call doesn't keep the active photo and one is open.
 pub(crate) fn watch_active(s: &mut Session, p: &Value) -> Option<ViewBefore> {
     let active = s.selection.active.filter(|_| !keeps_active(p))?;
+    // while a slider drag is open, measure from the view before the drag, so the command that ends it (or undoes it)
+    // sees the photo the drag itself took out of the view
+    if let Some(i) = s.interaction.as_ref().filter(|i| i.view.0 == active) {
+        return Some(i.view.clone());
+    }
     let (_, view) = s.visible_shared();
     Some((active, view, s.catalog.revision))
 }
