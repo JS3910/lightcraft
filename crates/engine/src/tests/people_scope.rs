@@ -137,6 +137,9 @@ fn hostile_scopes_are_not_errors_and_never_panic() {
     let (mut s, _, _, d) = library("scope-hostile");
     for scope in [json!(7), json!(null), json!(""), json!("VISIBLE"), json!(["visible"]), json!({"a": 1})] {
         assert!(s.execute("faces.unnamed", &json!({"scope": scope})).is_ok());
+        let r = s.execute("faces.people", &json!({"scope": scope})).unwrap();
+        assert_eq!(r["hidden"], 0, "an unknown scope is the whole library: {r}");
+        assert_eq!(r["people"].as_array().map(Vec::len), Some(2), "{r}");
         assert!(s.execute("faces.person", &json!({"name": "Ann", "scope": scope})).is_ok());
     }
     let _ = std::fs::remove_dir_all(&d);
@@ -161,6 +164,20 @@ fn a_changed_set_of_named_faces_or_a_rejection_changes_the_suggestions_after_the
     // naming it again brings the suggestion back
     s.execute("faces.setName", &json!({"id": a.0, "index": 0, "name": "Ann"})).unwrap();
     assert_eq!(suggestion(&mut s, b, 1), "Ann");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_face_embedded_again_at_the_same_box_is_scored_again() {
+    let (mut s, [_, b, _], _, d) = library("scope-reembed");
+    let suggestion = |s: &mut Session| -> Value {
+        let r = s.execute("faces.unnamed", &json!({})).unwrap();
+        r["faces"].as_array().unwrap().iter().find(|f| f["photo"] == b.0 && f["index"] == 1).unwrap()["suggestion"]["name"].clone()
+    };
+    assert_eq!(suggestion(&mut s), "Ann");
+    // the photo's file was replaced and the scan made another embedding for the face at the same box: nothing named changed
+    s.faces.index.insert(b.0, &region(0.3, None).rect, unit64(&[(7, 1.0)]));
+    assert_eq!(suggestion(&mut s), json!(null), "the old score is not reused for a new embedding");
     let _ = std::fs::remove_dir_all(&d);
 }
 

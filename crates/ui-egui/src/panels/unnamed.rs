@@ -21,6 +21,9 @@ use crate::widgets::register;
 pub struct UnnamedFace {
     pub photo: u64,
     pub index: usize,
+    /// The face's own box, which only an edit changes: a tile is told apart by it, since `view` changes when the scan
+    /// embeds the face.
+    pub rect: lightcraft_geom::Rect,
     pub view: lightcraft_geom::Rect,
     pub suggestion: Option<String>,
 }
@@ -45,6 +48,7 @@ fn face_of(v: &Value) -> Option<UnnamedFace> {
     Some(UnnamedFace {
         photo: v["photo"].as_u64()?,
         index: usize::try_from(v["index"].as_u64()?).ok()?,
+        rect: rect_of(&v["rect"]).or_else(|| rect_of(&v["view"]))?,
         view: rect_of(&v["view"]).or_else(|| rect_of(&v["rect"]))?,
         suggestion: v["suggestion"]["name"].as_str().map(str::to_string),
     })
@@ -95,9 +99,10 @@ pub struct Shown {
 /// So a face that left (named, or its box removed) just disappears and the tiles after it move up one place, a face the scan
 /// found takes its sorted place out of sight, and what is out of sight is sorted again as confidences change.
 pub fn keep_places(old: &Unnamed, new: Unnamed, shown: Shown) -> Unnamed {
-    // A face is told apart by its photo and its box, not by its region index: removing a box (or undoing that) renumbers the
-    // later regions of the photo, and a tile must stay with its face, not with a slot.
-    let key = |f: &UnnamedFace| (f.photo, [f.view.x0.to_bits(), f.view.y0.to_bits(), f.view.x1.to_bits(), f.view.y1.to_bits()]);
+    // A face is told apart by its photo and its own box, not by its region index: removing a box (or undoing that) renumbers
+    // the later regions of the photo, and a tile must stay with its face, not with a slot. Not by the box it is shown by
+    // either: that changes when the scan embeds the face, which is just when the list is asked for again.
+    let key = |f: &UnnamedFace| (f.photo, [f.rect.x0.to_bits(), f.rect.y0.to_bits(), f.rect.x1.to_bits(), f.rect.y1.to_bits()]);
     let start = shown.above.min(old.faces.len());
     let end = start.saturating_add(shown.on_screen).min(old.faces.len());
     let mut latest: std::collections::HashMap<_, &UnnamedFace> = new.faces.iter().map(|f| (key(f), f)).collect();
@@ -261,7 +266,8 @@ mod tests {
     use super::*;
 
     fn face(photo: u64, index: usize, suggestion: Option<&str>) -> UnnamedFace {
-        UnnamedFace { photo, index, view: lightcraft_geom::Rect { x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 }, suggestion: suggestion.map(str::to_string) }
+        let whole = lightcraft_geom::Rect { x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 };
+        UnnamedFace { photo, index, rect: whole, view: whole, suggestion: suggestion.map(str::to_string) }
     }
 
     #[test]
@@ -315,6 +321,18 @@ mod tests {
         let now = keep_places(&old, list(&[8, 7, 6, 5, 4, 3, 2, 1]), Shown { above: 2, on_screen: 3 });
         // two places above (the first two of the new order that are not in view), then 3 4 5 as they were, then the rest
         assert_eq!(order(&now), [8, 7, 3, 4, 5, 6, 2, 1]);
+    }
+
+    #[test]
+    fn a_face_the_scan_shows_by_another_box_keeps_its_place() {
+        // the scan embedded the faces: each is now shown by the detector's box, though its own box is the same
+        let old = list(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut new = list(&[8, 7, 6, 5, 4, 3, 2, 1]);
+        for f in &mut new.faces {
+            f.view = lightcraft_geom::Rect { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.9 };
+        }
+        let now = keep_places(&old, new, Shown { above: 2, on_screen: 3 });
+        assert_eq!(order(&now), [8, 7, 3, 4, 5, 6, 2, 1], "the faces in view stayed, whatever box they are shown by now");
     }
 
     #[test]

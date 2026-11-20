@@ -72,12 +72,15 @@ fn choosing_an_album_narrows_the_unnamed_faces_to_its_photos() {
     show_album(&mut h, album);
     assert_eq!(h.app.ui.view, ViewMode::People);
     assert_eq!(ids(&mut h, "unnamed-face:"), [picture(p1, 0), picture(p1, 1)], "only the unnamed faces of the album's photos");
+    assert!(said(&h, "2") && !said(&h, "4"), "the header counts the faces within scope: {:?}", h.painted_text());
     let _ = (p0, p2);
     let other = album_of(&mut h, "Other", &[p2]);
     show_album(&mut h, other);
     assert_eq!(ids(&mut h, "unnamed-face:"), [picture(p2, 0)]);
+    assert!(said(&h, "1") && !said(&h, "2"), "{:?}", h.painted_text());
     run(&mut h, "library.source", json!({"kind": "all"}));
     assert_eq!(ids(&mut h, "unnamed-face:").len(), 4);
+    assert!(said(&h, "4"), "{:?}", h.painted_text());
 }
 
 #[test]
@@ -121,6 +124,11 @@ fn a_library_without_faces_says_no_people_yet_and_never_a_hidden_line() {
     h.settle(T);
     run(&mut h, "view.people", json!({}));
     assert!(said(&h, "No people yet"), "{:?}", h.painted_text());
+    assert!(
+        said(&h, "Face names written to XMP by Lightroom and other apps show up here, and faces found in your photos can be named."),
+        "the existing explanation: {:?}",
+        h.painted_text()
+    );
     assert!(!h.painted_text().iter().any(|t| t.contains("hidden by the current filters")), "{:?}", h.painted_text());
     // an album of nothing in a library without faces is still "no people yet": nothing is hidden
     let album = album_of(&mut h, "Empty", &[]);
@@ -139,6 +147,11 @@ fn a_person_with_no_named_faces_in_these_photos_keeps_their_page_and_it_says_so(
     assert_eq!(h.app.ui.person_page.as_deref(), Some("Ann Lee"), "the page stays open across a source change");
     assert!(said(&h, "Ann Lee has no named faces in these photos."), "{:?}", h.painted_text());
     assert!(!said(&h, "No faces by that name"), "she is named in the library");
+    // and across a filter change
+    run(&mut h, "library.filter", json!({"text": "a"}));
+    assert_eq!(h.app.ui.person_page.as_deref(), Some("Ann Lee"), "the page stays open across a filter change");
+    run(&mut h, "library.filter", json!({"rating": 3, "ratingOp": "atLeast"}));
+    assert_eq!(h.app.ui.person_page.as_deref(), Some("Ann Lee"), "and across another filter");
     // a person nobody has named has no page to keep
     run(&mut h, "view.person", json!({"name": "Nobody At All"}));
     assert!(said(&h, "No faces by that name"), "{:?}", h.painted_text());
@@ -191,6 +204,7 @@ fn an_edit_that_drops_a_photo_removes_only_its_faces_from_what_the_view_holds() 
     run(&mut h, "album.removePhotos", json!({"id": album, "ids": [p1.0]}));
     let selected: Vec<(u64, usize)> = h.app.ui.unnamed_selected.iter().copied().collect();
     assert_eq!(selected, vec![(p2.0, 0)], "only the face of the photo that left is dropped");
+    assert!(!unnamed_photos(&h).contains(&p1.0) && unnamed_photos(&h).contains(&p2.0), "with the view not held, its faces leave the list at once");
     assert!(h.app.ui.rejected_unnamed.contains((p2.0, 0)) && !h.app.ui.rejected_unnamed.contains((p1.0, 0)));
     assert!(h.app.ui.name_edit.as_ref().is_some_and(|e| e.photo == p2.0));
     // and the box, still on photo 2's face, closes when that photo leaves
@@ -256,9 +270,65 @@ fn a_face_the_scan_finds_never_moves_the_tiles_on_screen() {
     assert_eq!(top.first(), Some(&(p0.0, 1)));
 }
 
+/// Put the list the screen shows in the opposite order to the engine's, as when suggestions have changed the engine's order
+/// since the list was made: a list that is sorted afresh would no longer be the one on screen.
+fn reverse_shown_order(h: &mut Headless) {
+    let Some((rev, indexed, at, list)) = h.app.caches.unnamed.clone() else { panic!("no list shown") };
+    let mut list = (*list).clone();
+    list.faces.reverse();
+    h.app.caches.unnamed = Some((rev, indexed, at, std::sync::Arc::new(list)));
+    h.step();
+    h.step();
+}
+
+fn shown_list(h: &Headless) -> Vec<(u64, usize)> {
+    h.app.caches.unnamed.as_ref().map(|c| c.3.faces.iter().map(|f| (f.photo, f.index)).collect()).unwrap_or_default()
+}
+
+#[test]
+fn scrolling_alone_never_sorts_the_list_again() {
+    let (mut h, [p0, _, _]) = scrolled();
+    let mut regions = h.app.session.catalog.photo(p0).unwrap().meta.regions.clone();
+    regions.push(super::person_tiles::region(0.7, None));
+    super::person_tiles::set_regions(&mut h, p0, regions);
+    h.step();
+    h.step();
+    let shown = shown_list(&h);
+    let engine: Vec<(u64, usize)> = engine_order(&mut h).iter().map(|(p, i)| (*p, *i as usize)).collect();
+    assert_ne!(shown, engine, "the tiles in view were kept, so the list is not in the engine's order");
+    scroll(&mut h, 4000.0);
+    scroll(&mut h, -4000.0);
+    scroll(&mut h, 300.0);
+    assert_eq!(shown_list(&h), shown, "scrolling away and back did not change the list");
+    assert_ne!(shown_list(&h), engine, "and it was not sorted again");
+}
+
+#[test]
+fn a_face_shown_by_another_box_once_the_scan_embeds_it_keeps_its_tile() {
+    let (mut h, [p0, _, _]) = scrolled();
+    let before = tiles(&mut h);
+    // the scan has embedded every face since the list was made: each is now shown by the detector's box, though its own is the same
+    let Some((rev, indexed, at, list)) = h.app.caches.unnamed.clone() else { panic!("no list shown") };
+    let mut was = (*list).clone();
+    for f in &mut was.faces {
+        f.view = lightcraft_geom::Rect { x0: 0.0, y0: 0.0, x1: 0.01, y1: 0.01 };
+    }
+    h.app.caches.unnamed = Some((rev, indexed, at, std::sync::Arc::new(was)));
+    h.step();
+    h.step();
+    // and a face found in the first photo sorts before every tile on screen
+    let mut regions = h.app.session.catalog.photo(p0).unwrap().meta.regions.clone();
+    regions.push(super::person_tiles::region(0.7, None));
+    super::person_tiles::set_regions(&mut h, p0, regions);
+    h.step();
+    h.step();
+    assert_eq!(tiles(&mut h), before, "the tiles on screen kept their places");
+}
+
 #[test]
 fn naming_a_face_on_screen_moves_the_tiles_after_it_up_one_place() {
     let (mut h, [_, p1, _]) = scrolled();
+    reverse_shown_order(&mut h);
     let before = tiles(&mut h);
     let at = before.len() / 2;
     let (photo, index) = before[at];
@@ -342,6 +412,7 @@ fn removing_a_box_above_the_screen_and_undoing_it_leave_the_tiles_on_screen_show
 #[test]
 fn removing_a_box_on_screen_makes_its_tile_leave_and_the_tiles_after_it_move_up() {
     let (mut h, [_, p1, _]) = scrolled();
+    reverse_shown_order(&mut h);
     let before = tiles(&mut h);
     let seen = boxes(&h, &before);
     let at = before.len() / 2;

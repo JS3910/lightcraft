@@ -328,6 +328,57 @@ fn the_background_pump_indexes_by_itself_once_recognition_is_on() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// Three photos with one unnamed face each, the album "Set" holding only the last: the grid shows the album.
+fn three_faces_and_a_view_of_the_last(tag: &str) -> (Session, [PhotoId; 3], std::path::PathBuf) {
+    let d = temp(tag);
+    let (mut s, _) = fresh_library(&d, 64);
+    let (a, b, c) = import_three_photos(&mut s, &d);
+    let mut ids = [a, b, c];
+    ids.sort();
+    for id in ids {
+        set_regions(&mut s, id, vec![region(0.3, None)]);
+    }
+    let album = s.execute("album.create", &json!({"name": "Set"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.addPhotos", &json!({"id": album, "ids": [ids[2].0]})).unwrap();
+    s.execute("library.source", &json!({"kind": "album", "id": album})).unwrap();
+    (s, ids, d)
+}
+
+#[test]
+fn with_a_small_time_budget_the_photos_of_the_view_are_embedded_before_the_others() {
+    let (mut s, [a, b, c], d) = three_faces_and_a_view_of_the_last("budget-view");
+    let rect = region(0.3, None).rect;
+    // one photo fits in the budget: it is the album's, though it is the last in the library
+    let r = s.execute("faces.index", &json!({"budgetMs": 1})).unwrap();
+    assert_eq!(r["photosDone"], 1, "{r}");
+    assert!(s.faces.index.contains(c.0, &rect) && !s.faces.index.contains(a.0, &rect) && !s.faces.index.contains(b.0, &rect), "{r}");
+    // the next calls carry on with the rest, and the whole library is done in the end
+    let r = s.execute("faces.index", &json!({"budgetMs": 600_000})).unwrap();
+    assert_eq!((r["pendingPhotos"].clone(), r["indexedFaces"].clone()), (json!(0), json!(3)), "{r}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn the_background_pump_embeds_the_photos_of_the_view_first() {
+    let (mut s, [a, b, c], d) = three_faces_and_a_view_of_the_last("pump-view");
+    let rect = region(0.3, None).rect;
+    s.execute("faces.enable", &json!({"enabled": true})).unwrap();
+    // one photo at a time, so the first face to land is the first photo the pump took
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while std::time::Instant::now() < deadline && s.faces.index.len() == 0 {
+        s.execute("faces.pump", &json!({"pace": "light"})).unwrap();
+    }
+    assert_eq!(s.faces.index.len(), 1, "the first photo is embedded");
+    assert!(s.faces.index.contains(c.0, &rect), "and it is the one the grid shows");
+    // changing what the grid shows changes what the pump takes next: the rest is done, whatever the source
+    s.execute("library.source", &json!({"kind": "all"})).unwrap();
+    while std::time::Instant::now() < deadline && s.faces.index.len() < 3 {
+        s.execute("faces.pump", &json!({"pace": "light"})).unwrap();
+    }
+    assert!(s.faces.index.contains(a.0, &rect) && s.faces.index.contains(b.0, &rect));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn the_background_pump_saves_what_it_embeds_for_the_next_launch() {
     let d = temp("pumpsave");

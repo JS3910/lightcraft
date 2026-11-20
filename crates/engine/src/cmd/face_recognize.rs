@@ -320,7 +320,7 @@ fn people_cards(s: &mut Session, visible: bool) -> (Vec<lightcraft_catalog::Pers
 
 /// `faces.people {scope?}`: the Named People cards as data.
 fn people(s: &mut Session, p: &Value) -> Result<Value> {
-    let visible = p.get("scope").and_then(Value::as_str) == Some("visible");
+    let visible = wants_visible(p);
     let (cards, hidden) = people_cards(s, visible);
     let people: Vec<Value> =
         cards.iter().map(|c| json!({"name": c.name, "photos": c.count, "photo": c.photo.0, "face": rect_json(&c.face)})).collect();
@@ -616,7 +616,9 @@ mod imp {
         collect(s);
         let budget = Duration::from_millis(p.get("budgetMs").and_then(Value::as_u64).unwrap_or(200).min(600_000));
         let first: Vec<PhotoId> = super::super::photo_ids(p, C)?.unwrap_or_default();
-        let todo = pending(s, &first, &Default::default(), false);
+        // the photos the grid shows are done before the others, as the background scan does them
+        let view: std::collections::HashSet<PhotoId> = s.people_view_photos().into_iter().collect();
+        let todo = pending(s, &first, &view, false);
         let started = Instant::now();
         let (mut embedded, mut failed, mut done) = (0, 0, 0);
         for id in &todo {
@@ -970,6 +972,16 @@ mod imp {
         [r.x0.to_bits(), r.y0.to_bits(), r.x1.to_bits(), r.y1.to_bits()]
     }
 
+    /// A fingerprint of a face's embedding, so a face made again (from another file, say) is not taken for the one before.
+    fn embedding_print(e: &[f32]) -> u64 {
+        use std::hash::Hasher;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for x in e {
+            h.write_u32(x.to_bits());
+        }
+        h.finish()
+    }
+
     /// Everyone named in the library with the embeddings of their faces, grouped once so that scoring a face does no
     /// string work, and a fingerprint of those faces (who, in which photo and region, where): equal fingerprints mean the
     /// same people with the same faces, whatever the order the catalog listed them in.
@@ -1049,7 +1061,7 @@ mod imp {
 
     /// The name each of `embedded` is suggested, or none (the faces' order is kept). Scoring is the expensive part (faces x
     /// named faces comparisons, on every core), so a face already scored is not scored again while the named faces and its own
-    /// box and rejections are the same: what was worked out is in `cache`.
+    /// box, embedding and rejections are the same: what was worked out is in `cache`.
     fn suggestions_for(
         s: &Session,
         cache: &mut crate::faces_index::ArrangeCache,
@@ -1065,9 +1077,12 @@ mod imp {
                 s.catalog.photo(PhotoId(*photo)).and_then(|p| p.meta.regions.get(*index)).map_or(&[][..], |r| &r.rejected[..])
             })
             .collect();
-        // each face's box and rejections: what its own score depends on besides the named faces
-        let stamps: Vec<u64> =
-            embedded.iter().zip(&rejected).map(|(((_, _, rect), _), rejected)| fingerprint(&(rect_bits(rect), rejected))).collect();
+        // each face's box, embedding and rejections: what its own score depends on besides the named faces
+        let stamps: Vec<u64> = embedded
+            .iter()
+            .zip(&rejected)
+            .map(|(((_, _, rect), e), rejected)| fingerprint(&(rect_bits(rect), embedding_print(e), rejected)))
+            .collect();
         let reused: Vec<Option<Option<(String, f32)>>> = embedded
             .iter()
             .zip(&stamps)
@@ -1095,7 +1110,8 @@ mod imp {
 
     /// `faces` in look-alike order (see [`nearest_chain`]), reused from `cache` while they are the same faces.
     fn look_alike_order(cache: &mut crate::faces_index::ArrangeCache, faces: &[Embedded]) -> Vec<(u64, usize, Rect)> {
-        let chain_of = fingerprint(&faces.iter().map(|((photo, index, rect), _)| (*photo, *index, rect_bits(rect))).collect::<Vec<_>>());
+        let chain_of =
+            fingerprint(&faces.iter().map(|((photo, index, rect), e)| (*photo, *index, rect_bits(rect), embedding_print(e))).collect::<Vec<_>>());
         let chained: Vec<(u64, usize, Rect)> = if cache.chain_of == chain_of && cache.chain.len() == faces.len() {
             let by_key: std::collections::HashMap<(u64, usize), Rect> =
                 faces.iter().map(|((photo, index, rect), _)| ((*photo, *index), *rect)).collect();
@@ -1537,7 +1553,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Index Faces",
             [],
             None,
-            "{budgetMs?: 200, ids?: [photo ids to do first]} → {embedded, photosDone, pendingPhotos, indexedFaces, ms} — embed the faces in the library with the chosen recognition model, as many photos as fit in the time (at least one); call again until `pendingPhotos` is 0. `budgetMs: 0` only reports",
+            "{budgetMs?: 200, ids?: [photo ids to do first]} → {embedded, photosDone, pendingPhotos, indexedFaces, ms} — embed the faces in the library with the chosen recognition model, as many photos as fit in the time (at least one), the photos the grid shows first; call again until `pendingPhotos` is 0. `budgetMs: 0` only reports",
             super::always,
             imp::index
         ),
