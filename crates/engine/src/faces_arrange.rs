@@ -19,6 +19,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use lightcraft_faces::matching;
 use rayon::prelude::*;
 
+/// A face as the runs know it: its photo and its own box (as bits). Not its region index: removing a box renumbers the later
+/// regions of the photo, and what was worked out for a face must stay with the face.
+pub(crate) type Key = (u64, [u64; 4]);
+
 /// How many of the best people are kept for each face. Two are enough to suggest; the rest make a person whose score
 /// falls (un-naming, a rename) replaceable without scoring the face against everybody again.
 pub(crate) const KEPT: usize = 4;
@@ -78,7 +82,8 @@ impl Person {
 /// An unnamed face with an embedding.
 pub(crate) struct Face {
     pub photo: u64,
-    pub index: usize,
+    /// The face's own box, as bits.
+    pub rect: [u64; 4],
     /// What the face's own score depends on besides the named faces: its box, its embedding and its rejections.
     pub stamp: u64,
     pub embedding: Arc<[f32]>,
@@ -87,10 +92,14 @@ pub(crate) struct Face {
 }
 
 impl Face {
-    pub fn new(photo: u64, index: usize, rect_bits: [u64; 4], embedding: Arc<[f32]>, rejected: &[String]) -> Face {
+    pub fn new(photo: u64, rect_bits: [u64; 4], embedding: Arc<[f32]>, rejected: &[String]) -> Face {
         let rejected: Vec<String> = rejected.iter().map(|r| r.trim().to_lowercase()).collect();
         let stamp = fingerprint(&(rect_bits, &rejected, head_bits(&embedding)));
-        Face { photo, index, stamp, embedding, rejected }
+        Face { photo, rect: rect_bits, stamp, embedding, rejected }
+    }
+
+    pub fn key(&self) -> Key {
+        (self.photo, self.rect)
     }
 
     fn rejects(&self, key: &str) -> bool {
@@ -203,7 +212,7 @@ pub(crate) struct Scorer {
     next_pid: u32,
     /// Each person's fingerprint when the entries were worked out.
     people: HashMap<u32, u64>,
-    entries: HashMap<(u64, usize), Entry>,
+    entries: HashMap<Key, Entry>,
     /// How many person scores the last [`Scorer::update`] worked out (a face against a person is one).
     pub last_scored: usize,
 }
@@ -244,7 +253,7 @@ impl Scorer {
         let names: HashMap<u32, &str> = crowd.iter().zip(people).map(|(c, p)| (c.pid, p.shown.as_str())).collect();
         let old = std::mem::take(&mut self.entries);
         let mut scored = 0usize;
-        let mut entries: HashMap<(u64, usize), Entry> = HashMap::with_capacity(faces.len());
+        let mut entries: HashMap<Key, Entry> = HashMap::with_capacity(faces.len());
         let mut out: Vec<Option<(String, f32)>> = Vec::with_capacity(faces.len());
         for (n, chunk) in faces.chunks(CHUNK).enumerate() {
             if cancel.load(Ordering::Relaxed) {
@@ -256,7 +265,7 @@ impl Scorer {
             let done: Vec<(Entry, Option<(String, f32)>, usize)> = chunk
                 .par_iter()
                 .map_init(Vec::new, |scratch, face| {
-                    let kept = old.get(&(face.photo, face.index)).filter(|e| !fresh && e.stamp == face.stamp);
+                    let kept = old.get(&face.key()).filter(|e| !fresh && e.stamp == face.stamp);
                     let (entry, work) = match kept {
                         Some(e) if changed.is_empty() => (e.clone(), 0),
                         Some(e) => match delta(e, face, &changed, &by_pid) {
@@ -270,7 +279,7 @@ impl Scorer {
                 })
                 .collect();
             for (face, (entry, suggestion, work)) in chunk.iter().zip(done) {
-                entries.insert((face.photo, face.index), entry);
+                entries.insert(face.key(), entry);
                 out.push(suggestion);
                 scored += work;
             }
@@ -323,7 +332,7 @@ pub(crate) struct State {
     pub scorer: Scorer,
     /// A fingerprint of the faces in look-alike order, and their order: reused while those are the same faces.
     chain_of: u64,
-    chain: Vec<(u64, usize)>,
+    chain: Vec<Key>,
 }
 
 /// What a run is asked to arrange.
@@ -337,10 +346,14 @@ pub(crate) struct Input {
 /// What a run worked out.
 #[derive(Default)]
 pub(crate) struct Output {
-    /// `(photo, region)` to the stamp the face was scored at, its suggested name and the score.
-    pub suggestions: HashMap<(u64, usize), (u64, String, f32)>,
+    /// A face to the stamp it was scored at, its suggested name and the score.
+    pub suggestions: HashMap<Key, (u64, String, f32)>,
     /// The faces without a suggestion (the first [`MAX_ARRANGED`]) in look-alike order.
-    pub chain: Vec<(u64, usize)>,
+    pub chain: Vec<Key>,
+    /// How many person scores the run worked out (a face against a person is one).
+    pub scored: usize,
+    /// The look-alike order of the last run was still the right one, so it was not worked out again.
+    pub chain_reused: bool,
 }
 
 /// Score the faces and put those without a suggestion in look-alike order. `None` when `cancel` was set. Run it inside the
@@ -352,34 +365,35 @@ pub(crate) fn arrange(state: &mut State, input: &Input, cancel: &AtomicBool, pro
     for (face, suggestion) in input.faces.iter().zip(scored) {
         match suggestion {
             Some((name, score)) => {
-                suggestions.insert((face.photo, face.index), (face.stamp, name, score));
+                suggestions.insert(face.key(), (face.stamp, name, score));
             }
             None => plain.push(face),
         }
     }
     plain.truncate(MAX_ARRANGED);
-    let chain_of = fingerprint(&plain.iter().map(|f| (f.photo, f.index, f.stamp)).collect::<Vec<_>>());
-    if state.chain_of != chain_of || state.chain.len() != plain.len() {
+    let chain_of = fingerprint(&plain.iter().map(|f| (f.key(), f.stamp)).collect::<Vec<_>>());
+    let chain_reused = state.chain_of == chain_of && state.chain.len() == plain.len();
+    if !chain_reused {
         let order = nearest_chain(&plain.iter().map(|f| &f.embedding[..]).collect::<Vec<_>>(), cancel)?;
-        state.chain = order.into_iter().filter_map(|i| plain.get(i).map(|f| (f.photo, f.index))).collect();
+        state.chain = order.into_iter().filter_map(|i| plain.get(i).map(|f| f.key())).collect();
         state.chain_of = chain_of;
     }
-    Some(Output { suggestions, chain: state.chain.clone() })
+    Some(Output { suggestions, chain: state.chain.clone(), scored: state.scorer.last_scored, chain_reused })
 }
 
 /// A fingerprint of what a run is asked: the model and bars, the people with their faces, and the faces with their stamps.
 /// Two runs with the same one give the same order.
 pub(crate) fn signature(settings: Settings, people: &[Person], faces: &[Face]) -> u64 {
     let who = people.iter().fold(0u64, |sum, p| sum.wrapping_add(fingerprint(&(&p.key, p.fingerprint()))));
-    let which: Vec<(u64, usize, u64)> = faces.iter().map(|f| (f.photo, f.index, f.stamp)).collect();
+    let which: Vec<(Key, u64)> = faces.iter().map(|f| (f.key(), f.stamp)).collect();
     fingerprint(&(settings.model, settings.threshold.to_bits(), settings.margin.to_bits(), who, people.len(), which))
 }
 
 /// What the last finished run worked out, and for which [`signature`].
 struct Last {
     sig: u64,
-    suggestions: HashMap<(u64, usize), (u64, String, f32)>,
-    chain: HashMap<(u64, usize), usize>,
+    suggestions: HashMap<Key, (u64, String, f32)>,
+    chain: HashMap<Key, usize>,
 }
 
 /// A run on its thread: what it is for, how to stop it, and where its result comes.
@@ -413,9 +427,28 @@ pub(crate) struct Jobs {
     pub taken: u64,
     /// The signature of a run that was cancelled or failed: it is not started again until something changes.
     stopped: Option<u64>,
-    /// Test only: a run waits here until this is false.
-    #[cfg(test)]
+    /// What the last result's run cost, in person scores (a face against a person is one).
+    pub last_scored: usize,
+    /// The last result's run took the look-alike order of the run before it instead of working it out again.
+    pub chain_reused: bool,
+    /// Tests only: a run waits here until this is false (or half a minute has passed, so a regression fails instead of hanging).
+    #[cfg(any(test, feature = "test-hooks"))]
     pub hold: Option<Arc<AtomicBool>>,
+    /// Tests only: how the next runs go wrong.
+    #[cfg(test)]
+    pub fail: Option<Fail>,
+}
+
+/// How a test makes a run go wrong.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Fail {
+    /// The run's row is cancelled as the run starts.
+    Cancel,
+    /// The thread panics.
+    Panic,
+    /// No thread can be started.
+    Spawn,
 }
 
 impl Jobs {
@@ -438,6 +471,13 @@ impl Jobs {
         self.stopped == Some(sig)
     }
 
+    /// A caller that waits starts a run of its own, whatever became of an earlier one for the same inputs.
+    pub fn forget_stop(&mut self, sig: u64) {
+        if self.stopped == Some(sig) {
+            self.stopped = None;
+        }
+    }
+
     /// Take in the run's result when it is there (`block`: wait for it). Whether a run ended.
     pub fn take_in(&mut self, block: bool) -> bool {
         let Some(running) = &self.running else { return false };
@@ -458,6 +498,7 @@ impl Jobs {
                 self.state = Some(state);
                 self.stopped = None;
                 let chain = output.chain.iter().enumerate().map(|(i, k)| (*k, i)).collect();
+                (self.last_scored, self.chain_reused) = (output.scored, output.chain_reused);
                 self.last = Some(Last { sig, suggestions: output.suggestions, chain });
             }
             Ok(Done { state, output: None }) => {
@@ -476,18 +517,33 @@ impl Jobs {
     /// Start a run on a thread of its own, with a row in the activity stack for as long as it runs. `all_threads`: use
     /// every thread rayon has (the caller waits), else one is left for the window. False when no thread could be started.
     pub fn start(&mut self, activity: &crate::activity::Activity, input: Input, all_threads: bool) -> bool {
+        #[cfg(test)]
+        if self.fail == Some(Fail::Spawn) {
+            return false;
+        }
         let sig = signature(input.settings, &input.people, &input.faces);
         let cancel = Arc::new(AtomicBool::new(false));
         let task = activity.start("faceOrder", "Putting unnamed faces in order", crate::activity::Cancel::Flag(cancel.clone()));
         let (tx, rx) = std::sync::mpsc::channel();
         let mut state = self.state.take().unwrap_or_default();
         let flag = cancel.clone();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         let hold = self.hold.clone();
+        #[cfg(test)]
+        let fail = self.fail;
         let job = move || {
+            #[cfg(any(test, feature = "test-hooks"))]
+            {
+                let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while hold.as_ref().is_some_and(|h| h.load(Ordering::Relaxed)) && !flag.load(Ordering::Relaxed) && std::time::Instant::now() < until {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
             #[cfg(test)]
-            while hold.as_ref().is_some_and(|h| h.load(Ordering::Relaxed)) && !flag.load(Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_millis(1));
+            match fail {
+                Some(Fail::Cancel) => flag.store(true, Ordering::Relaxed),
+                Some(Fail::Panic) => panic!("a run that panics"),
+                _ => {}
             }
             let progress = |done: usize, total: usize| task.progress(done as u64, total as u64);
             let threads = rayon::current_num_threads();
@@ -521,12 +577,12 @@ impl Jobs {
     /// are in look-alike order where the last run had them in it, then in photo order, then the faces not embedded.
     ///
     /// The names of the suggestions are copied for the first `limit` faces of the order only.
-    pub fn arrange(&self, listed: &[(u64, usize, Option<u64>)], limit: usize) -> Arrangement {
+    pub fn arrange(&self, listed: &[Listed], limit: usize) -> Arrangement {
         let last = self.last.as_ref();
         // (group, position in the look-alike order, score, place in `listed`)
         let mut keyed: Vec<(u8, usize, f32, usize)> = Vec::with_capacity(listed.len());
-        for (at, (photo, index, stamp)) in listed.iter().enumerate() {
-            let key = (*photo, *index);
+        for (at, (photo, _, rect, stamp)) in listed.iter().enumerate() {
+            let key = (*photo, *rect);
             let Some(stamp) = stamp else {
                 keyed.push((3, 0, 0.0, at));
                 continue;
@@ -542,8 +598,8 @@ impl Jobs {
         // `listed` is in photo and region order, so the place in it is that order
         keyed.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.total_cmp(&a.2)).then(a.1.cmp(&b.1)).then(a.3.cmp(&b.3)));
         let mut suggestions = HashMap::new();
-        for (photo, index, _) in keyed.iter().take(limit).filter(|k| k.0 == 0).filter_map(|k| listed.get(k.3)) {
-            if let Some((_, name, score)) = last.and_then(|l| l.suggestions.get(&(*photo, *index))) {
+        for (photo, index, rect, _) in keyed.iter().take(limit).filter(|k| k.0 == 0).filter_map(|k| listed.get(k.3)) {
+            if let Some((_, name, score)) = last.and_then(|l| l.suggestions.get(&(*photo, *rect))) {
                 suggestions.insert((*photo, *index), (name.clone(), *score));
             }
         }
@@ -555,6 +611,10 @@ impl Jobs {
         }
     }
 }
+
+/// A face as [`Jobs::arrange`] is asked about it: photo, region, its own box (as bits) and the stamp it was embedded and
+/// scored at (none when not embedded).
+pub(crate) type Listed = (u64, usize, [u64; 4], Option<u64>);
 
 /// How the faces were put by [`Jobs::arrange`].
 pub(crate) struct Arrangement {
@@ -568,7 +628,7 @@ pub(crate) struct Arrangement {
 /// The faces nobody has scored against everybody, as a set: for the tests.
 #[cfg(test)]
 impl Scorer {
-    fn kept(&self) -> std::collections::HashSet<(u64, usize)> {
+    fn kept(&self) -> std::collections::HashSet<Key> {
         self.entries.keys().copied().collect()
     }
 }
@@ -644,7 +704,7 @@ mod tests {
         }
 
         fn faces(&self) -> Vec<Face> {
-            self.loose.iter().map(|l| Face::new(l.id, 0, [l.rect, 0, 0, 0], l.embedding.clone(), &l.rejected)).collect()
+            self.loose.iter().map(|l| Face::new(l.id, [l.rect, 0, 0, 0], l.embedding.clone(), &l.rejected)).collect()
         }
 
         /// What scoring every face against everybody from scratch gives, as the suggestion code did before there was a scorer.
@@ -720,6 +780,32 @@ mod tests {
         Settings { model: 1, threshold: 0.2, margin: 0.05 }
     }
 
+    /// The faces in the order a list of them is shown, as `outcome` puts them (they are listed in photo and region order).
+    fn shown_order(outcome: &Output, faces: &[Face]) -> Vec<usize> {
+        let chain = outcome.chain.iter().enumerate().map(|(i, k)| (*k, i)).collect();
+        let jobs = Jobs { last: Some(Last { sig: 0, suggestions: outcome.suggestions.clone(), chain }), ..Jobs::default() };
+        let listed: Vec<Listed> = faces.iter().enumerate().map(|(i, f)| (f.photo, i, f.rect, Some(f.stamp))).collect();
+        jobs.arrange(&listed, usize::MAX).order
+    }
+
+    /// What `state` (which has worked through the changes so far) gives for `w`, against what a fresh state gives for the same
+    /// input and what scoring everyone against every face gives: the same suggestions, scores (to the last bit), look-alike
+    /// order and face order. How many faces have a suggestion.
+    fn same_as_from_scratch(state: &mut State, w: &World, settings: Settings, seed: u64, step: usize) -> usize {
+        let input = Input { settings, people: w.people(), faces: w.faces() };
+        let quiet = AtomicBool::new(false);
+        let got = arrange(state, &input, &quiet, &|_, _| {}).expect("not cancelled");
+        let want = arrange(&mut State::default(), &input, &quiet, &|_, _| {}).expect("not cancelled");
+        assert_eq!(got.suggestions, want.suggestions, "seed {seed} step {step}");
+        assert_eq!(got.chain, want.chain, "seed {seed} step {step}: the look-alike order");
+        assert_eq!(shown_order(&got, &input.faces), shown_order(&want, &input.faces), "seed {seed} step {step}: the order of the faces");
+        let by_face: Vec<Option<(String, f32)>> =
+            input.faces.iter().map(|f| got.suggestions.get(&f.key()).map(|(_, name, score)| (name.clone(), *score))).collect();
+        same(&by_face, &w.reference(settings), seed, step);
+        assert_eq!(state.scorer.kept().len(), w.loose.len(), "what is kept is what was asked about");
+        got.suggestions.len()
+    }
+
     fn run(scorer: &mut Scorer, w: &World) -> Vec<Option<(String, f32)>> {
         scorer.update(settings(), &w.people(), &w.faces(), &AtomicBool::new(false), &|_, _| {}).expect("not cancelled")
     }
@@ -751,13 +837,20 @@ mod tests {
                 let id = w.next;
                 w.loose.push(Loose { id, rect: 0, embedding: rng.unit(dim), rejected: Vec::new() });
             }
-            let mut scorer = Scorer::default();
-            same(&run(&mut scorer, &w), &w.reference(settings()), seed, 0);
+            let mut state = State::default();
+            let mut now = settings();
+            let mut suggested = same_as_from_scratch(&mut state, &w, now, seed, 0);
             for step in 1..=30 {
-                w.change(&mut rng, dim);
-                same(&run(&mut scorer, &w), &w.reference(settings()), seed, step);
-                assert_eq!(scorer.kept().len(), w.loose.len(), "what is kept is what was asked about");
+                match rng.below(12) {
+                    // a changed model scores everything again
+                    0 => now.model = if now.model == 1 { 2 } else { 1 },
+                    // a changed bar only changes what is suggested from the scores
+                    1 => now.threshold = [0.1, 0.2, 0.35][rng.below(3)],
+                    _ => w.change(&mut rng, dim),
+                }
+                suggested += same_as_from_scratch(&mut state, &w, now, seed, step);
             }
+            assert!(suggested > 0, "seed {seed}: no face was ever suggested a name, so nothing was compared");
         }
     }
 

@@ -384,6 +384,23 @@ impl Drop for Scanned {
     }
 }
 
+/// What another crate's tests need to drive the face index and the runs that put the Unnamed faces in order without a real
+/// scan (feature `test-hooks`, which no build of the app turns on).
+#[cfg(feature = "test-hooks")]
+impl crate::Session {
+    /// Hold every run that puts the Unnamed faces in order while `hold` is true.
+    #[doc(hidden)]
+    pub fn test_hold_face_order(&mut self, hold: Option<Arc<std::sync::atomic::AtomicBool>>) {
+        self.faces.arrange.hold = hold;
+    }
+
+    /// Put an embedding in the face index as the scan would.
+    #[doc(hidden)]
+    pub fn test_face_embedding(&mut self, photo: lightcraft_catalog::PhotoId, rect: &Rect, embedding: Vec<f32>) {
+        self.faces.index.insert_with_view(photo.0, rect, embedding, rect);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -122,6 +122,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // Esc with no name box open drops the selection
     clear_selection_on_escape(app, ui.ctx());
     let unnamed = super::unnamed::faces(app, now);
+    if unnamed.ordering {
+        // the order is being worked out on a thread of its own: look again soon, whatever else is (not) happening
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+    }
     app.ui.rejected_unnamed.visit("", ui.ctx().cumulative_pass_nr());
     if people.is_empty() && unnamed.faces.is_empty() && !super::unnamed::waiting(&unnamed) {
         empty_view(app, ui, &chips, cards.hidden);

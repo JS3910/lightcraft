@@ -253,11 +253,12 @@ struct Arranged {
     suggestions: std::collections::HashMap<(u64, usize), (String, f32)>,
 }
 
-/// `faces.unnamed {limit?: 3000, scope?}`: the faces nobody has named, to be named a group at a time. With recognition
+/// `faces.unnamed {limit?: 3000, scope?, wait?: true}`: the faces nobody has named, to be named a group at a time. With recognition
 /// running, the faces the named faces recognise come first, the most confident first, each carrying the name they suggest;
 /// then the faces that suggest nothing, look-alikes next to each other; then the faces not embedded yet, in photo order.
 /// With `scope: "visible"` only the faces in the People view's photos are listed (and counted); what they are suggested
-/// still compares against every named face in the library.
+/// still compares against every named face in the library. Scoring runs on a thread of its own; by default the call waits
+/// for the complete order, with `wait: false` it answers at once with the best order there is (`ordering` says more is coming).
 fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
     let limit = p.get("limit").and_then(Value::as_u64).map_or(MAX_UNNAMED, |n| usize::try_from(n).unwrap_or(MAX_UNNAMED)).clamp(1, MAX_UNNAMED);
     let mut all: Vec<(u64, usize, lightcraft_geom::Rect)> = Vec::new();
@@ -273,8 +274,12 @@ fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
     all.sort_by_key(|(photo, index, _)| (*photo, *index));
     let total = all.len();
     // a caller that does not say otherwise gets the complete order, worked out on a thread of its own
-    let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(true);
-    let arranged = imp::arrange_unnamed(s, &mut all, wait, limit);
+    let wait = match p.get("wait") {
+        None | Some(Value::Null) => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad("faces.unnamed", "`wait` must be true or false")),
+    };
+    let arranged = imp::arrange_unnamed(s, &mut all, wait, limit)?;
     all.truncate(limit);
     let faces: Vec<Value> = all
         .iter()
@@ -416,7 +421,7 @@ mod imp {
     use super::super::face_detect::{LABEL, MARK};
     use super::super::face_models::{finish_downloads, installed_models, read_settings};
     use super::Similar;
-    use crate::faces_arrange::{Face, Input, Person, Settings, fingerprint, signature};
+    use crate::faces_arrange::{Face, Input, Listed, Person, Settings, fingerprint, signature};
     use crate::faces_worker::{Done, EDGE, PREFETCH, Pace, Prepared, Worker, max_workers, process, target_workers};
     use crate::{Result, Session};
 
@@ -1002,25 +1007,25 @@ mod imp {
     /// since), the faces not scored yet go with those that have none. With `wait` the run for these very faces is started
     /// if there is none and waited for, so the answer is complete; without it the run is started and the answer says
     /// (`ordering`) that it is not done, and `faces.pump` takes the result in.
-    pub fn arrange_unnamed(s: &mut Session, all: &mut Vec<(u64, usize, Rect)>, wait: bool, limit: usize) -> super::Arranged {
+    pub fn arrange_unnamed(s: &mut Session, all: &mut Vec<(u64, usize, Rect)>, wait: bool, limit: usize) -> Result<super::Arranged> {
         let none = super::Arranged { suggested: false, look_alike: false, ready: false, ordering: false, suggestions: Default::default() };
-        let Some(dir) = s.face_models_dir.clone() else { return none };
+        let Some(dir) = s.face_models_dir.clone() else { return Ok(none) };
         if !enabled_cached(s, &dir) {
-            return none;
+            return Ok(none);
         }
-        let Ok(embedder) = current_with(s, "faces.unnamed", false) else { return none };
+        let Ok(embedder) = current_with(s, "faces.unnamed", false) else { return Ok(none) };
         let threshold = embedder.manifest().thresholds.match_cosine.unwrap_or(DEFAULT_THRESHOLD);
         let mut faces: Vec<Face> = Vec::new();
-        let mut listed: Vec<(u64, usize, Option<u64>)> = Vec::with_capacity(all.len());
+        let mut listed: Vec<Listed> = Vec::with_capacity(all.len());
         for (photo, index, rect) in all.iter() {
             let stamp = s.faces.index.get(*photo, rect).map(|e| {
                 let rejected = s.catalog.photo(PhotoId(*photo)).and_then(|p| p.meta.regions.get(*index)).map_or(&[][..], |r| &r.rejected[..]);
-                let face = Face::new(*photo, *index, rect_bits(rect), e.clone(), rejected);
+                let face = Face::new(*photo, rect_bits(rect), e.clone(), rejected);
                 let stamp = face.stamp;
                 faces.push(face);
                 stamp
             });
-            listed.push((*photo, *index, stamp));
+            listed.push((*photo, *index, rect_bits(rect), stamp));
         }
         let settings = Settings { model: fingerprint(&s.faces.index.tag), threshold, margin: DEFAULT_MARGIN };
         let people = named_people(s);
@@ -1030,15 +1035,24 @@ mod imp {
         let mut input = Some(Input { settings, people, faces }).filter(|i| !i.faces.is_empty());
         let scoring = input.is_some();
         if wait && scoring {
+            let mut started = false;
             while !s.faces.arrange.is_current(sig) {
                 if s.faces.arrange.is_running() {
                     s.faces.arrange.take_in(true);
+                    // the run this call started ended without a result: its row was cancelled, or its thread died
+                    if started && !s.faces.arrange.is_current(sig) {
+                        return Err(bad("faces.unnamed", "putting the faces in order was cancelled or stopped before it finished"));
+                    }
                     continue;
                 }
-                let Some(input) = input.take() else { break };
+                let Some(input) = input.take() else {
+                    return Err(bad("faces.unnamed", "putting the faces in order did not finish"));
+                };
+                s.faces.arrange.forget_stop(sig);
                 if !s.faces.arrange.start(&s.activity, input, true) {
-                    break;
+                    return Err(bad("faces.unnamed", "could not start the thread that puts the faces in order"));
                 }
+                started = true;
             }
         } else if !s.faces.arrange.is_running()
             && !s.faces.arrange.is_current(sig)
@@ -1051,7 +1065,7 @@ mod imp {
         let a = s.faces.arrange.arrange(&listed, limit);
         let mut by_place: Vec<Option<(u64, usize, Rect)>> = all.drain(..).map(Some).collect();
         all.extend(a.order.iter().filter_map(|i| by_place.get_mut(*i).and_then(Option::take)));
-        super::Arranged { suggested: a.suggested, look_alike: a.look_alike, ready: true, ordering, suggestions: a.suggestions }
+        Ok(super::Arranged { suggested: a.suggested, look_alike: a.look_alike, ready: true, ordering, suggestions: a.suggestions })
     }
 
     /// Whether face recognition is switched on, looked up at most once a second.
@@ -1418,8 +1432,8 @@ mod imp {
         super::Similar { items: Vec::new(), ready: false, pending: 0 }
     }
 
-    pub fn arrange_unnamed(_: &mut Session, _: &mut Vec<(u64, usize, lightcraft_geom::Rect)>, _: bool, _: usize) -> super::Arranged {
-        super::Arranged { suggested: false, look_alike: false, ready: false, ordering: false, suggestions: Default::default() }
+    pub fn arrange_unnamed(_: &mut Session, _: &mut Vec<(u64, usize, lightcraft_geom::Rect)>, _: bool, _: usize) -> Result<super::Arranged> {
+        Ok(super::Arranged { suggested: false, look_alike: false, ready: false, ordering: false, suggestions: Default::default() })
     }
 }
 

@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use super::face_recognize::{region, set_regions, setup, temp, two_photos, unit64};
 use crate::Session;
+use crate::faces_arrange::Fail;
 
 /// Photo `a` holds Ann and Bob (named) and a face like Ann; photo `b` a face like Ann and a face like nobody; photo `c` two
 /// faces that look like each other and like nobody named. Every face is embedded.
@@ -48,9 +49,14 @@ fn suggestion(r: &Value, photo: PhotoId, index: u64) -> Option<String> {
     f["suggestion"]["name"].as_str().map(str::to_string)
 }
 
-/// Call `faces.pump` until a result has been taken in (its `arranged` count moved), and say what it is now.
-fn take_in(s: &mut Session) -> u64 {
-    let was = s.execute("faces.pump", &json!({})).unwrap()["arranged"].as_u64().unwrap();
+/// How many results were taken in so far: read it before the call that starts the run, so that a result taken in by that very
+/// call (or by a `faces.pump` before the next one) is not waited for.
+fn taken(s: &Session) -> u64 {
+    s.faces.arrange.taken
+}
+
+/// Call `faces.pump` until the count of results taken in is not `was` any more, and say what it is now.
+fn take_in(s: &mut Session, was: u64) -> u64 {
     let until = Instant::now() + Duration::from_secs(60);
     while Instant::now() < until {
         let now = s.execute("faces.pump", &json!({})).unwrap()["arranged"].as_u64().unwrap();
@@ -65,13 +71,29 @@ fn take_in(s: &mut Session) -> u64 {
 /// Ask without waiting until the answer says the order is complete.
 fn settled(s: &mut Session) -> Value {
     for _ in 0..20 {
+        let was = taken(s);
         let r = ask(s, false);
         if r["ordering"] == false {
             return r;
         }
-        take_in(s);
+        take_in(s, was);
     }
     panic!("the order never settled");
+}
+
+fn rows(s: &mut Session) -> usize {
+    s.execute("activity.list", &json!({})).unwrap()["tasks"].as_array().unwrap().iter().filter(|t| t["kind"] == "faceOrder").count()
+}
+
+/// Wait until no `faceOrder` row is left (the run's thread has ended).
+fn row_gone(s: &mut Session) -> bool {
+    for _ in 0..3000 {
+        if rows(s) == 0 {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    false
 }
 
 #[test]
@@ -94,6 +116,19 @@ fn without_waiting_the_faces_come_at_once_and_the_order_is_taken_in_when_it_is_w
     let waited = s.execute("faces.unnamed", &json!({})).unwrap();
     assert_eq!(keys(&waited), order);
     assert_eq!(waited["ordering"], false);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn wait_must_be_true_or_false() {
+    let (mut s, d, _) = library("bg-wait-param");
+    for bad in [json!("no"), json!("false"), json!(0), json!([])] {
+        let e = s.execute("faces.unnamed", &json!({"wait": bad})).unwrap_err();
+        assert!(e.to_string().contains("`wait` must be true or false"), "{bad}: {e}");
+    }
+    assert_eq!(rows(&mut s), 0, "a refused call starts nothing");
+    assert_eq!(ask(&mut s, true)["ordering"], false);
+    assert_eq!(s.execute("faces.unnamed", &json!({"wait": null})).unwrap()["ordering"], false, "null is the default");
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -131,6 +166,34 @@ fn a_face_whose_rejections_changed_never_shows_its_old_suggestion() {
 }
 
 #[test]
+fn removing_a_box_renumbers_the_faces_after_it_and_they_keep_what_was_worked_out() {
+    let (mut s, d, [a, b, c]) = library("bg-remove");
+    let before = settled(&mut s);
+    assert_eq!(keys(&before)[..3], [(a.0, 2), (b.0, 0), (b.0, 1)]);
+    let hold = Arc::new(AtomicBool::new(true));
+    s.faces.arrange.hold = Some(hold.clone());
+    // the first face of photo b goes: the second becomes region 0 of that photo
+    s.execute("faces.removeBoxes", &json!({"faces": [{"photo": b.0, "index": 0}]})).unwrap();
+    let now = ask(&mut s, false);
+    assert_eq!(now["ordering"], true);
+    let mut expect = keys(&before);
+    expect.retain(|k| *k != (b.0, 0));
+    for k in expect.iter_mut().filter(|k| k.0 == b.0) {
+        k.1 = 0;
+    }
+    assert_eq!(keys(&now), expect, "the faces after it keep their places under their new numbers: {now}");
+    assert_eq!(suggestion(&now, a, 2).as_deref(), Some("Ann"), "a face of another photo keeps its suggestion");
+    assert_eq!(suggestion(&now, b, 0), None, "the face that took the number does not take the suggestion of the face that had it");
+    assert_eq!(keys(&now).iter().filter(|k| k.0 == c.0).count(), 2);
+    hold.store(false, Ordering::Relaxed);
+    let was = taken(&s);
+    take_in(&mut s, was);
+    let done = settled(&mut s);
+    assert_eq!(keys(&done), expect);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn the_job_holds_an_activity_row_and_a_result_for_other_inputs_is_not_the_complete_order() {
     let (mut s, d, [a, b, _]) = library("bg-row");
     let hold = Arc::new(AtomicBool::new(true));
@@ -144,16 +207,16 @@ fn the_job_holds_an_activity_row_and_a_result_for_other_inputs_is_not_the_comple
     // the named faces change while it runs
     s.execute("faces.setName", &json!({"id": a.0, "index": 2, "name": "Bob"})).unwrap();
     assert_eq!(ask(&mut s, false)["ordering"], true);
+    let was = taken(&s);
     hold.store(false, Ordering::Relaxed);
-    take_in(&mut s);
+    take_in(&mut s, was);
     let r = ask(&mut s, false);
     assert_eq!(r["ordering"], true, "the result was for the old named faces: a new run starts for these");
     let done = settled(&mut s);
     let waited = s.execute("faces.unnamed", &json!({})).unwrap();
     assert_eq!(keys(&done), keys(&waited));
     assert_eq!(suggestion(&done, b, 0), suggestion(&waited, b, 0));
-    let after = s.execute("activity.list", &json!({})).unwrap();
-    assert!(after["tasks"].as_array().unwrap().iter().all(|t| t["kind"] != "faceOrder"), "the row goes with the job: {after}");
+    assert!(row_gone(&mut s), "the row goes with the job");
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -166,14 +229,16 @@ fn cancelling_the_row_stops_the_job_and_nothing_of_it_is_applied() {
     let tasks = s.execute("activity.list", &json!({})).unwrap();
     let id = tasks["tasks"].as_array().unwrap().iter().find(|t| t["kind"] == "faceOrder").unwrap()["id"].as_u64().unwrap();
     s.execute("activity.cancel", &json!({"id": id})).unwrap();
-    // the job ends; its result is dropped, so no list of suggestions came of it
-    for _ in 0..2000 {
-        if s.execute("activity.list", &json!({})).unwrap()["tasks"].as_array().unwrap().iter().all(|t| t["kind"] != "faceOrder") {
+    // the job ends (the row goes before its result is announced, so the pump may find nothing for a moment); its result is dropped
+    let mut ended = false;
+    for _ in 0..3000 {
+        if s.execute("faces.pump", &json!({})).unwrap()["ordering"] == false {
+            ended = true;
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    s.execute("faces.pump", &json!({})).unwrap();
+    assert!(ended, "the cancelled run never ended");
     let r = ask(&mut s, false);
     assert_eq!(r["ordering"], false, "a cancelled run is not started again by itself: {r}");
     assert_eq!(suggestion(&r, a, 2), None);
@@ -181,6 +246,67 @@ fn cancelling_the_row_stops_the_job_and_nothing_of_it_is_applied() {
     s.faces.arrange.hold = None;
     let waited = s.execute("faces.unnamed", &json!({})).unwrap();
     assert_eq!(suggestion(&waited, a, 2).as_deref(), Some("Ann"));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_call_that_waits_is_given_an_error_when_its_run_is_cancelled_dies_or_cannot_start() {
+    let (mut s, d, [a, _, _]) = library("bg-fail");
+    // the row is cancelled during the call: it must not start another run
+    s.faces.arrange.fail = Some(Fail::Cancel);
+    let e = s.execute("faces.unnamed", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("cancelled"), "{e}");
+    assert!(row_gone(&mut s));
+    // the thread panics
+    s.faces.arrange.fail = Some(Fail::Panic);
+    let e = s.execute("faces.unnamed", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("stopped"), "{e}");
+    assert!(row_gone(&mut s), "a thread that died leaves no row");
+    // no thread can be started
+    s.faces.arrange.fail = Some(Fail::Spawn);
+    let e = s.execute("faces.unnamed", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("could not start"), "{e}");
+    assert_eq!(rows(&mut s), 0);
+    // none of it is remembered against the next call
+    s.faces.arrange.fail = None;
+    let r = s.execute("faces.unnamed", &json!({})).unwrap();
+    assert_eq!((r["ordering"].clone(), suggestion(&r, a, 2).as_deref().map(str::to_string)), (json!(false), Some("Ann".to_string())));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn opening_another_library_stops_a_running_job() {
+    let (mut s, d, _) = library("bg-reset");
+    let hold = Arc::new(AtomicBool::new(true));
+    s.faces.arrange.hold = Some(hold);
+    assert_eq!(ask(&mut s, false)["ordering"], true);
+    assert_eq!(rows(&mut s), 1);
+    s.faces.arrange.reset();
+    assert!(!s.faces.arrange.is_running());
+    assert!(row_gone(&mut s), "the held run saw its flag and ended");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_change_costs_what_it_changed_and_the_runs_hand_what_they_kept_to_the_next() {
+    let (mut s, d, [a, b, _]) = library("bg-cost");
+    s.execute("faces.unnamed", &json!({})).unwrap();
+    // 5 unnamed faces against Ann and Bob
+    assert_eq!((s.faces.arrange.last_scored, s.faces.arrange.chain_reused), (10, false));
+    // a naming: only Ann's faces changed, the 4 faces left are scored against her alone, and the faces nobody is suggested for
+    // are the same, so their look-alike order is the one before
+    s.execute("faces.setName", &json!({"id": a.0, "index": 2, "name": "Ann"})).unwrap();
+    s.execute("faces.unnamed", &json!({})).unwrap();
+    assert_eq!((s.faces.arrange.last_scored, s.faces.arrange.chain_reused), (4, true));
+    // asking again without a change runs nothing
+    let runs = taken(&s);
+    s.execute("faces.unnamed", &json!({})).unwrap();
+    assert_eq!((taken(&s), s.faces.arrange.last_scored), (runs, 4));
+    // a face whose box moved is scored against everybody (Ann and Bob), the others against nobody
+    set_regions(&mut s, b, vec![region(0.1, None), region(0.52, None)]);
+    s.faces.index.insert(b.0, &region(0.52, None).rect, unit64(&[(5, 1.0)]));
+    s.execute("faces.unnamed", &json!({})).unwrap();
+    assert_eq!((s.faces.arrange.last_scored, s.faces.arrange.chain_reused), (2, false));
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -212,8 +338,39 @@ fn from_scratch(s: &Session, threshold: f32) -> Vec<((u64, usize), Option<(Strin
     out
 }
 
+/// A small deterministic generator (xorshift64*), one for each seed, so that a failing seed can be run again.
+struct Rng(u64);
+
+impl Rng {
+    fn new(seed: u64) -> Rng {
+        Rng(seed.wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        (self.0.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as usize % n.max(1)
+    }
+}
+
+/// A box moved a little: the region at `index` of `id` is put at another place, with the embedding it had (as the scan would
+/// leave it, once it has looked at the new box).
+fn move_box(s: &mut Session, id: PhotoId, index: usize) {
+    let mut regions = s.catalog.photo(id).unwrap().meta.regions.clone();
+    let Some(r) = regions.get_mut(index) else { return };
+    let old = r.rect;
+    r.rect = lightcraft_geom::Rect { x0: old.x0 + 0.013, y0: old.y0, x1: old.x1 + 0.013, y1: old.y1 };
+    let new = r.rect;
+    let embedding = s.faces.index.get(id.0, &old).map(|e| e.to_vec());
+    set_regions(s, id, regions);
+    if let Some(e) = embedding {
+        s.faces.index.insert(id.0, &new, e);
+    }
+}
+
 #[test]
-fn after_every_random_change_the_suggestions_are_what_scoring_everyone_again_gives() {
+fn after_every_random_change_the_order_is_what_scoring_everyone_again_gives() {
     let d = temp("bg-random");
     let (mut s, _) = setup(&d, 64);
     s.execute("faces.index", &json!({"budgetMs": 0})).unwrap();
@@ -224,44 +381,50 @@ fn after_every_random_change_the_suggestions_are_what_scoring_everyone_again_giv
         let r = s.execute("faces.suggest", &json!({"budgetMs": 0})).unwrap();
         r["threshold"].as_f64().unwrap() as f32
     };
-    let mut rng = 0x1234_5678_9ABC_DEF1u64;
-    let mut next = move |n: usize| {
-        rng ^= rng >> 12;
-        rng ^= rng << 25;
-        rng ^= rng >> 27;
-        (rng.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as usize % n.max(1)
-    };
     let names = ["Ann", "Bob", "Cy", "Di", "Eve", "Flo"];
-    for seed in 0..6 {
+    for seed in 0..12u64 {
+        let mut rng = Rng::new(seed);
         // a fresh set of faces: each photo gets six faces, a third of them named, embeddings of a few clusters
         for (n, id) in ids.iter().enumerate().take(6) {
-            let regions = (0..6).map(|i| region(0.1 * i as f64, (next(3) == 0).then(|| names[next(names.len())]))).collect();
+            let regions = (0..6).map(|i| region(0.1 * i as f64, (rng.below(3) == 0).then(|| names[rng.below(names.len())]))).collect();
             set_regions(&mut s, *id, regions);
             for i in 0..6 {
-                let cluster = next(6);
-                let v = unit64(&[(cluster, 1.0), (6 + (seed + n + i) % 50, 0.3 + 0.1 * next(5) as f32)]);
+                let cluster = rng.below(6);
+                let v = unit64(&[(cluster, 1.0), (6 + (seed as usize + n + i) % 50, 0.3 + 0.1 * rng.below(5) as f32)]);
                 s.faces.index.insert(id.0, &region(0.1 * i as f64, None).rect, v);
             }
         }
-        for step in 0..14 {
-            let id = ids[next(6)];
-            let index = next(6);
-            let named = s.catalog.photo(id).unwrap().meta.regions[index].name.clone();
-            match next(5) {
-                0 | 1 => {
-                    let name = names[next(names.len())];
-                    let name = if next(2) == 0 { name.to_uppercase() } else { name.to_string() };
+        let mut suggested = 0usize;
+        for step in 0..16 {
+            let id = ids[rng.below(6)];
+            let regions = s.catalog.photo(id).unwrap().meta.regions.clone();
+            let index = rng.below(regions.len());
+            let named = regions.get(index).is_some_and(|r| r.name.is_some());
+            match rng.below(9) {
+                0 | 1 if !regions.is_empty() => {
+                    let name = names[rng.below(names.len())];
+                    let name = if rng.below(2) == 0 { name.to_uppercase() } else { name.to_string() };
                     s.execute("faces.setName", &json!({"id": id.0, "index": index, "name": name})).unwrap();
                 }
-                2 => {
+                2 if !regions.is_empty() => {
                     s.execute("faces.setName", &json!({"id": id.0, "index": index, "name": Value::Null})).unwrap();
                 }
-                3 if named.is_none() => {
-                    let name = names[next(names.len())];
+                3 if !regions.is_empty() && !named => {
+                    let name = names[rng.below(names.len())];
                     s.execute("faces.reject", &json!({"faces": [{"photo": id.0, "index": index}], "name": name})).unwrap();
                 }
+                4 if !regions.is_empty() => move_box(&mut s, id, index),
+                5 if !regions.is_empty() => {
+                    s.execute("faces.removeBoxes", &json!({"faces": [{"photo": id.0, "index": index}]})).unwrap();
+                }
+                6 => {
+                    // recognition switched off and on again
+                    s.execute("faces.enable", &json!({"enabled": false})).unwrap();
+                    assert_eq!(ask(&mut s, false)["ready"], false, "seed {seed} step {step}");
+                    s.execute("faces.enable", &json!({"enabled": true})).unwrap();
+                }
                 _ => {
-                    let (from, to) = (names[next(names.len())], names[next(names.len())]);
+                    let (from, to) = (names[rng.below(names.len())], names[rng.below(names.len())]);
                     let _ = s.execute("faces.renamePerson", &json!({"from": from, "to": to, "merge": true}));
                 }
             }
@@ -269,8 +432,14 @@ fn after_every_random_change_the_suggestions_are_what_scoring_everyone_again_giv
             if step % 2 == 0 {
                 settled(&mut s);
             }
-            let r = s.execute("faces.unnamed", &json!({})).unwrap();
-            let got: std::collections::HashMap<(u64, usize), Option<(String, f32)>> = r["faces"]
+            // what the runs worked through the changes give, against what a run that has seen nothing before gives (the state
+            // they kept is put back after): the same faces in the same order with the same suggestions and exactly the same scores
+            let inc = s.execute("faces.unnamed", &json!({})).unwrap();
+            let kept = std::mem::take(&mut s.faces.arrange);
+            let fresh = s.execute("faces.unnamed", &json!({})).unwrap();
+            s.faces.arrange = kept;
+            assert_eq!(inc, fresh, "seed {seed} step {step}");
+            let got: std::collections::HashMap<(u64, usize), Option<(String, f32)>> = inc["faces"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -285,14 +454,16 @@ fn after_every_random_change_the_suggestions_are_what_scoring_everyone_again_giv
                 let g = got.get(&k).unwrap_or_else(|| panic!("seed {seed} step {step}: {k:?} is not listed"));
                 match (g, &w) {
                     (None, None) => {}
-                    (Some((n, x)), Some((m, y))) => assert!(n == m && (x - y).abs() < 1e-5, "seed {seed} step {step} {k:?}: {g:?} vs {w:?}"),
+                    (Some((n, x)), Some((m, y))) => assert!(n == m && (x - y).abs() < 1e-6, "seed {seed} step {step} {k:?}: {g:?} vs {w:?}"),
                     _ => panic!("seed {seed} step {step} {k:?}: {g:?} vs {w:?}"),
                 }
             }
             // the order: suggested faces by score, most confident first
-            let scores: Vec<f64> = r["faces"].as_array().unwrap().iter().filter_map(|f| f["suggestion"]["score"].as_f64()).collect();
+            let scores: Vec<f64> = inc["faces"].as_array().unwrap().iter().filter_map(|f| f["suggestion"]["score"].as_f64()).collect();
             assert!(scores.windows(2).all(|w| w[0] >= w[1]), "seed {seed} step {step}: {scores:?}");
+            suggested += scores.len();
         }
+        assert!(suggested > 0, "seed {seed}: no face was ever suggested a name, so nothing was compared");
     }
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -306,7 +477,6 @@ fn with_no_face_embedded_there_is_nothing_to_order_and_no_run_is_started() {
     set_regions(&mut s, a, vec![region(0.1, None), region(0.4, None)]);
     let r = ask(&mut s, false);
     assert_eq!((r["ready"].clone(), r["ordering"].clone(), r["total"].clone()), (json!(true), json!(false), json!(2)), "{r}");
-    let tasks = s.execute("activity.list", &json!({})).unwrap();
-    assert!(tasks["tasks"].as_array().unwrap().iter().all(|t| t["kind"] != "faceOrder"), "{tasks}");
+    assert_eq!(rows(&mut s), 0);
     let _ = std::fs::remove_dir_all(&d);
 }

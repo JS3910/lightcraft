@@ -2377,5 +2377,8 @@
   "Welcome": "Witamy",
   "Next": "Dalej",
   "Get Started": "Zaczynamy",
-  "Stopped at the scan limit: there may be more photos": "Zatrzymano na limicie skanowania: możliwe, że jest więcej zdjęć"
+  "Stopped at the scan limit: there may be more photos": "Zatrzymano na limicie skanowania: możliwe, że jest więcej zdjęć",
+  "Putting unnamed faces in order": "Porządkowanie twarzy bez nazwy",
+  "Putting the faces in order…": "Porządkowanie twarzy…",
+  "Looking through your photos… {n} left": "Przeglądanie zdjęć… zostało {n}"
 }

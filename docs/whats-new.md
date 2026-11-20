@@ -32,8 +32,9 @@
   When the order comes in, the tiles in view keep their places. Opening the People view, or changing the source or a filter,
   shows "Putting the faces in order…" instead of tiles until the order is ready, so tiles never jump.
 - `faces.unnamed` takes `wait: false` (what the window uses) to answer at once with `ordering: true` while the order is worked
-  out; without it every caller (CLI, MCP, control channel) still gets the complete order. `faces.pump` reports `arranged`
-  (results taken in) and `ordering`.
+  out; without it every caller (CLI, MCP, control channel) still gets the complete order, or an error when the run it waits
+  for is cancelled or cannot start. `wait` must be `true` or `false`. `faces.pump` reports `arranged` (results taken in) and
+  `ordering`; the window takes a finished order in within a few frames, without a mouse move.
 
 ### Editing a photo out of the view keeps your place
 - Any edit that takes the open photo out of the view now moves on to the photo after it (the one before it at the end of the view): un-naming a face in the loupe under a person filter, removing a keyword under a keyword filter, changing a caption under a search, and the like. Before, only a rating, flag or colour label did, and the loupe kept showing a photo the filmstrip no longer had. Compare and Survey still keep showing the photo you edit, and so does View ▸ Hold View Until Refreshed.

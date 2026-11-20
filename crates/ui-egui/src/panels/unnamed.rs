@@ -166,7 +166,15 @@ pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
     }
     let v = app.session.execute("faces.unnamed", &json!({"scope": "visible", "wait": false})).unwrap_or(Value::Null);
     let old = app.caches.unnamed.as_ref().map(|(_, _, _, old)| old.as_ref());
-    let list = Arc::new(place(old, app.caches.unnamed_shown, parse(&v)));
+    let asked = parse(&v);
+    if asked.ordering {
+        // A run is going to finish a little later. Nothing else would look at its result soon: the scan's pump looks every
+        // second or so when it has nothing else to do, and the window asks for a frame every few seconds. So the next frame
+        // pumps, and (the caller asks for frames while the order is not complete) every 50 ms after it.
+        app.caches.faces_ordering = true;
+        app.caches.faces_next_pump = 0.0;
+    }
+    let list = Arc::new(place(old, app.caches.unnamed_shown, asked));
     app.caches.unnamed_arranged = arranged;
     // what was selected, rejected in place or being named and has since been named (or removed, or left the view with its
     // photo) is no longer so
@@ -196,19 +204,28 @@ fn subtitle(list: &Unnamed, pending: u64) -> String {
     }
 }
 
-/// The heading of the section, at `at`, and what it says about where the faces come from.
-pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, at: egui::Pos2, right: f32) {
-    let t = Tokens::get(ui.ctx());
-    let count = if list.total > list.faces.len() {
+/// What the heading counts: the faces, or "n of N" when the list was cut. While the order is worked out there are no tiles to
+/// count and "0 of 40000" would read as an error, so it is the total alone.
+fn count_text(list: &Unnamed) -> String {
+    if !waiting(list) && list.total > list.faces.len() {
         crate::i18n::tr_format!("{shown} of {total}", shown = list.faces.len(), total = list.total)
     } else {
         list.total.to_string()
-    };
+    }
+}
+
+/// The heading of the section, at `at`, and what it says about where the faces come from.
+pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, at: egui::Pos2, right: f32) {
+    let t = Tokens::get(ui.ctx());
+    let count = count_text(list);
     let p = ui.painter();
     p.text(at, Align2::LEFT_CENTER, crate::i18n::tr("Unnamed faces"), t.semibold(15.0), t.text);
     p.text(pos2(right, at.y), Align2::RIGHT_CENTER, count, t.font(13.0), t.text_dim);
     let sub = subtitle(list, app.caches.faces_pending);
-    p.text(pos2(at.x, at.y + 24.0), Align2::LEFT_CENTER, sub, t.font(12.0), t.text_dim);
+    let sub_at = p.text(pos2(at.x, at.y + 24.0), Align2::LEFT_CENTER, sub, t.font(12.0), t.text_dim);
+    if waiting(list) {
+        register(ui, "unnamed:status", sub_at);
+    }
     if !list.ready && list.faces.is_empty() {
         let r = Rect::from_min_size(pos2(at.x, at.y + 38.0), vec2(120.0, 22.0));
         let b = ui.put(r, egui::Button::new(crate::i18n::tr("Open Settings")));
@@ -323,6 +340,15 @@ mod tests {
         let plain = order_sentence(&list(false, vec![face(1, 0, None)]));
         assert!(plain.starts_with("Click faces") && !plain.contains("alike") && !plain.contains("likeliest"), "{plain}");
         assert!(only_suggested.ends_with("name it (or the selected ones)."), "every sentence ends with how to use the tiles: {only_suggested}");
+    }
+
+    #[test]
+    fn the_heading_counts_the_faces_and_while_waiting_only_the_total() {
+        let cut = Unnamed { total: 40000, faces: vec![face(1, 0, None), face(1, 1, None)], ready: true, ..Default::default() };
+        assert_eq!(count_text(&cut), "2 of 40000");
+        assert_eq!(count_text(&Unnamed { total: 2, ..cut.clone() }), "2");
+        let waiting = Unnamed { total: 40000, faces: Vec::new(), ordering: true, ready: true, ..Default::default() };
+        assert_eq!(count_text(&waiting), "40000", "not \"0 of 40000\"");
     }
 
     #[test]

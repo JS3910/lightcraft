@@ -2515,5 +2515,8 @@
   "Top bar": "Övre fältet",
   "Tool strip": "Verktygsfält",
   "Bottom bar": "Nedre fältet",
-  "Stopped at the scan limit: there may be more photos": "Stoppade vid skanningsgränsen: det kan finnas fler foton"
+  "Stopped at the scan limit: there may be more photos": "Stoppade vid skanningsgränsen: det kan finnas fler foton",
+  "Putting unnamed faces in order": "Sorterar ansikten utan namn",
+  "Putting the faces in order…": "Ansikten sorteras…",
+  "Looking through your photos… {n} left": "Går igenom dina foton… {n} kvar"
 }

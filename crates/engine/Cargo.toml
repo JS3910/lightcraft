@@ -60,6 +60,8 @@ fs4 = { workspace = true }
 [features]
 # AI masks with SAM 3 (Object / Describe). Off for the web and CLI builds.
 sam = ["dep:lightcraft-segment"]
+# Hooks for other crates' tests (hold a face-order run, put an embedding in the face index). Never on in a release build.
+test-hooks = []
 denoise = ["dep:lightcraft-denoise", "lightcraft-denoise/runtime", "lightcraft-gpu/denoise"]
 rawnind-model = ["denoise", "lightcraft-denoise/rawnind-model", "lightcraft-denoise-core/rawnind-model"]
 
