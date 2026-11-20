@@ -540,6 +540,32 @@ fn people_from_named_face_regions() {
     assert_eq!(names(Filter { rating: 5, ..Default::default() }), vec![], "nobody in the filtered photos");
 }
 
+/// A name spelled two ways is shown as the lowest photo id spells it, whatever order the photos come in
+/// (the grid's sort must not change a card's text).
+#[test]
+fn people_among_spells_a_name_independent_of_the_photo_order() {
+    use lightcraft_meta::{Rect, Region, RegionKind};
+    let mut c = Catalog::new();
+    let mut add = |name: &str| {
+        let id = c.alloc_photo_id();
+        let mut p = Photo::new(id, Source::Demo { scene: 1 }, "x.jpg", "JPEG", 6000, 4000, "2026-09-30T10:00:00");
+        p.meta.regions = vec![Region {
+            rect: Rect { x0: 0.4, y0: 0.4, x1: 0.6, y1: 0.6 },
+            kind: RegionKind::Face,
+            name: Some(name.to_string()),
+            description: None,
+            rejected: Vec::new(),
+        }];
+        c.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        id
+    };
+    let (old, new) = (add("Ann"), add("ann"));
+    for ids in [[old, new], [new, old]] {
+        let names: Vec<String> = c.people_among(&ids).into_iter().map(|p| p.name).collect();
+        assert_eq!(names, vec!["Ann".to_string()], "{ids:?}");
+    }
+}
+
 /// Most photos have no regions: the field is left out of the catalog JSON then, and a catalog written
 /// before regions existed (no `regions` key) reads with none.
 #[test]

@@ -610,28 +610,44 @@ impl Catalog {
 
     /// The people named on faces in the library (MWG regions read from XMP): how many photos each
     /// appears in and the photo showing their largest face (for a card's picture). Most photos first,
-    /// then by name. Names that differ only in case are one person, shown as first seen; a person
+    /// then by name. Names that differ only in case are one person, shown as first seen (by the lowest photo id); a person
     /// twice in one photo counts once.
     pub fn people(&self) -> Vec<Person> {
         self.people_in(&Filter::default())
     }
 
-    /// [`Self::people`] among the photos `filter` lets through (its `person` is ignored): what the
-    /// People view offers while other filters (a date, a rating, an album…) are active, so picking
-    /// a person never ends in an empty grid.
+    /// [`Self::people`] among the photos `filter` lets through (its `person` is ignored): the filter-based
+    /// variant [`Self::people`] is built on. The People view does not use it: its cards come from
+    /// [`Self::people_among`] over the view's photos (`Session::people_view_photos`).
     pub fn people_in(&self, filter: &Filter) -> Vec<Person> {
         let filter = Filter { person: None, ..filter.clone() };
-        let mut m: std::collections::HashMap<String, (Person, f64)> = Default::default();
         let prepared = filter.prepare(self);
-        for p in self.photos().filter(|p| filter.matches_in(p, self, &prepared)) {
+        Self::people_of(self.photos().filter(|p| filter.matches_in(p, self, &prepared)))
+    }
+
+    /// [`Self::people`] among exactly the photos `ids` (ones the catalog does not have, deleted ones and ones only
+    /// browsed in a Local folder are left out): what the People view's cards are made from
+    /// (`Session::people_view_photos`).
+    pub fn people_among(&self, ids: &[PhotoId]) -> Vec<Person> {
+        Self::people_of(ids.iter().filter_map(|id| self.photo(*id)).filter(|p| p.in_library()))
+    }
+
+    fn people_of<P: AsRef<Photo>>(photos: impl Iterator<Item = P>) -> Vec<Person> {
+        let mut m: std::collections::HashMap<String, (Person, f64, PhotoId)> = Default::default();
+        for p in photos {
+            let p = p.as_ref();
             let mut seen: Vec<String> = Vec::new();
             for r in p.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
                 let Some(name) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };
                 let key = name.to_lowercase();
                 // the face's size in pixels of the photo
                 let area = (r.rect.x1 - r.rect.x0) * (r.rect.y1 - r.rect.y0) * p.width as f64 * p.height as f64;
-                let (person, best) =
-                    m.entry(key.clone()).or_insert_with(|| (Person { name: name.to_string(), count: 0, photo: p.id, face: r.rect }, area));
+                let (person, best, spelled_in) =
+                    m.entry(key.clone()).or_insert_with(|| (Person { name: name.to_string(), count: 0, photo: p.id, face: r.rect }, area, p.id));
+                // the spelling is the lowest photo id's, so the order the photos come in does not change it
+                if p.id < *spelled_in {
+                    (person.name, *spelled_in) = (name.to_string(), p.id);
+                }
                 if !seen.contains(&key) {
                     person.count += 1;
                     seen.push(key);
@@ -641,7 +657,7 @@ impl Catalog {
                 }
             }
         }
-        let mut v: Vec<Person> = m.into_values().map(|(p, _)| p).collect();
+        let mut v: Vec<Person> = m.into_values().map(|(p, _, _)| p).collect();
         v.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
         v
     }

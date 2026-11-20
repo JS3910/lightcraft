@@ -872,3 +872,20 @@ fn the_ranking_query_refuses_hostile_arguments_without_panicking() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// `faces.evaluate {scope: "visible"}` draws from the People view's photos like every other `scope: "visible"` face
+/// command: the hidden photos of a collapsed stack are in it, though the grid shows only the stack's top photo.
+#[test]
+fn evaluating_the_visible_photos_covers_the_hidden_photos_of_a_collapsed_stack() {
+    let d = temp("evaluate-stack");
+    let (mut s, _) = fresh_library(&d, 64);
+    let (a, b, c) = import_three_photos(&mut s, &d);
+    set_regions(&mut s, a, vec![region(0.1, Some("Ann"))]);
+    set_regions(&mut s, b, vec![region(0.3, Some("Bea"))]);
+    s.selection = crate::Selection::single(a);
+    s.execute("stack.group", &json!({"ids": [a.0, b.0], "top": a.0, "collapsed": true})).unwrap();
+    assert!(!s.visible().contains(&b), "the grid shows one photo for the stack");
+    let r = s.execute("faces.evaluate", &json!({"budgetMs": 0, "scope": "visible"})).unwrap();
+    assert_eq!(r["pendingPhotos"], 2, "the stack's hidden photo is evaluated too: {r}");
+    let _ = c;
+}

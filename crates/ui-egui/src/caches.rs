@@ -151,19 +151,16 @@ impl Caches {
             }
         }
     }
-    /// The people named on faces among the photos the filter lets through (its own `person` aside),
-    /// with photo counts.
-    pub fn people(
-        &mut self,
-        cat: &lightcraft_catalog::Catalog,
-        filter: &lightcraft_catalog::Filter,
-    ) -> std::sync::Arc<Vec<lightcraft_catalog::Person>> {
-        let key = lightcraft_catalog::Filter { person: None, ..filter.clone() };
+    /// The Named People cards: `faces.people` for the People view's photos (`Session::people_view_photos`), with photo
+    /// counts. Worked out again when the catalog or the photos the grid shows change.
+    pub fn people(&mut self, session: &mut lightcraft_engine::Session) -> std::sync::Arc<Vec<lightcraft_catalog::Person>> {
+        let key = session.visible_shared().0;
+        let revision = session.catalog.revision;
         match &self.people {
-            Some((r, f, t)) if *r == cat.revision && *f == key => t.clone(),
+            Some((r, g, t)) if *r == revision && *g == key => t.clone(),
             _ => {
-                let t = std::sync::Arc::new(cat.people_in(&key));
-                self.people = Some((cat.revision, key, t.clone()));
+                let t = std::sync::Arc::new(cards(session));
+                self.people = Some((revision, key, t.clone()));
                 t
             }
         }
@@ -366,6 +363,26 @@ impl Caches {
         self.album_counts = Some((minute.to_string(), tally, shown.clone()));
         shown
     }
+}
+
+/// What `faces.people {scope: "visible"}` lists, as cards.
+fn cards(session: &mut lightcraft_engine::Session) -> Vec<lightcraft_catalog::Person> {
+    let Ok(r) = session.execute("faces.people", &serde_json::json!({"scope": "visible"})) else { return Vec::new() };
+    let rect = |v: &serde_json::Value| {
+        let n = |k: &str| v.get(k).and_then(serde_json::Value::as_f64);
+        Some(lightcraft_meta::Rect { x0: n("x0")?, y0: n("y0")?, x1: n("x1")?, y1: n("y1")? })
+    };
+    let list = r.get("people").and_then(serde_json::Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    list.iter()
+        .filter_map(|c| {
+            Some(lightcraft_catalog::Person {
+                name: c.get("name")?.as_str()?.to_string(),
+                count: usize::try_from(c.get("photos")?.as_u64()?).ok()?,
+                photo: lightcraft_catalog::PhotoId(c.get("photo")?.as_u64()?),
+                face: rect(c.get("face")?)?,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
