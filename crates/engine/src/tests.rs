@@ -44,6 +44,7 @@ mod move_to_share;
 #[cfg(unix)]
 mod opened_folder;
 mod organize;
+mod people_view;
 mod persist;
 mod prefs;
 mod presets_scale;

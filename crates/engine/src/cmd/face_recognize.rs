@@ -7,7 +7,7 @@
 //! Everything here is a suggestion for the user to confirm; nothing is ever named automatically. All of it is
 //! catalog-only (no sidecar is written) and naming is undoable.
 
-use lightcraft_catalog::Op;
+use lightcraft_catalog::{Op, Photo};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, bad, cmd};
@@ -282,6 +282,30 @@ struct Similar {
 
 fn rect_json(r: &lightcraft_geom::Rect) -> Value {
     json!({"x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1})
+}
+
+/// The Named People cards, most photos first then by name, and how many faces (named or unnamed) are in library
+/// photos that `visible` leaves out. With `visible` the cards cover [`Session::people_view_photos`], else the whole
+/// library (and nothing is left out).
+fn people_cards(s: &mut Session, visible: bool) -> (Vec<lightcraft_catalog::Person>, usize) {
+    if !visible {
+        return (s.catalog.people(), 0);
+    }
+    let ids = s.people_view_photos();
+    let cards = s.catalog.people_among(&ids);
+    let inside: std::collections::HashSet<lightcraft_catalog::PhotoId> = ids.into_iter().collect();
+    let faces = |ph: &std::sync::Arc<Photo>| ph.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face).count();
+    let hidden = s.catalog.photos().filter(|ph| ph.in_library() && !inside.contains(&ph.id)).map(faces).sum();
+    (cards, hidden)
+}
+
+/// `faces.people {scope?}`: the Named People cards as data.
+fn people(s: &mut Session, p: &Value) -> Result<Value> {
+    let visible = p.get("scope").and_then(Value::as_str) == Some("visible");
+    let (cards, hidden) = people_cards(s, visible);
+    let people: Vec<Value> =
+        cards.iter().map(|c| json!({"name": c.name, "photos": c.count, "photo": c.photo.0, "face": rect_json(&c.face)})).collect();
+    Ok(json!({"people": people, "hidden": hidden}))
 }
 
 /// Most confirmed faces `faces.person` lists.
@@ -1308,6 +1332,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{id?, index} → {photo, index, ranking: [{name, score, faces}]} — every named person ranked by how much they look like this face (best first; `score` is the similarity the name box shows as a percentage). Read-only: it uses what the background scan has embedded and embeds nothing, so a face the scan has not looked at, or recognition off, gives an empty `ranking`; errors for a missing photo or an index that is not a face",
             super::always,
             rank_face
+        ),
+        cmd!(
+            query "faces.people",
+            "Named People",
+            [],
+            None,
+            "{scope?: \"visible\"} → {people: [{name, photos, photo, face: {x0, y0, x1, y1}}], hidden} — the Named People cards, most photos first then by name: `photos` is how many photos they are in, `photo` and `face` their largest face. With `scope: \"visible\"` only the photos the People view shows count (the source chosen in the sidebar with its subfolders, every filter, the person filter, a held view, collapsed stacks with all their photos, library photos only) and `hidden` is how many faces, named or unnamed, are in library photos they leave out; without a scope the whole library (`hidden` 0)",
+            super::always,
+            people
         ),
         cmd!(
             query "faces.person",

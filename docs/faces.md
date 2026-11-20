@@ -313,6 +313,14 @@ yet: it opens Settings ▸ Faces, where the download is) or **Turn on** (a model
 on there and then). The loupe's name box offers the same ("Set up name suggestions…" / "Turn on name suggestions"), and so
 does a person's page.
 
+**The People view's photos.** The People view works from the photos the grid shows: the source chosen in the sidebar (a
+folder includes its subfolders), every filter (the filter bar, the search and the person filter, which selects photos with
+that person named in them), the photos a held view holds, and a collapsed stack with all its photos. Photos only browsed in a
+Local folder and deleted photos are left out. The Named People cards come from `faces.people` with `scope: "visible"`: each
+card counts the photos among those that the person is in and shows their largest face among them, most photos first, then by
+name; without a scope the command covers the whole library. It also reports `hidden`, how many faces (named or unnamed) are in
+library photos the source and filters leave out. In the engine the definition is `Session::people_view_photos`.
+
 **People** shows a card for each named person (their face, with the number of photos they are in on the picture) and, below
 a line, the **Unnamed faces**: every face nobody has named, as cropped pictures. With recognition running, faces that look
 alike are next to each other (put in order by looking at every pair, for up to the first 1,500 embedded faces), and a face

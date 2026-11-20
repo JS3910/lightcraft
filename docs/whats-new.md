@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### People cards follow the grid
+- With a folder or album chosen in the sidebar, or any filter on, the Named People cards show only the people named in the
+  photos the grid shows. Each card counts the photos among those that the person is in, and its picture is their largest
+  face there. A folder includes its subfolders, a person filter shows everyone named in photos with that person, a
+  collapsed stack counts with all its photos, and Hold View Until Refreshed holds the cards' photos as it holds the grid's.
+  The new `faces.people` command lists the cards (with `scope: "visible"` for what the People view shows).
+
 ### Flatpak updates
 - Help ▸ Check for Updates can now reach the release service and update standalone Flatpak bundles.
   This permissions repair must first arrive through your existing host-side update method. Flatpaks

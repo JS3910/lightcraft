@@ -366,7 +366,13 @@ fn ui_commands_2(app: &mut LightcraftApp, ctx: &egui::Context, id: &str, p: &Val
             }
             app.ui.person_from = None;
             app.ui.view = ViewMode::People;
-            Ok(json!({"people": app.session.catalog.people().len()}))
+            let n = app
+                .session
+                .execute("faces.people", &json!({"scope": "visible"}))
+                .ok()
+                .and_then(|r| r["people"].as_array().map(Vec::len))
+                .unwrap_or_default();
+            Ok(json!({"people": n}))
         }
         "view.person" => {
             // {name}: one person's page in the People view: their faces, and the faces that look like them

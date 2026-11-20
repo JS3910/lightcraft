@@ -246,6 +246,8 @@ pub struct Session {
     /// The grid order for the current source/filter/sort (cached by catalog revision).
     /// Shared, so frontends can hold it across frames without copying ([`Session::visible_shared`]).
     visible: Arc<[PhotoId]>,
+    /// [`Self::visible`] before collapsed stacks are reduced to one photo each: what [`Self::people_view_photos`] is made from.
+    visible_unstacked: Arc<[PhotoId]>,
     visible_key: Option<(u64, String)>,
     /// The minute used for a cached view whose rules depend on the session clock.
     visible_clock_minute: Option<String>,
@@ -477,6 +479,7 @@ impl Session {
             sort: Sort::default(),
             selection: Selection::default(),
             visible: Vec::new().into(),
+            visible_unstacked: Vec::new().into(),
             visible_key: None,
             visible_clock_minute: None,
             hold_view: false,
@@ -1300,6 +1303,7 @@ impl Session {
                 let (cat, avail) = (&self.catalog, &self.media.availability);
                 visible.retain(|id| cmd::missing::is_missing(cat, avail, *id));
             }
+            self.visible_unstacked = visible.as_slice().into();
             if self.source != LibrarySource::RecentlyDeleted {
                 visible = self.catalog.arrange_stacks(&visible);
             }
@@ -1344,6 +1348,7 @@ impl Session {
             self.visible_key.clone(),
             self.visible_clock_minute.clone(),
             self.visible.clone(),
+            self.visible_unstacked.clone(),
             self.visible_gen,
             self.view_followed,
             self.view_worked_out,
@@ -1352,7 +1357,16 @@ impl Session {
         self.visible_key = None;
         let whole = self.visible().to_vec();
         self.never_follow = false;
-        (self.base, self.visible_key, self.visible_clock_minute, self.visible, self.visible_gen, self.view_followed, self.view_worked_out) = kept;
+        (
+            self.base,
+            self.visible_key,
+            self.visible_clock_minute,
+            self.visible,
+            self.visible_unstacked,
+            self.visible_gen,
+            self.view_followed,
+            self.view_worked_out,
+        ) = kept;
         whole
     }
 
@@ -1408,6 +1422,19 @@ impl Session {
 
     pub fn visible_cloned(&mut self) -> Vec<PhotoId> {
         self.visible().to_vec()
+    }
+
+    /// **The People view's photos**: the one definition every People view listing and every `scope: "visible"` face
+    /// command draws from (`faces.people`, `faces.unnamed`, `faces.person`, the cards, the scan order).
+    ///
+    /// They are the photos the grid shows for the current source (a folder with its subfolders, an album…) and every
+    /// filter (the filter bar, the search and the person filter), including the photos a held view holds
+    /// ([`Session::hold_view`]), with two differences from [`Session::visible`]:
+    /// - a collapsed stack counts with all its photos in the view, not as its one top photo;
+    /// - library photos only: a photo only browsed in a Local folder and a deleted photo are left out.
+    pub fn people_view_photos(&mut self) -> Vec<PhotoId> {
+        self.visible();
+        self.visible_unstacked.iter().copied().filter(|id| self.catalog.photo(*id).is_some_and(|p| p.in_library())).collect()
     }
 
     /// After the source changes, the active photo follows the rule every source shares: it stays
