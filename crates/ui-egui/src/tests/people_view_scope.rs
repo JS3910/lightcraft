@@ -270,9 +270,65 @@ fn a_face_the_scan_finds_never_moves_the_tiles_on_screen() {
     assert_eq!(top.first(), Some(&(p0.0, 1)));
 }
 
+/// Put the list the screen shows in the opposite order to the engine's, as when suggestions have changed the engine's order
+/// since the list was made: a list that is sorted afresh would no longer be the one on screen.
+fn reverse_shown_order(h: &mut Headless) {
+    let Some((rev, indexed, at, list)) = h.app.caches.unnamed.clone() else { panic!("no list shown") };
+    let mut list = (*list).clone();
+    list.faces.reverse();
+    h.app.caches.unnamed = Some((rev, indexed, at, std::sync::Arc::new(list)));
+    h.step();
+    h.step();
+}
+
+fn shown_list(h: &Headless) -> Vec<(u64, usize)> {
+    h.app.caches.unnamed.as_ref().map(|c| c.3.faces.iter().map(|f| (f.photo, f.index)).collect()).unwrap_or_default()
+}
+
+#[test]
+fn scrolling_alone_never_sorts_the_list_again() {
+    let (mut h, [p0, _, _]) = scrolled();
+    let mut regions = h.app.session.catalog.photo(p0).unwrap().meta.regions.clone();
+    regions.push(super::person_tiles::region(0.7, None));
+    super::person_tiles::set_regions(&mut h, p0, regions);
+    h.step();
+    h.step();
+    let shown = shown_list(&h);
+    let engine: Vec<(u64, usize)> = engine_order(&mut h).iter().map(|(p, i)| (*p, *i as usize)).collect();
+    assert_ne!(shown, engine, "the tiles in view were kept, so the list is not in the engine's order");
+    scroll(&mut h, 4000.0);
+    scroll(&mut h, -4000.0);
+    scroll(&mut h, 300.0);
+    assert_eq!(shown_list(&h), shown, "scrolling away and back did not change the list");
+    assert_ne!(shown_list(&h), engine, "and it was not sorted again");
+}
+
+#[test]
+fn a_face_shown_by_another_box_once_the_scan_embeds_it_keeps_its_tile() {
+    let (mut h, [p0, _, _]) = scrolled();
+    let before = tiles(&mut h);
+    // the scan has embedded every face since the list was made: each is now shown by the detector's box, though its own is the same
+    let Some((rev, indexed, at, list)) = h.app.caches.unnamed.clone() else { panic!("no list shown") };
+    let mut was = (*list).clone();
+    for f in &mut was.faces {
+        f.view = lightcraft_geom::Rect { x0: 0.0, y0: 0.0, x1: 0.01, y1: 0.01 };
+    }
+    h.app.caches.unnamed = Some((rev, indexed, at, std::sync::Arc::new(was)));
+    h.step();
+    h.step();
+    // and a face found in the first photo sorts before every tile on screen
+    let mut regions = h.app.session.catalog.photo(p0).unwrap().meta.regions.clone();
+    regions.push(super::person_tiles::region(0.7, None));
+    super::person_tiles::set_regions(&mut h, p0, regions);
+    h.step();
+    h.step();
+    assert_eq!(tiles(&mut h), before, "the tiles on screen kept their places");
+}
+
 #[test]
 fn naming_a_face_on_screen_moves_the_tiles_after_it_up_one_place() {
     let (mut h, [_, p1, _]) = scrolled();
+    reverse_shown_order(&mut h);
     let before = tiles(&mut h);
     let at = before.len() / 2;
     let (photo, index) = before[at];
@@ -356,6 +412,7 @@ fn removing_a_box_above_the_screen_and_undoing_it_leave_the_tiles_on_screen_show
 #[test]
 fn removing_a_box_on_screen_makes_its_tile_leave_and_the_tiles_after_it_move_up() {
     let (mut h, [_, p1, _]) = scrolled();
+    reverse_shown_order(&mut h);
     let before = tiles(&mut h);
     let seen = boxes(&h, &before);
     let at = before.len() / 2;
