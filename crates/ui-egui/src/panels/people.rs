@@ -3,6 +3,12 @@
 //! faces that look like them. Below the people, the faces nobody has named yet (`unnamed.rs`), to be named a group at a
 //! time.
 //!
+//! Everything here works from the photos the grid shows (`Session::people_view_photos`: the source chosen in the sidebar,
+//! every filter, a held view, stacks with all their photos, library photos only): the cards (`faces.people`), the Unnamed
+//! faces (`faces.unnamed`) and a person's page (`faces.person`) are asked for with `scope: "visible"`, and the header names
+//! the source. [`follow_view`] starts the faces afresh when the source or a filter changes. The face scan does those photos
+//! first (`faces.pump`).
+//!
 //! The thumbnail-size slider in the bottom bar sizes the faces here too (with its own smaller and larger limits), and
 //! every face is cut from the same kind of box (the detector's, once the scan has looked at it), so faces are shown
 //! equally close. Only the rows on screen ask for a face render (the engine caches them, memory and disk).
@@ -70,21 +76,27 @@ pub(super) fn fit(painter: &egui::Painter, text: &str, font: egui::FontId, max_w
 }
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    follow_view(app, ui.ctx());
     if let Some(name) = app.ui.person_page.clone() {
         return super::person::show(app, ui, &name);
     }
     let t = Tokens::get(ui.ctx());
     let now = ui.input(|i| i.time);
     let thumb = app.ui.thumb_size;
-    let people = app.caches.people(&mut app.session);
+    let cards = app.caches.people(&mut app.session);
+    let people = &cards.people;
     let (head, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
     let title =
         ui.painter().text(pos2(head.left() + PAD, head.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Named People"), t.semibold(15.0), t.text);
+    // where the faces come from, as the grid names it
+    let source = fit(ui.painter(), &crate::i18n::source_title(&app.session), t.font(13.0), 260.0);
+    let source_at = ui.painter().text(pos2(title.right() + 12.0, head.center().y), Align2::LEFT_CENTER, source, t.font(13.0), t.text_dim);
+    register(ui, "people:source", Rect::from_min_max(pos2(title.right() + 12.0, head.top()), pos2(source_at.right(), head.bottom())));
     // the person page last left (a face opened from it, or its back button): one click returns to it
     if let Some(last) = app.ui.last_person.clone().filter(|n| people.iter().any(|p| p.name.to_lowercase() == n.to_lowercase())) {
         let label = fit(ui.painter(), &last, t.font(13.0), 224.0);
         let width = ui.painter().layout_no_wrap(label.clone(), t.font(13.0), Color32::WHITE).size().x + 44.0;
-        let r = Rect::from_min_size(pos2(title.right() + 14.0, head.center().y - 12.0), vec2(width, 24.0));
+        let r = Rect::from_min_size(pos2(source_at.right() + 14.0, head.center().y - 12.0), vec2(width, 24.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
         let b = crate::widgets::arrow_button(&mut child, RichText::new(label).font(t.font(13.0)), crate::icons::Icon::ChevronRight, false);
         register(ui, "people:last", b.rect);
@@ -97,20 +109,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     super::faces::setup_banner(app, ui);
     // the filters narrowing the list (a date, a keyword…), removable here
     let chips = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog);
-    super::chips::show(app, ui, &chips);
     // Esc with no name box open drops the selection
     clear_selection_on_escape(app, ui.ctx());
     let unnamed = super::unnamed::faces(app, now);
     app.ui.rejected_unnamed.visit("", ui.ctx().cumulative_pass_nr());
     if people.is_empty() && unnamed.faces.is_empty() {
-        let (title, body) = if chips.is_empty() {
-            ("No people yet", "Face names written to XMP by Lightroom and other apps show up here, and faces found in your photos can be named.")
-        } else {
-            ("No named people in these photos", "Remove a filter above, or choose Clear all")
-        };
-        super::empty_message(ui, ui.available_rect_before_wrap(), title, body);
+        empty_view(app, ui, &chips, cards.hidden);
         return;
     }
+    super::chips::show(app, ui, &chips);
     let ppp = ui.ctx().pixels_per_point();
     let active = app.session.filter.person.clone();
     let (edge, tile) = (card_edge(thumb), tile_edge(thumb));
@@ -160,7 +167,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let min = area.min + vec2(PAD + (i % tile_cols) as f32 * (tile + GAP), grid_top + (i / tile_cols) as f32 * tile_row);
             ui.scroll_to_rect(Rect::from_min_size(min, vec2(tile, tile_row)), None);
         }
-        for row in visible(grid_top, tile_rows, tile_row) {
+        // where the list lies on the screen: what a new list keeps in place
+        let rows_on = visible(grid_top, tile_rows, tile_row);
+        let above = (rows_on.start * tile_cols).min(unnamed.faces.len());
+        let end = (rows_on.end * tile_cols).min(unnamed.faces.len());
+        app.caches.unnamed_shown = Some(super::unnamed::Shown { above, on_screen: end.saturating_sub(above) });
+        for row in rows_on {
             for col in 0..tile_cols {
                 let i = row * tile_cols + col;
                 let Some(face) = unnamed.faces.get(i) else { break };
@@ -175,6 +187,74 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         // the picture cache keeps all of them (a fixed budget would evict and re-request the same few every frame)
         app.renderer.want_variants(shown);
     });
+}
+
+/// Keep what the view holds by face (the selection, the faces rejected in place, an open name box, the faces lists) true to the
+/// photos the grid shows now. Called every frame the People view is drawn.
+/// - A different question (another source, or any filter changed): nothing of the previous set may act on the new one, so
+///   the selection, the faces rejected in place and an open name box are cleared and the lists are asked for afresh
+///   (sorted afresh). An open person's page stays open.
+/// - The same question with different photos (an edit took some out, or let some in): only the faces of the photos that left
+///   are dropped from those; everything else stays.
+/// - The People view was not drawn since the last time (it is opened again): the Unnamed faces are sorted afresh.
+pub(crate) fn follow_view(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let ask = app.session.view_question();
+    let generation = app.session.visible_shared().0;
+    let pass = ctx.cumulative_pass_nr();
+    if let Some((was, seen, last)) = app.caches.people_seen.clone() {
+        if was != ask {
+            super::face_tile::forget_positions(app);
+            app.caches.unnamed = None;
+            app.caches.unnamed_shown = None;
+            app.caches.person_page = None;
+        } else {
+            if pass > last.saturating_add(1) {
+                app.caches.unnamed = None;
+                app.caches.unnamed_shown = None;
+            }
+            if seen != generation {
+                drop_left_photos(app);
+            }
+        }
+    }
+    app.caches.people_seen = Some((ask, generation, pass));
+}
+
+/// An edit took photos out of the People view: their faces leave the selection, the faces rejected in place and an open name
+/// box, which are otherwise left as they were.
+fn drop_left_photos(app: &mut LightcraftApp) {
+    let inside: std::collections::HashSet<u64> = app.session.people_view_photos().into_iter().map(|p| p.0).collect();
+    app.ui.unnamed_selected.retain(|(photo, _)| inside.contains(photo));
+    for set in [&mut app.ui.rejected_faces, &mut app.ui.rejected_unnamed, &mut app.ui.rejected_confirmed] {
+        set.retain_photos(&inside);
+    }
+    if app.ui.name_edit.as_ref().is_some_and(|e| !inside.contains(&e.photo)) {
+        app.ui.name_edit = None;
+    }
+}
+
+/// The People view with nothing to show. With no faces in the library at all: "No people yet" and where people come from.
+/// Else the filters and the source leave none: "No people in these photos", how many faces they hide, and then the filter
+/// chips, which are removable.
+fn empty_view(app: &mut LightcraftApp, ui: &mut egui::Ui, chips: &[lightcraft_engine::FilterChip], hidden: usize) {
+    let t = Tokens::get(ui.ctx());
+    let (title, body) = if hidden == 0 {
+        (
+            crate::i18n::tr("No people yet"),
+            crate::i18n::tr("Face names written to XMP by Lightroom and other apps show up here, and faces found in your photos can be named.")
+                .to_string(),
+        )
+    } else if hidden == 1 {
+        (crate::i18n::tr("No people in these photos"), crate::i18n::tr("1 face is hidden by the current filters").to_string())
+    } else {
+        (crate::i18n::tr("No people in these photos"), crate::i18n::tr_format!("{n} faces are hidden by the current filters", n = hidden))
+    };
+    let reserve = if chips.is_empty() { 0.0 } else { 44.0 };
+    let avail = ui.available_rect_before_wrap();
+    let (rect, _) = ui.allocate_exact_size(vec2(avail.width(), (avail.height() - reserve).max(120.0)), Sense::hover());
+    ui.painter().text(rect.center() - vec2(0.0, 12.0), Align2::CENTER_CENTER, title, t.semibold(18.0), t.text_label);
+    ui.painter().text(rect.center() + vec2(0.0, 14.0), Align2::CENTER_CENTER, body, t.font(13.0), t.text_dim);
+    super::chips::show(app, ui, chips);
 }
 
 /// The Delete key (or the key labelled Backspace) in the People view rejects the selected faces, as the reject button on one

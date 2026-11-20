@@ -2,22 +2,42 @@
 
 ## Unreleased
 
-### People cards follow the grid
-- With a folder or album chosen in the sidebar, or any filter on, the Named People cards show only the people named in the
-  photos the grid shows. Each card counts the photos among those that the person is in, and its picture is their largest
-  face there. A folder includes its subfolders, a person filter shows everyone named in photos with that person, a
-  collapsed stack counts with all its photos, and Hold View Until Refreshed holds the cards' photos as it holds the grid's.
-  The new `faces.people` command lists the cards (with `scope: "visible"` for what the People view shows).
+### The People view follows the grid
+- With a folder or album chosen in the sidebar, or any filter on, the People view works from the photos the grid shows. The
+  Named People cards show only the people named in them, each counting the photos among those that the person is in, with
+  their largest face there as the picture. The Unnamed faces are only the unnamed faces in those photos, and so is a person's
+  page: their faces and More come from them. A folder includes its subfolders, a person filter shows everyone named in photos
+  with that person, a collapsed stack counts with all its photos, and Hold View Until Refreshed holds the photos as it holds the
+  grid's. Suggestions still compare against every named face in the library, so a person named only in another folder is
+  suggested in this one. More ignores a person filter for the person whose page is open, so filtering to them still shows
+  faces that might be them. The header names the source, as the grid does.
+- An empty view says why: "No people yet" when the library has no faces, else "No people in these photos" with how many
+  faces the filters hide, above the removable filter chips. A person with no named faces in these photos keeps their page and
+  says so, and More keeps searching.
+- Choosing another source or changing a filter starts the faces afresh: the selection, the faces rejected in place and an
+  open name box are cleared, and your open person's page stays open. An edit that takes photos out of the view drops only
+  those photos' faces from them.
+- The face scan looks at the photos you are working on first, the ones with named faces first among them.
+- `faces.people`, `faces.unnamed` and `faces.person` take `scope: "visible"` for what the People view shows (without it
+  they cover the whole library, as before); `faces.people` also reports how many faces the filters hide.
 
 ### Editing a photo out of the view keeps your place
 - Any edit that takes the open photo out of the view now moves on to the photo after it (the one before it at the end of the view): un-naming a face in the loupe under a person filter, removing a keyword under a keyword filter, changing a caption under a search, and the like. Before, only a rating, flag or colour label did, and the loupe kept showing a photo the filmstrip no longer had. Compare and Survey still keep showing the photo you edit, and so does View ▸ Hold View Until Refreshed.
 
 ### People: the likeliest names first
 - The Unnamed faces now start with the faces the named people recognise, the most confident suggestion first (different
-  names mixed), as Lightroom Classic's Suggested Name order does. Faces nothing is suggested for follow, look-alikes
+  names mixed). Faces nothing is suggested for follow, look-alikes
   next to each other so you can still name a group at once, and faces not looked at yet come last. The up arrow on a
   tile now confirms every suggestion at least as confident as that one in a single click. `faces.unnamed` lists them
   in the same order.
+
+### People: the tiles on screen stay put
+- The Unnamed faces are asked for again after every naming and while the scan runs, but the tiles you are looking at keep
+  their places and their order. A face you name, or whose box you remove, disappears and the tiles after it each move up one
+  place without re-sorting, so confirming from the bottom of the screen upward never moves a tile you are about to click.
+  Faces above and below the screen are put in the new order out of sight, and a face the scan finds takes its sorted place
+  there. A rejected suggestion stays a "?" in place. The list is sorted afresh when you open the People view again and when
+  you change the source or a filter.
 
 ### Flatpak updates
 - Help ▸ Check for Updates can now reach the release service and update standalone Flatpak bundles.

@@ -280,7 +280,11 @@ Turning recognition on starts a scan of the whole library, once, in the backgrou
   face boxes (marked "Detected by YuNet", so a manual Detect Faces replaces them), embedded in the same pass. Photos are
   searched once: `face-scanned.bin` in the library folder remembers which, so a photo whose boxes you remove is not boxed
   again. These boxes are LightCraft's own bookkeeping: not an undo step, never written to a sidecar.
-- Photos you have named faces in go first, then the rest. Raw files are read through the camera's embedded preview (much
+- **The photos you are working on go first.** The queue puts the People view's photos (the source and filters the grid shows) that
+  still need searching or embedding first, those with named faces first among them; then the same order for the rest of
+  the library: photos with named faces, then the others, and last the photos that only need searching. A change of source or
+  filter makes the queue afresh at once, so the faces of the folder you chose appear first in a large library, and a photo a
+  worker is busy with is not queued twice. Raw files are read through the camera's embedded preview (much
   faster than decoding the raw); everything else is rendered at 2048 pixels.
 - **How hard it works follows what you are doing.** The app tells the engine on every call to `faces.pump`, which is made
   about 20 times a second while there is work and a few times a minute otherwise (the window is not redrawn for it at any
@@ -316,12 +320,29 @@ does a person's page.
 **The People view's photos.** The People view works from the photos the grid shows: the source chosen in the sidebar (a
 folder includes its subfolders), every filter (the filter bar, the search and the person filter, which selects photos with
 that person named in them), the photos a held view holds, and a collapsed stack with all its photos. Photos only browsed in a
-Local folder and deleted photos are left out. The Named People cards come from `faces.people` with `scope: "visible"`: each
-card counts the photos among those that the person is in and shows their largest face among them, most photos first, then by
-name; without a scope the command covers the whole library. It also reports `hidden`, how many faces (named or unnamed) are in
-library photos the source and filters leave out. In the engine the definition is `Session::people_view_photos`.
+Local folder and deleted photos are left out. In the engine the definition is `Session::people_view_photos`. Everything
+the view lists comes from them, through commands that take `scope: "visible"` (without a scope they cover the whole
+library, as `faces.evaluate` does):
 
-**People** shows a card for each named person (their face, with the number of photos they are in on the picture) and, below
+- The Named People cards come from `faces.people`: each card counts the photos among those that the person is in and shows
+  their largest face among them, most photos first, then by name. It also reports `hidden`, how many faces (named or
+  unnamed) are in library photos the source and filters leave out. The header names the source as the grid does.
+- The Unnamed faces come from `faces.unnamed`: the unnamed faces in those photos, with `total` counted there.
+- A person's page comes from `faces.person`: their confirmed faces in those photos, and More from those photos too.
+- The background scan does those photos first (see *The background scan*).
+- Suggestions, the name box's ranking and More's scores always compare against every named face in the library, so a
+  person named only in another folder is still suggested here.
+
+An empty view says why. With no faces in the library at all: **No people yet** and where people come from. Else the source
+and filters leave none: **No people in these photos**, how many faces they hide (`hidden`), and then the filter chips,
+removable, with Clear all.
+
+Changing the source or any filter starts the faces afresh: the selection, the faces rejected in place and an open name box
+are cleared, and the Unnamed faces are sorted afresh; an open person's page stays open. An edit that takes photos out of the
+view is narrower: only those photos' faces leave the selection, the faces rejected in place and an open name box. Opening the
+People view again sorts the Unnamed faces afresh too.
+
+a line, the **Unnamed faces**: every face nobody has named in those photos, as cropped pictures. With recognition running, the faces the
 a line, the **Unnamed faces**: every face nobody has named, as cropped pictures. With recognition running, the faces the
 named ones recognise come first, the most confident suggestion first (different names mixed, ties by photo and then by
 face), each carrying its suggested name on its name strip; then the faces nothing is suggested for, faces that look alike
@@ -341,6 +362,17 @@ tile acts on all of them: type a name and Enter names every selected face, and E
 selected face its own suggestion and leaves selected faces without one alone. A box on a tile outside the selection
 names that face only and leaves the selection as it is. Each is one undo step. Selecting names nothing; there is no
 naming bar above the faces.
+
+**Tiles on screen keep their places.** The list is asked for again after every naming and, while the scan learns more faces,
+every ten seconds at most, and the suggestions change as faces are named; so the tiles you are looking at never move because
+of that. When a new list arrives, the faces whose tiles are at least partly in view keep their places and their order, the
+same number of faces as before stays above them, and every other place, above and below, is filled from the new order, leaving
+out the faces kept in view. A face that leaves (named, or its box removed) just disappears and the tiles after it each move up
+one place, without re-sorting, so confirming from the bottom of the screen upward never moves a tile you are about to click. A
+face whose suggested name was rejected stays a **?** in place. A face the scan finds takes its sorted place out of sight, never
+inside the faces in view. Scrolling does not re-sort; what scrolls into view has already been put in its place. The subtitle
+under **Unnamed faces** names only the order the list really is in: the likeliest names first when any face has a suggestion,
+look-alikes next to each other when some faces have none.
 
 Click the name under a person's card to rename them in place: the shared name box opens there with the name selected
 and offers the people already named (no face to rank them by, so no suggestions). A name nobody has renames every face
@@ -365,19 +397,34 @@ by its own box.
 
 Putting the Unnamed faces in confidence order scores every embedded unnamed face in scope against every named person
 (the mean of the two closest faces of each person, as the name box ranks them), on every core, whether or not the face is
-listed: the work is unnamed faces times named faces times 512 numbers. Measured in a release build on a 32-thread
-machine with synthetic embeddings (`cargo test --release -p lightcraft-engine --lib face_unnamed_cost -- --ignored
---nocapture`), one `faces.unnamed` call took:
+listed: the work is unnamed faces times named faces times 512 numbers. Measured in a release build with synthetic
+embeddings (`cargo test --release -p lightcraft-engine --lib face_unnamed_cost -- --ignored --nocapture`;
+`RAYON_NUM_THREADS` sets the thread count), the first `faces.unnamed` call took:
 
-| Unnamed faces | Named faces (people) | Time |
-|---|---|---|
-| 10,000 | 3,000 (300) | 0.42 s |
-| 30,000 | 3,000 (300) | 0.80 s |
-| 60,000 | 3,000 (300) | 1.9 s |
-| 30,000 | 6,000 (600) | 2.2 s |
+| Unnamed faces | Named faces (people) | 32 threads (idle desktop) | 8 threads | 4 threads |
+|---|---|---|---|---|
+| 10,000 | 3,000 (300) | 0.42 s | 0.34 s | 0.55 s |
+| 30,000 | 3,000 (300) | 0.80 s | 0.93 s | 1.5 s |
+| 60,000 | 3,000 (300) | 1.9 s | 2.1 s | 3.2 s |
+| 30,000 | 6,000 (600) | 2.2 s | 2.8 s | 5.9 s |
 
-The look-alike chain over the faces without a suggestion is capped at 1,500 faces, so it adds a fixed cost. The People
-view asks for the list when it opens and when something changes, not every frame.
+The 8 and 4 thread columns were measured on the same 32-thread machine while other builds were running, so they overstate
+a quiet laptop with that many cores somewhat; a 4-core laptop that is busy will be no faster than the last column. The
+look-alike chain over the faces without a suggestion is capped at 1,500 faces and is a pass over every pair of them (a
+fixed cost on one core, not in the table).
+
+This work runs on the UI thread, and it is the reason the order is kept between calls:
+
+- Each embedded unnamed face's suggestion is remembered, and used again while the named faces (who, in which photo and
+  region, and the model) and the face's own box and rejections are the same. Asked again with nothing changed, or after the
+  scan has embedded more faces, only the new faces are scored: the repeat calls of the 60,000 face case took 60 to 120 ms
+  (the listing and fingerprints; nothing scored). The look-alike order is remembered while the faces without a suggestion are
+  the same faces.
+- Naming a face changes the named faces, so the next call scores every face again: one full pass, the time in the table.
+  Narrowing the source or filters (the point of the People view following the grid) is what keeps that pass small.
+- While the scan runs and learns faces, the list is asked for again every ten seconds at most, not every three.
+- Scoring on a worker thread, under an activity row, with the old order shown meanwhile, is not done: a first open with tens
+  of thousands of faces in scope waits for the pass in the table.
 
 ### A person's page
 
@@ -399,6 +446,15 @@ without this explicit action.
 **Show photos** puts their photos in the grid; **‹ People** or Escape goes back. "More" only holds faces the scan has
 already embedded, so it fills in as the scan goes; it shows faces scoring above four fifths of the model's suggestion bar,
 since you look at each one before anything is named.
+
+The page follows the People view's photos too (`faces.person` with `scope: "visible"`): the faces named as this person and the
+count are those in those photos, and More looks for them in those photos. More ignores a person filter that names this same
+person (compared trimmed and ignoring capitalization), so filtering to Sasha and opening her page still shows faces that
+might be her; every other filter, and a person filter for anyone else, still applies (filtering to Bob on Ann's page finds
+Ann among Bob's photos). More's scores compare against all of the person's named faces in the library, not only the ones in
+those photos. A person with named faces in the library but none in these photos keeps their page open: the confirmed
+section says "{name} has no named faces in these photos." and More goes on searching these photos for them. The page stays
+open when the source or a filter changes. A person nobody has named has no page: "No faces by that name".
 
 ### Rejecting a name
 

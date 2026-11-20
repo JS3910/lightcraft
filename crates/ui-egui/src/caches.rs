@@ -153,7 +153,7 @@ impl Caches {
     }
     /// The Named People cards: `faces.people` for the People view's photos (`Session::people_view_photos`), with photo
     /// counts. Worked out again when the catalog or the photos the grid shows change.
-    pub fn people(&mut self, session: &mut lightcraft_engine::Session) -> std::sync::Arc<Vec<lightcraft_catalog::Person>> {
+    pub fn people(&mut self, session: &mut lightcraft_engine::Session) -> std::sync::Arc<Cards> {
         let key = session.visible_shared().0;
         let revision = session.catalog.revision;
         match &self.people {
@@ -365,15 +365,23 @@ impl Caches {
     }
 }
 
+/// The Named People cards of the People view's photos, and how many faces (named or not) the source and filters leave out.
+#[derive(Clone, Debug, Default)]
+pub struct Cards {
+    pub people: Vec<lightcraft_catalog::Person>,
+    pub hidden: usize,
+}
+
 /// What `faces.people {scope: "visible"}` lists, as cards.
-fn cards(session: &mut lightcraft_engine::Session) -> Vec<lightcraft_catalog::Person> {
-    let Ok(r) = session.execute("faces.people", &serde_json::json!({"scope": "visible"})) else { return Vec::new() };
+fn cards(session: &mut lightcraft_engine::Session) -> Cards {
+    let Ok(r) = session.execute("faces.people", &serde_json::json!({"scope": "visible"})) else { return Cards::default() };
     let rect = |v: &serde_json::Value| {
         let n = |k: &str| v.get(k).and_then(serde_json::Value::as_f64);
         Some(lightcraft_meta::Rect { x0: n("x0")?, y0: n("y0")?, x1: n("x1")?, y1: n("y1")? })
     };
     let list = r.get("people").and_then(serde_json::Value::as_array).map(Vec::as_slice).unwrap_or_default();
-    list.iter()
+    let people = list
+        .iter()
         .filter_map(|c| {
             Some(lightcraft_catalog::Person {
                 name: c.get("name")?.as_str()?.to_string(),
@@ -382,7 +390,9 @@ fn cards(session: &mut lightcraft_engine::Session) -> Vec<lightcraft_catalog::Pe
                 face: rect(c.get("face")?)?,
             })
         })
-        .collect()
+        .collect();
+    let hidden = r.get("hidden").and_then(serde_json::Value::as_u64).map_or(0, |n| usize::try_from(n).unwrap_or(0));
+    Cards { people, hidden }
 }
 
 #[cfg(test)]

@@ -87,6 +87,7 @@ mod open_lightroom;
 pub(super) mod panels;
 mod people_follow_grid;
 mod people_scroll;
+mod people_view_scope;
 mod person_tiles;
 mod preset_favorites;
 mod preset_import;

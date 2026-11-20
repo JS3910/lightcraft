@@ -16,6 +16,8 @@ use crate::widgets::register;
 
 const PAD: f32 = 20.0;
 const SECTION_H: f32 = 56.0;
+/// The line that says a person has no named faces in these photos.
+const NOTE_H: f32 = 30.0;
 
 /// One face: which photo, which of its regions, the box to show it by, and (for the "More" faces) how alike.
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +33,8 @@ pub struct Face {
 pub struct PersonPage {
     pub name: String,
     pub total: usize,
+    /// Faces by this name in the whole library, in the People view's photos or not.
+    pub in_library: usize,
     pub confirmed: Vec<Face>,
     pub more: Vec<Face>,
     /// Recognition is on, so an empty "More" means "none yet" and not "not looking".
@@ -82,6 +86,31 @@ impl Rejected {
         }
     }
 
+    /// Forget the faces that are not in `present` (named, removed, or gone from the People view with their photo): the
+    /// later ones move up in the places they had.
+    pub fn retain_present(&mut self, present: &std::collections::HashSet<(u64, usize)>) {
+        let gone: Vec<usize> = self.faces.iter().filter(|(f, _)| !present.contains(&(f.photo, f.index))).map(|(_, at)| *at).collect();
+        if gone.is_empty() {
+            return;
+        }
+        self.faces.retain(|(f, _)| present.contains(&(f.photo, f.index)));
+        for (_, at) in &mut self.faces {
+            *at = at.saturating_sub(gone.iter().filter(|g| **g < *at).count());
+        }
+    }
+
+    /// Forget the faces whose photo is not in `photos` (an edit took it out of the People view).
+    pub fn retain_photos(&mut self, photos: &std::collections::HashSet<u64>) {
+        let gone: Vec<usize> = self.faces.iter().filter(|(f, _)| !photos.contains(&f.photo)).map(|(_, at)| *at).collect();
+        if gone.is_empty() {
+            return;
+        }
+        self.faces.retain(|(f, _)| photos.contains(&f.photo));
+        for (_, at) in &mut self.faces {
+            *at = at.saturating_sub(gone.iter().filter(|g| **g < *at).count());
+        }
+    }
+
     pub fn contains(&self, key: (u64, usize)) -> bool {
         self.faces.iter().any(|(f, _)| (f.photo, f.index) == key)
     }
@@ -123,6 +152,7 @@ pub fn parse(v: &Value) -> PersonPage {
     PersonPage {
         name: v["name"].as_str().unwrap_or("").to_string(),
         total: v["total"].as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(0)),
+        in_library: v["inLibrary"].as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(0)),
         confirmed: faces("confirmed"),
         more: faces("more"),
         ready: v["ready"] == true,
@@ -141,7 +171,7 @@ fn page_for(app: &mut LightcraftApp, name: &str, now: f64) -> Arc<PersonPage> {
     {
         return page.clone();
     }
-    let v = app.session.execute("faces.person", &json!({"name": name})).unwrap_or(Value::Null);
+    let v = app.session.execute("faces.person", &json!({"name": name, "scope": "visible"})).unwrap_or(Value::Null);
     let page = Arc::new(parse(&v));
     app.caches.person_page = Some((name.to_string(), rev, indexed, now, page.clone()));
     page
@@ -296,7 +326,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         });
     });
     ui.add_space(6.0);
-    if page.total == 0 && app.ui.rejected_confirmed.is_empty() {
+    // (a person with faces in the library but none in the People view's photos has a page, saying so)
+    if page.total == 0 && page.in_library == 0 && app.ui.rejected_confirmed.is_empty() {
         super::empty_message(
             ui,
             ui.available_rect_before_wrap(),
@@ -340,7 +371,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         let row_h = tile_h + super::people::TILE_GAP;
         let confirmed_rows = lists.confirmed.len().div_ceil(cols);
         let more_rows = more.len().div_ceil(cols);
-        let more_top = PAD + confirmed_rows as f32 * row_h + 12.0;
+        // no faces of theirs in these photos: a line says so where the faces would be
+        let none_here = lists.confirmed.is_empty();
+        let more_top = PAD + if none_here { NOTE_H } else { confirmed_rows as f32 * row_h } + 12.0;
         let total_h = more_top + SECTION_H + more_rows as f32 * row_h + PAD;
         let (area, _) = ui.allocate_exact_size(vec2(width, total_h), Sense::hover());
         // the scroll area gives the viewport relative to its content; the grids are laid out on screen, so it goes there too
@@ -348,6 +381,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         let layout = Layout { name: &shown_name, viewport: viewport.translate(area.min.to_vec2()), cols, edge, ppp };
         let origin = |top: f32| area.min + vec2(PAD, top);
         let confirmed: Vec<&Face> = lists.confirmed.iter().collect();
+        if none_here {
+            let line = crate::i18n::tr_format!("{name} has no named faces in these photos.", name = shown_name);
+            ui.painter().text(pos2(area.left() + PAD, area.top() + PAD + NOTE_H / 2.0), Align2::LEFT_CENTER, line, t.font(13.0), t.text_dim);
+        }
         let mut shown = draw_grid(app, ui, &Grid { gallery: &confirmed_gallery, faces: &confirmed, entries: confirmed_entries, origin: origin(PAD), layout: &layout }, &mut hit);
         // the "More" section
         let heading = pos2(area.left() + PAD, area.top() + more_top + 14.0);

@@ -79,6 +79,18 @@ fn time(unnamed: usize, named: usize) {
         people.len(),
         r["faces"].as_array().unwrap().len()
     );
+    // asked again with nothing changed (the scan finding no faces, a refresh): what was worked out is reused
+    let started = Instant::now();
+    s.execute("faces.unnamed", &json!({})).unwrap();
+    let again = started.elapsed();
+    // a naming (of the first face listed) changes the named faces: one full scoring pass again
+    let first = r["faces"].as_array().unwrap().first().map(|f| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap()));
+    let (photo, index) = first.expect("some face is listed");
+    s.execute("faces.setName", &json!({"id": photo, "index": index, "name": "Person 0"})).unwrap();
+    let started = Instant::now();
+    s.execute("faces.unnamed", &json!({})).unwrap();
+    let after_naming = started.elapsed();
+    println!("    {} threads; asked again unchanged: {again:.2?}; after one naming: {after_naming:.2?}", rayon::current_num_threads());
     let _ = std::fs::remove_dir_all(&d);
 }
 
