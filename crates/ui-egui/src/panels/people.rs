@@ -123,7 +123,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     clear_selection_on_escape(app, ui.ctx());
     let unnamed = super::unnamed::faces(app, now);
     app.ui.rejected_unnamed.visit("", ui.ctx().cumulative_pass_nr());
-    if people.is_empty() && unnamed.faces.is_empty() {
+    if people.is_empty() && unnamed.faces.is_empty() && !super::unnamed::waiting(&unnamed) {
         empty_view(app, ui, &chips, cards.hidden);
         return;
     }

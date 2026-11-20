@@ -35,6 +35,8 @@ pub struct Unnamed {
     pub look_alike: bool,
     /// Recognition is running.
     pub ready: bool,
+    /// The engine is still putting the faces in order (on a thread of its own): the list is the best order it has now.
+    pub ordering: bool,
 }
 
 fn rect_of(v: &Value) -> Option<lightcraft_geom::Rect> {
@@ -57,7 +59,14 @@ pub fn parse(v: &Value) -> Unnamed {
         faces: v["faces"].as_array().map(|a| a.iter().filter_map(face_of).collect()).unwrap_or_default(),
         look_alike: v["lookAlike"] == true,
         ready: v["ready"] == true,
+        ordering: v["ordering"] == true,
     }
+}
+
+/// A list that is only a status: the order is still being worked out and no list was on screen to keep places in, so the
+/// section says so instead of showing tiles that would jump when the order comes in.
+pub fn waiting(list: &Unnamed) -> bool {
+    list.ordering && list.faces.is_empty() && list.total > 0
 }
 
 /// The subtitle for a non-empty list: it names only the order the list is really in (the likeliest names first when any
@@ -112,24 +121,48 @@ pub fn keep_places(old: &Unnamed, new: Unnamed, shown: Shown) -> Unnamed {
     Unnamed { faces, ..new }
 }
 
-/// The unnamed faces of the People view's photos, asked for again when the catalog changed, or (while the scan runs and
-/// learns more faces) at most every [`SCAN_REFRESH`] seconds. What a new list puts on the screen is [`keep_places`]; a
-/// list is sorted afresh (nothing kept) when there is none, which is when the People view is opened and when the source
-/// or a filter changes ([`super::people::follow_view`] drops it then).
+/// The list to show when the engine answered `asked` while `old` was the list on screen (none: no list yet; a [`waiting`]
+/// list counts as none):
+/// - a list on screen keeps the tiles in view in their places ([`keep_places`]), whether the answer is the final order or
+///   the best order there is while the rest is worked out;
+/// - with no list on screen the answer is shown when its order is final (sorted afresh), and while it is not, only as a
+///   status: the tiles would jump when the order came in.
+fn place(old: Option<&Unnamed>, shown: Option<Shown>, mut asked: Unnamed) -> Unnamed {
+    match old.filter(|old| !waiting(old)) {
+        Some(old) => match shown {
+            Some(shown) => keep_places(old, asked, shown),
+            None => asked,
+        },
+        None if asked.ordering => {
+            asked.faces.clear();
+            asked
+        }
+        None => asked,
+    }
+}
+
+/// The unnamed faces of the People view's photos, asked for again when the catalog changed, when the engine took in a
+/// result of the thread that puts them in order (`faces.pump` counts them), or (while the scan runs and learns more faces)
+/// at most every [`SCAN_REFRESH`] seconds. The question does not wait for the order: it answers at once with the best order
+/// there is and says when more is coming, so a click never waits for the scoring.
+///
+/// What a new list puts on the screen is [`keep_places`]; a list is sorted afresh (nothing kept) when there is none, which
+/// is when the People view is opened and when the source or a filter changes ([`super::people::follow_view`] drops it
+/// then). With no list on screen and an order that is not complete yet, there are no tiles, only a status ([`waiting`]):
+/// tiles shown now would jump when the order comes in.
 pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
-    let (rev, indexed) = (app.session.catalog.revision, app.caches.faces_indexed);
+    let (rev, indexed, arranged) = (app.session.catalog.revision, app.caches.faces_indexed, app.caches.faces_arranged);
     if let Some((r, i, at, list)) = &app.caches.unnamed
         && *r == rev
+        && app.caches.unnamed_arranged == arranged
         && (*i == indexed || now - *at < SCAN_REFRESH)
     {
         return list.clone();
     }
-    let v = app.session.execute("faces.unnamed", &json!({"scope": "visible"})).unwrap_or(Value::Null);
-    let asked = parse(&v);
-    let list = Arc::new(match (&app.caches.unnamed, app.caches.unnamed_shown) {
-        (Some((_, _, _, old)), Some(shown)) => keep_places(old, asked, shown),
-        _ => asked,
-    });
+    let v = app.session.execute("faces.unnamed", &json!({"scope": "visible", "wait": false})).unwrap_or(Value::Null);
+    let old = app.caches.unnamed.as_ref().map(|(_, _, _, old)| old.as_ref());
+    let list = Arc::new(place(old, app.caches.unnamed_shown, parse(&v)));
+    app.caches.unnamed_arranged = arranged;
     // what was selected, rejected in place or being named and has since been named (or removed, or left the view with its
     // photo) is no longer so
     let present: std::collections::HashSet<(u64, usize)> = list.faces.iter().map(|f| (f.photo, f.index)).collect();
@@ -140,6 +173,22 @@ pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
     }
     app.caches.unnamed = Some((rev, indexed, now, list.clone()));
     list
+}
+
+/// What the section says under its heading: a status while the faces are being put in order and there is no list to show,
+/// else why there are no faces, else how the list is ordered and how to use it.
+fn subtitle(list: &Unnamed, pending: u64) -> String {
+    if waiting(list) {
+        crate::i18n::tr("Putting the faces in order…").to_string()
+    } else if !list.ready && list.faces.is_empty() {
+        crate::i18n::tr("Turn on face recognition in Settings to find the faces in your photos.").to_string()
+    } else if list.faces.is_empty() && pending > 0 {
+        crate::i18n::tr_format!("Looking through your photos… {n} left", n = pending)
+    } else if list.faces.is_empty() {
+        crate::i18n::tr("No unnamed faces. Faces found in your photos appear here until you name them.").to_string()
+    } else {
+        order_sentence(list).to_string()
+    }
 }
 
 /// The heading of the section, at `at`, and what it says about where the faces come from.
@@ -153,15 +202,7 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
     let p = ui.painter();
     p.text(at, Align2::LEFT_CENTER, crate::i18n::tr("Unnamed faces"), t.semibold(15.0), t.text);
     p.text(pos2(right, at.y), Align2::RIGHT_CENTER, count, t.font(13.0), t.text_dim);
-    let sub = if !list.ready && list.faces.is_empty() {
-        crate::i18n::tr("Turn on face recognition in Settings to find the faces in your photos.").to_string()
-    } else if list.faces.is_empty() && app.caches.faces_pending > 0 {
-        crate::i18n::tr_format!("Looking through your photos… {n} left", n = app.caches.faces_pending)
-    } else if list.faces.is_empty() {
-        crate::i18n::tr("No unnamed faces. Faces found in your photos appear here until you name them.").to_string()
-    } else {
-        order_sentence(list).to_string()
-    };
+    let sub = subtitle(list, app.caches.faces_pending);
     p.text(pos2(at.x, at.y + 24.0), Align2::LEFT_CENTER, sub, t.font(12.0), t.text_dim);
     if !list.ready && list.faces.is_empty() {
         let r = Rect::from_min_size(pos2(at.x, at.y + 38.0), vec2(120.0, 22.0));
@@ -266,7 +307,7 @@ mod tests {
 
     #[test]
     fn the_subtitle_names_only_the_order_the_list_is_in() {
-        let list = |look_alike, faces| Unnamed { total: 2, faces, look_alike, ready: true };
+        let list = |look_alike, faces| Unnamed { total: 2, faces, look_alike, ready: true, ordering: false };
         let both = order_sentence(&list(true, vec![face(1, 0, Some("Jane")), face(1, 1, None), face(1, 2, None)]));
         assert!(both.starts_with("The likeliest names come first, then faces that look alike"), "{both}");
         let only_suggested = order_sentence(&list(false, vec![face(1, 0, Some("Jane")), face(1, 1, Some("Bob"))]));
@@ -301,11 +342,43 @@ mod tests {
 
     /// A list of faces `(photo, 0)` for the photos given.
     fn list(photos: &[u64]) -> Unnamed {
-        Unnamed { total: photos.len(), faces: photos.iter().map(|p| face(*p, 0, None)).collect(), look_alike: false, ready: true }
+        Unnamed { total: photos.len(), faces: photos.iter().map(|p| face(*p, 0, None)).collect(), look_alike: false, ready: true, ordering: false }
     }
 
     fn order(l: &Unnamed) -> Vec<u64> {
         l.faces.iter().map(|f| f.photo).collect()
+    }
+
+    /// `list(photos)` the engine says is still being put in order.
+    fn ordering(photos: &[u64]) -> Unnamed {
+        Unnamed { ordering: true, ..list(photos) }
+    }
+
+    #[test]
+    fn with_no_list_on_screen_an_order_that_is_not_final_is_a_status_and_never_tiles() {
+        let now = place(None, None, ordering(&[3, 1, 2]));
+        assert!(waiting(&now) && now.faces.is_empty() && now.total == 3, "{now:?}");
+        assert_eq!(subtitle(&now, 0), "Putting the faces in order…");
+        // still waiting for the next answer: a status list is not a list on screen
+        let now = place(Some(&now), Some(Shown { above: 0, on_screen: 0 }), ordering(&[3, 1, 2]));
+        assert!(waiting(&now), "{now:?}");
+        // the final order: tiles, sorted afresh
+        let now = place(Some(&now), None, list(&[3, 1, 2]));
+        assert!(!waiting(&now) && order(&now) == [3, 1, 2], "{now:?}");
+        // nothing to show is not a status
+        assert!(!waiting(&place(None, None, Unnamed { ordering: true, ..list(&[]) })));
+    }
+
+    #[test]
+    fn with_a_list_on_screen_the_best_order_so_far_is_merged_keeping_the_tiles_in_view() {
+        let old = list(&[1, 2, 3, 4, 5, 6]);
+        // 3 is named meanwhile; the order of the rest is still the old one: 3's tile goes, the tiles after it move up
+        let now = place(Some(&old), Some(Shown { above: 1, on_screen: 3 }), ordering(&[1, 2, 4, 5, 6]));
+        assert!(now.ordering && !waiting(&now), "{now:?}");
+        assert_eq!(order(&now), [1, 2, 4, 5, 6]);
+        // the final order arrives while 2 4 5 are in view
+        let done = place(Some(&now), Some(Shown { above: 1, on_screen: 3 }), list(&[6, 5, 4, 2, 1]));
+        assert_eq!(order(&done), [6, 2, 4, 5, 1], "the faces in view kept their places: {done:?}");
     }
 
     #[test]

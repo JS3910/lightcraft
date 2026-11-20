@@ -652,6 +652,12 @@ pub struct Caches {
     pub faces_active: bool,
     pub faces_indexed: u64,
     pub faces_pending: u64,
+    /// How many results of the thread that puts the Unnamed faces in order the engine has taken in (`faces.pump`), and the
+    /// count the Unnamed faces list was last asked at: a result that came in is a reason to ask again.
+    pub faces_arranged: u64,
+    pub unnamed_arranged: u64,
+    /// Whether that thread is still at work (the pump looks again soon, so its result is taken in at once).
+    pub faces_ordering: bool,
     pub faces_next_pump: f64,
     /// When to ask the focus-point reader again (`focus_scan::pump`).
     pub focus_next_pump: f64,

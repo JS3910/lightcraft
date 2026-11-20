@@ -16,6 +16,7 @@ mod dcp;
 mod dcp_corpus;
 mod denoise;
 mod export;
+mod face_arrange_bg;
 mod face_models;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) mod face_recognize;

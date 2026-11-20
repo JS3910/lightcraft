@@ -676,6 +676,8 @@ pub fn pump_background(app: &mut LightcraftApp, ctx: &egui::Context, now: f64) {
     app.caches.faces_active = v["active"] == true;
     app.caches.faces_indexed = v["indexedFaces"].as_u64().unwrap_or(0);
     app.caches.faces_pending = v["pendingPhotos"].as_u64().unwrap_or(0);
+    app.caches.faces_arranged = v["arranged"].as_u64().unwrap_or(0);
+    app.caches.faces_ordering = v["ordering"] == true;
     // the progress bar's whole: the most photos that were left at once since the scan last finished (the engine keeps
     // it, so Settings and the activity stack agree)
     app.caches.faces_peak = v["peak"].as_u64().unwrap_or(0);
@@ -683,7 +685,7 @@ pub fn pump_background(app: &mut LightcraftApp, ctx: &egui::Context, now: f64) {
     // asks to be called again in 50 ms (the progress in Settings, the next photos for the workers); with recognition on and
     // nothing to do it looks again every few seconds (a few wake-ups a minute); with recognition off it asks for nothing
     // (and is called on every frame, which is cheap: whatever makes a frame, such as switching recognition on, is seen at once).
-    let busy = app.caches.faces_active && (app.caches.faces_pending > 0 || v["inFlight"].as_u64().unwrap_or(0) > 0);
+    let busy = app.caches.faces_active && (app.caches.faces_pending > 0 || v["inFlight"].as_u64().unwrap_or(0) > 0 || app.caches.faces_ordering);
     let wait = match (busy, app.caches.faces_active) {
         (true, _) => Some(0.05),
         (false, true) => Some(5.0),
