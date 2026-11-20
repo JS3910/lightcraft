@@ -479,6 +479,7 @@ Reading the tables:
   named faces grouped once, the sort, and the answer for the 3,000 faces listed. It is 17 to 87 ms for 10,000 to 60,000 unnamed
   faces (under five frames), about what asking again with nothing changed always cost. A view of several hundred thousand
   unnamed faces is where it would be felt, and where the next step would be keeping the fingerprints between calls.
+- Measured again after the review fixes (release, 4 and 8 threads, a quieter machine): the first arrangement took 0.3 to 1.6 s with 8 threads and 0.6 to 4.0 s with 4, a naming 35 to 92 ms until complete, and `faces.unnamed` on the calling thread 14 to 45 ms. More on a person's page (`faces.person`, not changed here, still on the calling thread) took 4 to 28 ms for a person of 11 faces at the same sizes.
 - With 4 threads a first arrangement of 30,000 faces against 6,000 named takes 14 to 19 s in the background, the one case where
   the Unnamed section shows its status for long; narrowing the source or the filters (the point of the People view following
   the grid) keeps it small.
