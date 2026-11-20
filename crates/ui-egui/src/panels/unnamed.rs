@@ -97,7 +97,7 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
     } else if list.faces.is_empty() {
         crate::i18n::tr("No unnamed faces. Faces found in your photos appear here until you name them.").to_string()
     } else if list.ordered {
-        crate::i18n::tr("Faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones).").to_string()
+        crate::i18n::tr("The likeliest names come first, then faces that look alike are next to each other. Click to select, Shift-click for a range; click the name under a face to name it (or the selected ones).").to_string()
     } else {
         crate::i18n::tr("Click faces to select them, Shift-click for a range; click the name under a face to name it (or the selected ones).")
             .to_string()
