@@ -616,7 +616,9 @@ mod imp {
         collect(s);
         let budget = Duration::from_millis(p.get("budgetMs").and_then(Value::as_u64).unwrap_or(200).min(600_000));
         let first: Vec<PhotoId> = super::super::photo_ids(p, C)?.unwrap_or_default();
-        let todo = pending(s, &first, &Default::default(), false);
+        // the photos the grid shows are done before the others, as the background scan does them
+        let view: std::collections::HashSet<PhotoId> = s.people_view_photos().into_iter().collect();
+        let todo = pending(s, &first, &view, false);
         let started = Instant::now();
         let (mut embedded, mut failed, mut done) = (0, 0, 0);
         for id in &todo {
@@ -1551,7 +1553,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Index Faces",
             [],
             None,
-            "{budgetMs?: 200, ids?: [photo ids to do first]} → {embedded, photosDone, pendingPhotos, indexedFaces, ms} — embed the faces in the library with the chosen recognition model, as many photos as fit in the time (at least one); call again until `pendingPhotos` is 0. `budgetMs: 0` only reports",
+            "{budgetMs?: 200, ids?: [photo ids to do first]} → {embedded, photosDone, pendingPhotos, indexedFaces, ms} — embed the faces in the library with the chosen recognition model, as many photos as fit in the time (at least one), the photos the grid shows first; call again until `pendingPhotos` is 0. `budgetMs: 0` only reports",
             super::always,
             imp::index
         ),

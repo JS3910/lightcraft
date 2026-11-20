@@ -284,7 +284,7 @@ Turning recognition on starts a scan of the whole library, once, in the backgrou
   still need searching or embedding first, those with named faces first among them; then the same order for the rest of
   the library: photos with named faces, then the others, and last the photos that only need searching. A change of source or
   filter makes the queue afresh at once, so the faces of the folder you chose appear first in a large library, and a photo a
-  worker is busy with is not queued twice. Raw files are read through the camera's embedded preview (much
+  worker is busy with is not queued twice. `faces.index`, which embeds as many photos as fit in a time budget, takes them in the same order. Raw files are read through the camera's embedded preview (much
   faster than decoding the raw); everything else is rendered at 2048 pixels.
 - **How hard it works follows what you are doing.** The app tells the engine on every call to `faces.pump`, which is made
   about 20 times a second while there is work and a few times a minute otherwise (the window is not redrawn for it at any
