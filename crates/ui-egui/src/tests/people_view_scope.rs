@@ -124,6 +124,11 @@ fn a_library_without_faces_says_no_people_yet_and_never_a_hidden_line() {
     h.settle(T);
     run(&mut h, "view.people", json!({}));
     assert!(said(&h, "No people yet"), "{:?}", h.painted_text());
+    assert!(
+        said(&h, "Face names written to XMP by Lightroom and other apps show up here, and faces found in your photos can be named."),
+        "the existing explanation: {:?}",
+        h.painted_text()
+    );
     assert!(!h.painted_text().iter().any(|t| t.contains("hidden by the current filters")), "{:?}", h.painted_text());
     // an album of nothing in a library without faces is still "no people yet": nothing is hidden
     let album = album_of(&mut h, "Empty", &[]);
