@@ -197,6 +197,8 @@ pub struct Interaction {
     /// photo shows was fitted by Constrain Crop, and the final commit starts again from the original
     /// crop, so Auto Sync carries the edit and not the active photo's fitted crop.
     pub crop_edited: bool,
+    /// The view and catalog revision when the drag began: what [`cmd::library::move_on_if_left`] needs when it ends.
+    pub(crate) view: cmd::library::ViewBefore,
 }
 
 /// The most photos an edit may touch for the view to follow it photo by photo; a larger edit is worked out whole.
@@ -593,36 +595,49 @@ impl Session {
         let params = if params.is_null() { &empty } else { params };
         // the one rule of an open photo the view no longer has (see `move_on_if_left`), for every command
         let before = (self.depth == 0).then(|| cmd::library::watch_active(self, params)).flatten();
-        let r = self.run_command(id, spec.journal.then_some(params), |s| (spec.run)(s, params)).map_err(|e| match e {
+        self.run_command(id, spec.journal.then_some(params), before, |s| (spec.run)(s, params)).map_err(|e| match e {
             // a shared parameter check ([`Session::targets`]) names the command it ran for
             EngineError::BadParams { cmd, msg } if cmd.is_empty() => EngineError::BadParams { cmd: id.to_string(), msg },
             e => e,
-        });
-        if r.is_ok() {
-            cmd::library::move_on_if_left(self, before);
-        }
-        r
+        })
     }
 
     /// Run `f` as command `id` with what [`Session::execute`] does around every command: the
     /// panic guard, auto versions, XMP sidecar auto-write and the durable save (a failed save is
     /// `NotSaved`). Not journaled. The app's import task commits its batches this way.
     pub fn execute_fn(&mut self, id: &str, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
-        self.run_command(id, None, f)
+        let before = (self.depth == 0).then(|| cmd::library::watch_active(self, &Value::Null)).flatten();
+        self.run_command(id, None, before, f)
     }
 
-    fn run_command(&mut self, id: &str, journal: Option<&Value>, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
+    /// The photo the selection left: it is the previous photo, and its settings keep an automatic version.
+    fn note_left(&mut self, was_active: Option<PhotoId>) {
+        if let Some(left) = was_active
+            && self.active() != was_active
+        {
+            self.previous_active = was_active;
+            self.auto_version(left);
+        }
+    }
+
+    fn run_command(
+        &mut self,
+        id: &str,
+        journal: Option<&Value>,
+        watch: Option<cmd::library::ViewBefore>,
+        f: impl FnOnce(&mut Session) -> Result<Value>,
+    ) -> Result<Value> {
         let log_start = self.pending_log.len();
         let was_active = self.active();
         self.depth += 1;
         // last-resort guard: a panic in a command is that command's error, not a crash
         let r = guard::catch(&format!("`{id}`"), || f(self)).unwrap_or_else(|e| Err(EngineError::Other(e)));
         self.depth -= 1;
-        if self.depth == 0 && was_active.is_some() && self.active() != was_active {
-            self.previous_active = was_active;
-            if let Some(left) = was_active {
-                self.auto_version(left);
-            }
+        if self.depth == 0 {
+            // whatever the command returned: its change is in the catalog (a failed save keeps it), so the view
+            // it took the open photo out of is gone and the selection goes on from there
+            cmd::library::move_on_if_left(self, watch);
+            self.note_left(was_active);
         }
         if r.is_ok()
             && let Some(params) = journal
@@ -1147,12 +1162,26 @@ impl Session {
             self.apply_silent(Op::SetDevelop { id, settings: Arc::new(on), label: label.into(), edited: None })?;
         }
         let original = self.develop_of(id).unwrap_or_default();
-        self.interaction = Some(Interaction { label: label.into(), photo: id, original, crop_edited: false });
+        let (_, view) = self.visible_shared();
+        let view = (id, view, self.catalog.revision);
+        self.interaction = Some(Interaction { label: label.into(), photo: id, original, crop_edited: false, view });
         Ok(())
     }
 
-    /// Commit the interaction as one undo step (no-op if nothing changed).
+    /// Commit the interaction as one undo step (no-op if nothing changed). Outside a command, an edit that took the
+    /// photo out of the view during the drag moves on now ([`cmd::library::move_on_if_left`]), as it would have after
+    /// a command.
     pub fn end_interaction(&mut self) -> Result<()> {
+        let watch = self.interaction.as_ref().map(|i| i.view.clone());
+        let was_active = self.active();
+        self.commit_interaction()?;
+        if self.depth == 0 && cmd::library::move_on_if_left(self, watch) {
+            self.note_left(was_active);
+        }
+        Ok(())
+    }
+
+    fn commit_interaction(&mut self) -> Result<()> {
         let Some(i) = self.interaction.take() else { return Ok(()) };
         let Some(cur) = self.develop_of(i.photo) else { return Ok(()) };
         if *cur == *i.original {

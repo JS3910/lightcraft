@@ -11,7 +11,7 @@ mod filters;
 mod gps;
 mod import;
 mod selection;
-pub(crate) use selection::{move_on_if_left, watch_active};
+pub(crate) use selection::{ViewBefore, move_on_if_left, watch_active};
 mod specs;
 
 pub(crate) use filters::covers_other_disks;

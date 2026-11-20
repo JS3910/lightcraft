@@ -115,3 +115,51 @@ fn edits_that_leave_the_active_photo_in_the_view_change_nothing() {
     s.execute("photo.setMeta", &json!({"caption": "still here"})).unwrap();
     assert_eq!(s.selection, Selection { ids: vec![PhotoId(4), PhotoId(5)], active: Some(PhotoId(4)) });
 }
+
+#[test]
+fn the_photo_left_behind_is_the_previous_one_and_keeps_an_auto_version() {
+    let mut s = tagged();
+    open(&mut s, 4);
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.4})).unwrap();
+    s.execute("library.filter", &json!({"keyword": "cat"})).unwrap();
+    s.execute("photo.setMeta", &json!({"removeKeywords": ["cat"]})).unwrap();
+    assert_eq!(s.selection, Selection::single(PhotoId(5)));
+    assert_eq!(s.previous_active, Some(PhotoId(4)));
+    let versions = &s.catalog.photo(PhotoId(4)).unwrap().versions;
+    assert!(versions.last().is_some_and(|v| v.auto && v.settings.light.exposure == 0.4), "{versions:?}");
+}
+
+#[test]
+fn a_command_run_through_execute_fn_moves_on_too() {
+    let mut s = tagged();
+    s.execute("library.filter", &json!({"keyword": "cat"})).unwrap();
+    open(&mut s, 4);
+    s.execute_fn("photo.reload", |s| s.execute("photo.setMeta", &json!({"removeKeywords": ["cat"]}))).unwrap();
+    assert_eq!(s.selection, Selection::single(PhotoId(5)));
+}
+
+#[test]
+fn a_slider_drag_that_takes_the_photo_out_of_the_view_moves_on_when_it_ends() {
+    let mut s = tagged();
+    s.execute("library.filter", &json!({"keyword": "cat"})).unwrap();
+    open(&mut s, 4);
+    s.begin_interaction("Exposure").unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.4})).unwrap();
+    s.execute("photo.setMeta", &json!({"removeKeywords": ["cat"]})).unwrap();
+    assert_eq!(s.selection, Selection::single(PhotoId(4)), "a drag in progress keeps its photo");
+    s.end_interaction().unwrap();
+    assert_eq!(s.selection, Selection::single(PhotoId(5)));
+    assert_eq!(s.previous_active, Some(PhotoId(4)));
+}
+
+#[test]
+fn a_selection_hands_on_to_the_nearest_survivor_after_the_photo_or_else_before_it() {
+    let mut s = tagged();
+    s.execute("library.filter", &json!({"person": "Ann"})).unwrap();
+    s.execute("library.select", &json!({"ids": [3, 4, 5], "active": 4})).unwrap();
+    s.execute("faces.setName", &json!({"id": 4, "index": 0, "name": null})).unwrap();
+    assert_eq!(s.selection, Selection { ids: vec![PhotoId(3), PhotoId(5)], active: Some(PhotoId(5)) });
+    s.execute("library.select", &json!({"ids": [3, 5], "active": 5})).unwrap();
+    s.execute("faces.setName", &json!({"id": 5, "index": 0, "name": null})).unwrap();
+    assert_eq!(s.selection, Selection { ids: vec![PhotoId(3)], active: Some(PhotoId(3)) });
+}

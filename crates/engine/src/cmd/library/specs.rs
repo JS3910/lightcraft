@@ -456,7 +456,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Rating",
             ["Photo", "Set Rating"],
             None,
-            "{rating: 0..5, ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{rating: 0..5, ids?, advance?: bool} — when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| {
                 let r = crate::cmd::index_req(p, "rating", "photo.rate")
@@ -471,7 +471,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Decrease Rating",
             [],
             None,
-            "{ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{ids?, advance?: bool} — when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| { cull(s, p, |s| change_rating(s, p, -1, "Decrease Rating")) }
         ),
@@ -480,7 +480,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Increase Rating",
             [],
             None,
-            "{ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{ids?, advance?: bool} — when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| { cull(s, p, |s| change_rating(s, p, 1, "Increase Rating")) }
         ),
@@ -489,7 +489,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Flag",
             ["Photo", "Set Flag"],
             None,
-            "{flag: pick|reject|none, ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{flag: pick|reject|none, ids?, advance?: bool} — when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| {
                 let f = str_param(p, "flag").and_then(Flag::parse).ok_or_else(|| bad("photo.flag", "flag must be pick|reject|none"))?;
@@ -502,7 +502,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Cycle Flag",
             ["Photo", "Set Flag"],
             Some("`"),
-            "{ids?, advance?: bool} — each photo's own flag: unflagged -> pick -> reject -> unflagged; without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{ids?, advance?: bool} — each photo's own flag: unflagged -> pick -> reject -> unflagged; when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| {
                 cull(s, p, |s| {
@@ -519,7 +519,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Increase Flag Status",
             ["Photo", "Set Flag"],
             Some("Cmd+Up"),
-            "{ids?, advance?: bool} — reject -> unflagged -> pick (stops at pick); without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{ids?, advance?: bool} — reject -> unflagged -> pick (stops at pick); when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| { cull(s, p, |s| change_flag(s, p, "Increase Flag Status", |f| if f == Flag::Reject { Flag::None } else { Flag::Pick })) }
         ),
@@ -528,7 +528,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Decrease Flag Status",
             ["Photo", "Set Flag"],
             Some("Cmd+Down"),
-            "{ids?, advance?: bool} — pick -> unflagged -> reject (stops at reject); without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{ids?, advance?: bool} — pick -> unflagged -> reject (stops at reject); when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| { cull(s, p, |s| change_flag(s, p, "Decrease Flag Status", |f| if f == Flag::Pick { Flag::None } else { Flag::Reject })) }
         ),
@@ -537,7 +537,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Flag as Pick",
             ["Photo", "Set Flag"],
             Some("P"),
-            "{ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{ids?, advance?: bool} — when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| { cull(s, p, |s| for_targets(s, p, "Flag as Pick", |id| Some(Op::SetFlag { id, flag: Flag::Pick }))) }
         ),
@@ -546,7 +546,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Flag as Reject",
             ["Photo", "Set Flag"],
             Some("X"),
-            "{ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{ids?, advance?: bool} — when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| { cull(s, p, |s| for_targets(s, p, "Flag as Reject", |id| Some(Op::SetFlag { id, flag: Flag::Reject }))) }
         ),
@@ -555,7 +555,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Unflag",
             ["Photo", "Set Flag"],
             Some("U"),
-            "{ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{ids?, advance?: bool} — when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| { cull(s, p, |s| for_targets(s, p, "Unflag", |id| Some(Op::SetFlag { id, flag: Flag::None }))) }
         ),
@@ -564,7 +564,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Color Label",
             ["Photo", "Set Color Label"],
             None,
-            "{label: red|yellow|green|blue|purple|none, ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{label: red|yellow|green|blue|purple|none, ids?, advance?: bool} — when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| {
                 // `none` (or null) clears; a missing label or one that isn't text is an error, not a clear
@@ -584,7 +584,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Clear Color Label",
             ["Photo", "Set Color Label"],
             None,
-            "{ids?, advance?: bool} — `photo.label` with `none`; without `ids`, the selection moves on when this takes the active photo out of the view",
+            "{ids?, advance?: bool} — `photo.label` with `none`; when this takes the active photo out of the view, the selection moves on unless `keepActive: true`",
             has_selection,
             |s, p| { cull(s, p, |s| for_targets(s, p, "Set Color Label", |id| Some(Op::SetLabel { id, label: None }))) }
         ),
@@ -701,7 +701,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit Info",
             [],
             None,
-            "{ids?, title?, caption?, altText?, extendedDescription?, copyright?, copyrightStatus?: unknown|copyrighted|publicDomain, usageTerms?, copyrightUrl?, creator?, location?, city?, state?, country?, gps?: \"lat, lon\" | [lat, lon] | null, keywords?: [..], addKeywords?: [..], removeKeywords?: [..]}",
+            "{ids?, title?, caption?, altText?, extendedDescription?, copyright?, copyrightStatus?: unknown|copyrighted|publicDomain, usageTerms?, copyrightUrl?, creator?, location?, city?, state?, country?, gps?: \"lat, lon\" | [lat, lon] | null, keywords?: [..], addKeywords?: [..], removeKeywords?: [..], keepActive?: bool} — when this takes the active photo out of the view, the selection moves on unless `keepActive` is true",
             has_selection,
             |s, p| {
                 let strs =

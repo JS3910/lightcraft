@@ -7,7 +7,18 @@ pub(super) fn select_after_deletion(s: &mut Session, before: &[PhotoId]) {
     let at = before.iter().position(|id| Some(*id) == s.selection.active);
     let remaining: std::collections::HashSet<_> = s.visible_cloned().into_iter().collect();
     s.selection.ids.retain(|id| remaining.contains(id));
-    s.selection.active = s.selection.active.filter(|id| remaining.contains(id)).or_else(|| s.selection.ids.first().copied());
+    s.selection.active = s.selection.active.filter(|id| remaining.contains(id)).or_else(|| {
+        // the selected photo nearest the one that left: the first after its place, else the last before it
+        let place = |id: &PhotoId| before.iter().position(|b| b == id);
+        let (after, earlier): (Vec<_>, Vec<_>) =
+            s.selection.ids.iter().filter_map(|id| place(id).map(|p| (p, *id))).partition(|(p, _)| Some(*p) >= at);
+        after
+            .into_iter()
+            .min_by_key(|(p, _)| *p)
+            .or_else(|| earlier.into_iter().max_by_key(|(p, _)| *p))
+            .map(|(_, id)| id)
+            .or_else(|| s.selection.ids.first().copied())
+    });
     if s.selection.active.is_none()
         && let Some(at) = at
     {

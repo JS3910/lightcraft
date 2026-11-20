@@ -182,7 +182,7 @@ filter, a search, Picks or a smart album shows it no more), `engine.execute` mak
 before it at the end, or none when the view is empty. This holds for every command, whether or not the call names its
 photos (`photo.rate`, `photo.setMeta`, `faces.setName`, ...). A held view (View > Hold View Until Refreshed) still shows
 the photo, so nothing moves. A call with `"keepActive": true` opts out: Compare and Survey pass it so they keep showing
-the photo they rate or tag.
+the photo they rate or tag. A slider drag that takes the photo out of the view moves on when the drag ends.
 
 ### When the library can't be saved
 
