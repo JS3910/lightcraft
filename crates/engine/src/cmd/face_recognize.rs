@@ -320,7 +320,7 @@ fn people_cards(s: &mut Session, visible: bool) -> (Vec<lightcraft_catalog::Pers
 
 /// `faces.people {scope?}`: the Named People cards as data.
 fn people(s: &mut Session, p: &Value) -> Result<Value> {
-    let visible = p.get("scope").and_then(Value::as_str) == Some("visible");
+    let visible = wants_visible(p);
     let (cards, hidden) = people_cards(s, visible);
     let people: Vec<Value> =
         cards.iter().map(|c| json!({"name": c.name, "photos": c.count, "photo": c.photo.0, "face": rect_json(&c.face)})).collect();

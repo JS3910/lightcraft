@@ -137,6 +137,9 @@ fn hostile_scopes_are_not_errors_and_never_panic() {
     let (mut s, _, _, d) = library("scope-hostile");
     for scope in [json!(7), json!(null), json!(""), json!("VISIBLE"), json!(["visible"]), json!({"a": 1})] {
         assert!(s.execute("faces.unnamed", &json!({"scope": scope})).is_ok());
+        let r = s.execute("faces.people", &json!({"scope": scope})).unwrap();
+        assert_eq!(r["hidden"], 0, "an unknown scope is the whole library: {r}");
+        assert_eq!(r["people"].as_array().map(Vec::len), Some(2), "{r}");
         assert!(s.execute("faces.person", &json!({"name": "Ann", "scope": scope})).is_ok());
     }
     let _ = std::fs::remove_dir_all(&d);

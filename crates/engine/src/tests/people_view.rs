@@ -113,6 +113,7 @@ fn faces_in_the_hidden_photos_of_a_collapsed_stack_count() {
     assert_eq!(s.visible().len(), 3, "the grid shows one photo for the stack");
     let r = cards(&mut s, Some("visible"));
     assert_eq!(summary(&r), owned(&[("Ann", 2), ("Bob", 2), ("Cat", 2)]), "{r}");
+    assert_eq!(r["hidden"], 0, "a collapsed stack keeps all its photos in scope, so none is left out: {r}");
     assert_eq!(s.people_view_photos().len(), 4);
 }
 
