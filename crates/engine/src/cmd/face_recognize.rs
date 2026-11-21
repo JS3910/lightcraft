@@ -349,7 +349,7 @@ fn people(s: &mut Session, p: &Value) -> Result<Value> {
 /// Most confirmed faces `faces.person` lists.
 const MAX_CONFIRMED: usize = 5000;
 
-/// `faces.person {name, more?, scope?}`: the faces named `name` (case-insensitively) across the library, and, when
+/// `faces.person {name, more?, scope?, varied?}`: the faces named `name` (case-insensitively) across the library, and, when
 /// recognition is running, the unnamed faces that look most like them, to be confirmed one by one. With
 /// `scope: "visible"` the confirmed faces (and `total`) are those in the People view's photos, and More looks in those
 /// photos too, except that a person filter naming this same person is ignored for More. More's scores always compare
@@ -361,6 +361,7 @@ fn person(s: &mut Session, p: &Value) -> Result<Value> {
     let limit = p.get("more").and_then(Value::as_u64).map_or(120, |n| usize::try_from(n).unwrap_or(120)).min(1000);
     let visible = wants_visible(p);
     let scope: Option<std::collections::HashSet<lightcraft_catalog::PhotoId>> = visible.then(|| s.people_view_photos().into_iter().collect());
+    let varied = p.get("varied").and_then(Value::as_u64).map_or(0, |n| usize::try_from(n).unwrap_or(MAX_CONFIRMED)).min(MAX_CONFIRMED);
     let (mut shown, mut total, mut confirmed, mut in_library) = (name.to_string(), 0usize, Vec::new(), 0usize);
     for ph in s.catalog.photos().filter(|ph| ph.in_library()) {
         let in_scope = scope.as_ref().is_none_or(|v| v.contains(&ph.id));
@@ -377,10 +378,14 @@ fn person(s: &mut Session, p: &Value) -> Result<Value> {
             }
             total += 1;
             if confirmed.len() < MAX_CONFIRMED {
-                confirmed.push(json!({"photo": ph.id.0, "index": index, "rect": rect_json(&r.rect), "view": rect_json(&s.face_view(ph.id, r.rect))}));
+                confirmed.push((ph.id, index, r.rect));
             }
         }
     }
+    let confirmed: Vec<Value> = imp::varied_first(s, confirmed, varied)
+        .into_iter()
+        .map(|(photo, index, rect)| json!({"photo": photo.0, "index": index, "rect": rect_json(&rect), "view": rect_json(&s.face_view(photo, rect))}))
+        .collect();
     let more_in: Option<std::collections::HashSet<lightcraft_catalog::PhotoId>> =
         visible.then(|| s.people_view_photos_for_more(&key).into_iter().collect());
     let similar =
@@ -977,6 +982,26 @@ mod imp {
         Similar { items, ..ready }
     }
 
+    /// `faces` (a person's confirmed faces, in the order the catalog lists them) with up to `count` faces that look as different
+    /// from each other as possible first (the most typical one first, see [`crate::faces_varied`]), then all the others in the order
+    /// they came. With a `count` of 0, or no embeddings, the faces are as they were.
+    pub fn varied_first(s: &Session, faces: Vec<(PhotoId, usize, Rect)>, count: usize) -> Vec<(PhotoId, usize, Rect)> {
+        if count == 0 {
+            return faces;
+        }
+        let embeddings: Vec<Option<&[f32]>> = faces.iter().map(|(photo, _, rect)| s.faces.index.get(photo.0, rect).map(|e| &e[..])).collect();
+        let picks = crate::faces_varied::pick(&embeddings, s.faces.index.dim, count);
+        let mut taken = vec![false; faces.len()];
+        for i in &picks {
+            if let Some(t) = taken.get_mut(*i) {
+                *t = true;
+            }
+        }
+        let mut out: Vec<(PhotoId, usize, Rect)> = picks.iter().filter_map(|i| faces.get(*i).copied()).collect();
+        out.extend(faces.iter().zip(&taken).filter(|(_, t)| !**t).map(|(f, _)| *f));
+        out
+    }
+
     fn rect_bits(r: &Rect) -> [u64; 4] {
         [r.x0.to_bits(), r.y0.to_bits(), r.x1.to_bits(), r.y1.to_bits()]
     }
@@ -1430,6 +1455,43 @@ mod imp {
             assert!(similar(&mut s, "nobody", 10, None).items.is_empty());
             let _ = std::fs::remove_dir_all(&d);
         }
+
+        /// Ann's confirmed faces as `faces.person` lists them, as (photo, region) pairs.
+        fn confirmed(s: &mut Session, p: Value) -> Vec<(u64, u64)> {
+            let r = s.execute("faces.person", &p).unwrap();
+            r["confirmed"].as_array().unwrap().iter().map(|f| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap())).collect()
+        }
+
+        #[test]
+        fn a_persons_confirmed_faces_start_with_the_varied_picks_then_the_rest_as_before() {
+            let (mut s, d) = loaded("varied");
+            let (a, _) = two_photos(&s);
+            // eight faces of Ann in one photo, in three looks: regions 0 to 3 alike, 4 and 5 alike, 6 on its own, 7 not embedded
+            let xs = [0.0, 0.05, 0.1, 0.15, 0.3, 0.35, 0.5, 0.7];
+            set_regions(&mut s, a, xs.iter().map(|x| region(*x, Some("Ann"))).collect());
+            let looks = [0, 0, 0, 0, 1, 1, 2];
+            for (i, look) in looks.iter().enumerate() {
+                s.faces.index.insert(a.0, &region(xs[i], None).rect, unit(&[(*look, 1.0), (7, 0.01 * i as f32)]));
+            }
+            let today: Vec<(u64, u64)> = (0..8).map(|i| (a.0, i)).collect();
+            assert_eq!(confirmed(&mut s, json!({"name": "Ann"})), today, "without `varied` the list is as it was");
+            let all = confirmed(&mut s, json!({"name": "Ann", "varied": 3}));
+            let look_of = |(_, i): (u64, u64)| looks[i as usize];
+            let mut firsts: Vec<usize> = all[..3].iter().map(|f| look_of(*f)).collect();
+            assert_eq!(look_of(all[0]), 0, "the most typical face first: {all:?}");
+            firsts.sort_unstable();
+            assert_eq!(firsts, [0, 1, 2], "then the least alike: one of each look: {all:?}");
+            assert_eq!(all.len(), 8, "every face is listed once");
+            assert!(all[3..].windows(2).all(|w| w[0].1 < w[1].1), "the rest in today's order: {all:?}");
+            let mut sorted = all.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, today);
+            // more picks than faces with an embedding: the face without one comes last
+            let many = confirmed(&mut s, json!({"name": "Ann", "varied": 500}));
+            assert_eq!(many.last(), Some(&(a.0, 7)), "a face without an embedding after the embedded ones: {many:?}");
+            assert_eq!(many.len(), 8);
+            let _ = std::fs::remove_dir_all(&d);
+        }
     }
 }
 
@@ -1462,6 +1524,14 @@ mod imp {
 
     pub fn similar(_: &mut Session, _: &str, _: usize, _: Option<&std::collections::HashSet<lightcraft_catalog::PhotoId>>) -> super::Similar {
         super::Similar { items: Vec::new(), ready: false, pending: 0 }
+    }
+
+    pub fn varied_first(
+        _: &Session,
+        faces: Vec<(lightcraft_catalog::PhotoId, usize, lightcraft_geom::Rect)>,
+        _: usize,
+    ) -> Vec<(lightcraft_catalog::PhotoId, usize, lightcraft_geom::Rect)> {
+        faces
     }
 
     pub fn arrange_unnamed(_: &mut Session, _: &mut Vec<(u64, usize, lightcraft_geom::Rect)>, _: bool, _: bool, _: usize) -> Result<super::Arranged> {
@@ -1556,7 +1626,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Faces of a Person",
             [],
             None,
-            "{name, more?: 120, scope?: \"visible\"} → {name, total, inLibrary, confirmed: [{photo, index, rect}], more: [{photo, index, rect, score}], ready, pendingPhotos} — the faces named `name` across the library (`inLibrary` is how many there are in all, in scope or not), and the unnamed faces that look most like them (best first, already embedded ones only, once recognition is on); confirm one with `faces.setName`. With `scope: \"visible\"` the confirmed faces and `total` are those in the photos the People view shows, and More looks in those photos too, except that a person filter naming this same person (trimmed, any capitalization) is ignored for More, so filtering to them still shows faces that might be them; a person filter naming anyone else still applies. More always scores against all of the person's named faces in the library, so a person with no named faces in the scope (`total` 0) still gets their possible faces from it. Without a scope the whole library",
+            "{name, more?: 120, scope?: \"visible\", varied?: 0} → {name, total, inLibrary, confirmed: [{photo, index, rect, view}], more: [{photo, index, rect, score}], ready, pendingPhotos} — the faces named `name` across the library (`inLibrary` is how many there are in all, in scope or not), and the unnamed faces that look most like them (best first, already embedded ones only, once recognition is on); confirm one with `faces.setName`. With `scope: \"visible\"` the confirmed faces and `total` are those in the photos the People view shows, and More looks in those photos too, except that a person filter naming this same person (trimmed, any capitalization) is ignored for More, so filtering to them still shows faces that might be them; a person filter naming anyone else still applies. More always scores against all of the person's named faces in the library, so a person with no named faces in the scope (`total` 0) still gets their possible faces from it. Without a scope the whole library. With `varied: N` (at most 5000) the first N faces of `confirmed` (fewer when fewer have an embedding) are the ones that look as different from each other as possible: the most typical face first (closest to the average of the person's embedded faces), then each next face the one least like those already picked; faces without a usable embedding are never picked; all the other faces follow in the order they have without `varied`. Every face is listed once, and `confirmed` is still capped at 5000",
             super::always,
             person
         ),
