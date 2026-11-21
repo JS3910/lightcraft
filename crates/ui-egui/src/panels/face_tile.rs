@@ -352,9 +352,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect, tile: &FaceTile
     let pic = Rect::from_min_size(r.min, vec2(r.width(), (r.height() - STRIP_H).max(1.0)));
     let strip = Rect::from_min_max(pos2(r.left(), pic.bottom()), r.right_bottom());
     let resp = ui.interact(pic, widget_id(tile.prefix, "face", tile.key), Sense::click());
-    // a stack says how many faces it holds to a screen reader
-    let said = if tile.count > 0 { crate::i18n::tr_format!("Stack of {n} faces", n = tile.count) } else { crate::i18n::tr("Face").to_string() };
-    crate::widgets::announce_selected(&resp, said, selected);
+    crate::widgets::announce_selected(&resp, announced(tile.count), selected);
     register(ui, format!("{}-face:{photo}:{index}", tile.prefix), pic);
     let name = ui.interact(strip, widget_id(tile.prefix, "name", tile.key), Sense::click());
     register(ui, format!("{}-name:{photo}:{index}", tile.prefix), strip);
@@ -395,6 +393,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect, tile: &FaceTile
         return TileEvent::Click { shift: ui.input(|i| i.modifiers.shift) };
     }
     TileEvent::None
+}
+
+/// What a screen reader is told a tile is: a face, or a stack with how many faces it holds (`count`, 0 for a single face).
+fn announced(count: usize) -> String {
+    if count > 0 { crate::i18n::tr_format!("Stack of {n} faces", n = count) } else { crate::i18n::tr("Face").to_string() }
 }
 
 /// One hover button: where it sits and how it was interacted with.
@@ -676,6 +679,21 @@ mod tests {
         // a selected face that is not in the list still acts on itself
         let gone: HashSet<FaceKey> = [(9, 9)].into_iter().collect();
         assert_eq!(apply_to(&gone, &o, (9, 9)), vec![(9, 9)]);
+    }
+
+    #[test]
+    fn a_screen_reader_hears_how_many_faces_a_stack_holds() {
+        assert_eq!(announced(0), "Face");
+        assert_eq!(announced(512), "Stack of 512 faces");
+    }
+
+    #[test]
+    fn an_action_on_a_stack_applies_to_every_face_in_it_whatever_is_selected() {
+        let mut o = order(3);
+        o[1].members = vec![(1, 1), (7, 0), (8, 2)];
+        let selected: HashSet<FaceKey> = [(1, 0)].into_iter().collect();
+        assert_eq!(apply_to(&selected, &o, (1, 1)), vec![(1, 1), (7, 0), (8, 2)]);
+        assert_eq!(apply_to(&selected, &o, (1, 0)), vec![(1, 0)], "a face is not affected");
     }
 
     #[test]
