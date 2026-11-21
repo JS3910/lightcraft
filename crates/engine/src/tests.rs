@@ -17,12 +17,12 @@ mod dcp_corpus;
 mod denoise;
 mod export;
 mod face_arrange_bg;
-mod face_stacks;
 mod face_models;
 mod face_person_cost;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) mod face_recognize;
 pub(super) mod face_rejections;
+mod face_stacks;
 #[cfg(not(target_arch = "wasm32"))]
 mod face_tiles;
 mod face_unnamed_cost;

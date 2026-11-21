@@ -167,7 +167,8 @@ fn a_stack_has_its_most_typical_face_first_and_the_biggest_stack_comes_first() {
 #[test]
 fn a_new_face_joins_without_comparing_the_old_faces_with_each_other_and_a_face_that_left_dissolves_its_stack() {
     // 40 unrelated faces, and a pair
-    let mut faces: Vec<Face> = (0..40).map(|i| face(i + 10, unit(&[(i as usize % 6, 1.0), (((i as usize / 6) % 5) + 1, 0.3 * (i % 5) as f32)]))).collect();
+    let mut faces: Vec<Face> =
+        (0..40).map(|i| face(i + 10, unit(&[(i as usize % 6, 1.0), (((i as usize / 6) % 5) + 1, 0.3 * (i % 5) as f32)]))).collect();
     faces.push(face(1, unit(&[(7, 1.0), (6, 0.05)])));
     faces.push(face(2, unit(&[(7, 1.0), (6, 0.06)])));
     let mut state = StackState::default();

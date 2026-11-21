@@ -567,7 +567,12 @@ impl Jobs {
                 let chain = output.chain.iter().enumerate().map(|(i, k)| (*k, i)).collect();
                 (self.last_scored, self.chain_reused) = (output.scored, output.chain_reused);
                 (self.stack_new, self.stack_compared, self.bar) = (output.stack_new, output.stack_compared, output.bar);
-                let stack_of = output.stacks.iter().enumerate().flat_map(|(s, m)| m.iter().enumerate().map(move |(pos, (k, stamp))| (*k, (s, *stamp, pos)))).collect();
+                let stack_of = output
+                    .stacks
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(s, m)| m.iter().enumerate().map(move |(pos, (k, stamp))| (*k, (s, *stamp, pos))))
+                    .collect();
                 self.last = Some(Last { sig, suggestions: output.suggestions, chain, stack_of });
             }
             Ok(Done { state, output: None }) => {
@@ -900,10 +905,14 @@ mod tests {
         let chain = outcome.chain.iter().enumerate().map(|(i, k)| (*k, i)).collect();
         let jobs = Jobs { last: Some(Last { sig: 0, suggestions: outcome.suggestions.clone(), chain, ..Last::default() }), ..Jobs::default() };
         let listed: Vec<Listed> = faces.iter().enumerate().map(|(i, f)| (f.photo, i, f.rect, f.ord, Some(f.stamp))).collect();
-        jobs.arrange(&listed, usize::MAX).order.into_iter().flat_map(|i| match i {
-            Item::Face(i) => vec![i],
-            Item::Stack(s) => s,
-        }).collect()
+        jobs.arrange(&listed, usize::MAX)
+            .order
+            .into_iter()
+            .flat_map(|i| match i {
+                Item::Face(i) => vec![i],
+                Item::Stack(s) => s,
+            })
+            .collect()
     }
 
     /// What `state` (which has worked through the changes so far) gives for `w`, against what a fresh state gives for the same

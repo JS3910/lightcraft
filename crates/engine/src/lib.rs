@@ -39,9 +39,9 @@ pub mod face_tiles;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod faces_arrange;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod faces_stack;
-#[cfg(not(target_arch = "wasm32"))]
 mod faces_index;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod faces_stack;
 #[cfg(not(target_arch = "wasm32"))]
 mod faces_varied;
 #[cfg(not(target_arch = "wasm32"))]

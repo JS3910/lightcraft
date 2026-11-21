@@ -124,11 +124,15 @@ fn among_the_faces_without_a_suggestion_stacks_come_first_biggest_first_then_sin
     assert!(sizes[3..].iter().all(|n| *n == 1), "then single faces: {e:?}");
     let lone: Vec<Key> = e[5..].iter().map(|x| x[0]).collect();
     assert!(lone.contains(&(b.0, 4)), "{lone:?}");
-    assert_eq!(&lone[lone.len() - 2..], &{
-        let mut u = [(b.0, 5), (c.0, 2)];
-        u.sort();
-        u
-    }[..], "the faces not embedded last, in photo order: {lone:?}");
+    assert_eq!(
+        &lone[lone.len() - 2..],
+        &{
+            let mut u = [(b.0, 5), (c.0, 2)];
+            u.sort();
+            u
+        }[..],
+        "the faces not embedded last, in photo order: {lone:?}"
+    );
     let _ = std::fs::remove_dir_all(&d);
 }
 

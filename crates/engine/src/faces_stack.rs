@@ -129,7 +129,11 @@ impl Calibration {
         let mut rows: HashMap<String, Row> = HashMap::with_capacity(people.len());
         for (i, p) in people.iter().enumerate() {
             let kept = self.rows.get(&p.key).filter(|_| !is_dirty.contains(&i));
-            let row = Row { fingerprint: prints.get(i).copied().unwrap_or(0), best: kept.and_then(|r| r.best), partner: kept.and_then(|r| r.partner.clone()) };
+            let row = Row {
+                fingerprint: prints.get(i).copied().unwrap_or(0),
+                best: kept.and_then(|r| r.best),
+                partner: kept.and_then(|r| r.partner.clone()),
+            };
             rows.insert(p.key.clone(), row);
         }
         for (i, best, lifts) in parts.into_iter().flatten() {
@@ -252,7 +256,8 @@ fn alikes(w: &Work, from: &[usize], among: &[usize], brute_limit: usize) -> Opti
                     Some(c) => c.around(w, f),
                     None => among.to_vec(),
                 };
-                let mut scored: Vec<(f32, usize)> = near.into_iter().filter(|g| *g != f).map(|g| (w.sim(f, g), g)).filter(|(c, _)| *c >= w.bar).collect();
+                let mut scored: Vec<(f32, usize)> =
+                    near.into_iter().filter(|g| *g != f).map(|g| (w.sim(f, g), g)).filter(|(c, _)| *c >= w.bar).collect();
                 scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
                 scored.truncate(MAX_ALIKE);
                 scored.into_iter().map(|(_, g)| g).collect()
@@ -342,7 +347,8 @@ pub(crate) fn stack(state: &mut StackState, faces: &[&Face], bar: f32, cancel: &
     }
     let mut stacked: HashSet<usize> = stacks.iter().flatten().copied().collect();
     let free: Vec<usize> = (0..faces.len()).filter(|i| !stacked.contains(i)).collect();
-    let fresh: Vec<usize> = free.iter().copied().filter(|i| cold || faces.get(*i).is_none_or(|f| !state.seen.contains(&(f.key(), f.stamp)))).collect();
+    let fresh: Vec<usize> =
+        free.iter().copied().filter(|i| cold || faces.get(*i).is_none_or(|f| !state.seen.contains(&(f.key(), f.stamp)))).collect();
     let new_count = fresh.len();
     // new faces join the stacks they fit
     let centres: Vec<Option<Vec<f32>>> = stacks.iter().map(|m| w.centroid(m)).collect();

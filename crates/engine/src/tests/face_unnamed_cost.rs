@@ -58,14 +58,16 @@ fn settle(s: &mut Session) -> (Duration, Duration) {
 
 /// `unnamed` unnamed faces (half of them noisy copies of a named person's face, so they get suggestions) against
 /// `named` named faces of `named / 10` people, on the demo's photos.
-fn time(unnamed: usize, named: usize) {
-    let d = temp(&format!("unnamed-cost-{unnamed}"));
+fn time(unnamed: usize, named: usize, clusters: usize) {
+    let d = temp(&format!("unnamed-cost-{unnamed}-{clusters}"));
     let (mut s, _) = setup(&d, DIM as u64);
     s.execute("faces.index", &json!({"budgetMs": 0})).unwrap();
     let mut ids: Vec<_> = s.catalog.photos().map(|p| p.id).collect();
     ids.sort();
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let people: Vec<Vec<f32>> = (0..named / 10).map(|_| unit((0..DIM).map(|_| rng.next()).collect())).collect();
+    // (the people nobody has named: the faces of a quarter of the unnamed ones, in `clusters` groups)
+    let strangers: Vec<Vec<f32>> = (0..clusters).map(|_| unit((0..DIM).map(|_| rng.next()).collect())).collect();
     let mut per_photo: Vec<Vec<Region>> = vec![Vec::new(); ids.len()];
     let mut next = 0usize;
     // `count` more faces, from the `next`th on: the first `named` are named
@@ -74,6 +76,7 @@ fn time(unnamed: usize, named: usize) {
         for i in next..next + count {
             let photo = i % ids.len();
             let Some(regions) = per_photo.get_mut(photo) else { continue };
+            let stranger = clusters > 0 && i >= named && i % 4 == 1;
             let (name, base, noise) = if i < named {
                 (Some(format!("Person {}", i % people.len())), i % people.len(), 0.4)
             } else if i % 2 == 0 {
@@ -81,7 +84,8 @@ fn time(unnamed: usize, named: usize) {
             } else {
                 (None, usize::MAX, 0.0)
             };
-            let v = match people.get(base) {
+            let noise = if stranger { 0.5 } else { noise };
+            let v = match (if stranger { strangers.get(i % clusters) } else { people.get(base) }) {
                 Some(p) => unit(p.iter().map(|x| x + noise * rng.next() * 0.2).collect()),
                 None => unit((0..DIM).map(|_| rng.next()).collect()),
             };
@@ -107,6 +111,7 @@ fn time(unnamed: usize, named: usize) {
     let (idle, _) = ask(&mut s, false);
     let suggested = r["faces"].as_array().map_or(0, |f| f.iter().filter(|f| !f["suggestion"].is_null()).count());
     let listed = ask(&mut s, true).1;
+    let stacked: u64 = listed["faces"].as_array().map_or(0, |f| f.iter().filter_map(|f| f["stack"]["count"].as_u64()).sum());
     let suggested = suggested.max(listed["faces"].as_array().map_or(0, |f| f.iter().filter(|f| !f["suggestion"].is_null()).count()));
     // a naming (of the first face listed)
     let first_face = listed["faces"].as_array().and_then(|f| f.first()).map(|f| (f["photo"].as_u64().unwrap_or(0), f["index"].as_u64().unwrap_or(0)));
@@ -128,6 +133,14 @@ fn time(unnamed: usize, named: usize) {
         listed["faces"].as_array().map_or(0, Vec::len)
     );
     println!("    first arrangement:       {first:>9.2?} until complete, {first_call:>9.2?} on the calling thread without waiting");
+    println!(
+        "    stacks: {} of {} faces in stacks; the last run looked at {} faces and made {} comparisons, at a bar of {:.3}",
+        listed["stacks"],
+        stacked,
+        s.faces.arrange.stack_new,
+        s.faces.arrange.stack_compared,
+        s.faces.arrange.bar
+    );
     println!("    asked again unchanged:   {idle:>9.2?} on the calling thread");
     println!("    after one naming:        {naming:>9.2?} until complete, {naming_call:>9.2?} on the calling thread");
     println!("    More for a person of {their_faces} faces: {more:>9.2?} on the calling thread ({found} found)");
@@ -139,6 +152,17 @@ fn time(unnamed: usize, named: usize) {
 #[ignore = "timing harness: run it in a release build and read the printed times"]
 fn face_unnamed_cost() {
     for (unnamed, named) in [(10_000, 3_000), (30_000, 3_000), (60_000, 3_000), (30_000, 6_000)] {
-        time(unnamed, named);
+        time(unnamed, named, 0);
+    }
+}
+
+/// The same with stacks: a quarter of the unnamed faces are faces of people nobody has named, 50 faces of each (so they stack),
+/// and the rest as above. The first arrangement includes the stacking; "after one naming" and "scan finds" show what it costs to
+/// keep them.
+#[test]
+#[ignore = "timing harness: run it in a release build and read the printed times"]
+fn face_unnamed_stacks_cost() {
+    for (unnamed, named) in [(10_000, 3_000), (30_000, 6_000), (60_000, 3_000)] {
+        time(unnamed, named, unnamed / 200);
     }
 }
