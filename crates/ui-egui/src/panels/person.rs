@@ -135,6 +135,97 @@ impl Rejected {
     }
 }
 
+/// How many rows of tiles the Confirmed section shows until "Show all" is pressed.
+pub const ROWS: usize = 3;
+/// The widest window the picks of varied faces are made for (points), and the smallest tile edge: a window wider than this
+/// shows fewer tiles in three rows than the picks, never more.
+const WIDEST: f32 = 4096.0;
+const SMALLEST_EDGE: f32 = 56.0;
+/// The row under the confirmed tiles: Select all, Show all.
+const FOOT_H: f32 = 34.0;
+
+/// What the page asks `faces.person` for: the People view's photos, and as many varied faces first as three rows of the
+/// widest window hold (so a window change never needs the engine again).
+pub fn request(name: &str) -> Value {
+    json!({"name": name, "scope": "visible", "varied": ROWS * super::people::columns(WIDEST, SMALLEST_EDGE)})
+}
+
+/// How the Confirmed section is laid out during one visit to a person's page: whether it is open, how many tiles a row has,
+/// and the faces confirmed during the visit, which come first. Like [`Rejected`], a page that was not drawn in the previous
+/// egui pass starts a new visit, and the section is closed again.
+#[derive(Clone, Debug, Default)]
+pub struct ConfirmedRows {
+    person: String,
+    pass: u64,
+    /// "Show all" was pressed.
+    pub expanded: bool,
+    /// Tiles in a row as of the last frame drawn (0: none yet).
+    cols: usize,
+    /// The confirmed faces the page has had since it was opened (`None` until the first list comes).
+    known: Option<std::collections::HashSet<face_tile::FaceKey>>,
+    /// Faces confirmed since, the latest first.
+    fresh: Vec<face_tile::FaceKey>,
+}
+
+impl ConfirmedRows {
+    /// The page of `person` is drawn in egui pass `pass`.
+    pub fn visit(&mut self, person: &str, pass: u64) {
+        if pass > self.pass.saturating_add(1) || self.person.trim().to_lowercase() != person.trim().to_lowercase() {
+            *self = Self::default();
+        }
+        self.person = person.to_string();
+        self.pass = pass;
+    }
+
+    /// The engine's list of confirmed faces now: those not there before were confirmed during this visit.
+    pub fn see(&mut self, faces: &[Face]) {
+        let present: std::collections::HashSet<face_tile::FaceKey> = faces.iter().map(|f| (f.photo, f.index)).collect();
+        if let Some(known) = self.known.as_mut() {
+            let new: Vec<face_tile::FaceKey> = faces.iter().map(|f| (f.photo, f.index)).filter(|k| !known.contains(k)).collect();
+            self.fresh.splice(0..0, new);
+            known.retain(|k| present.contains(k));
+            known.extend(present.iter().copied());
+        } else {
+            self.known = Some(present.clone());
+        }
+        self.fresh.retain(|k| present.contains(k));
+    }
+
+    /// `faces` with the ones confirmed during this visit first, the latest first, then the others as they were.
+    pub fn order(&self, faces: &[Face]) -> Vec<Face> {
+        let mut out: Vec<Face> = self.fresh.iter().filter_map(|k| faces.iter().find(|f| (f.photo, f.index) == *k)).cloned().collect();
+        out.extend(faces.iter().filter(|f| !self.fresh.contains(&(f.photo, f.index))).cloned());
+        out
+    }
+
+    /// What the page knows of which faces are new is no longer true (the photos it comes from changed, or an edit was undone).
+    pub fn rebase(&mut self) {
+        self.known = None;
+        self.fresh.clear();
+    }
+
+    /// The face boxes `removed` went from their photos: the later ones of those photos moved up.
+    pub fn forget(&mut self, removed: &[face_tile::FaceKey]) {
+        let shift = |k: &face_tile::FaceKey| face_tile::shift_key(*k, removed);
+        self.fresh = self.fresh.iter().filter_map(shift).collect();
+        self.known = self.known.take().map(|k| k.iter().filter_map(shift).collect());
+    }
+
+    pub fn set_cols(&mut self, cols: usize) {
+        self.cols = cols;
+    }
+
+    /// Whether `total` faces need the button: more than the rows hold.
+    pub fn needs_button(&self, total: usize) -> bool {
+        self.cols > 0 && total > self.cols.saturating_mul(ROWS)
+    }
+
+    /// How many of `total` faces are on screen: all when open, else what three rows hold.
+    pub fn visible(&self, total: usize) -> usize {
+        if self.expanded || !self.needs_button(total) { total } else { self.cols.saturating_mul(ROWS) }
+    }
+}
+
 fn face_of(v: &Value) -> Option<Face> {
     let rect = |r: &Value| Some(lightcraft_geom::Rect { x0: r["x0"].as_f64()?, y0: r["y0"].as_f64()?, x1: r["x1"].as_f64()?, y1: r["y1"].as_f64()? });
     Some(Face {
@@ -171,7 +262,7 @@ fn page_for(app: &mut LightcraftApp, name: &str, now: f64) -> Arc<PersonPage> {
     {
         return page.clone();
     }
-    let v = app.session.execute("faces.person", &json!({"name": name, "scope": "visible"})).unwrap_or(Value::Null);
+    let v = app.session.execute("faces.person", &request(name)).unwrap_or(Value::Null);
     let page = Arc::new(parse(&v));
     app.caches.person_page = Some((name.to_string(), rev, indexed, now, page.clone()));
     page
@@ -200,11 +291,13 @@ pub struct Lists {
     pub more: Vec<Face>,
     pub confirmed_entries: Vec<Entry>,
     pub more_entries: Vec<Entry>,
+    /// How many of the confirmed faces (and entries) are on screen: the first ones.
+    pub visible: usize,
 }
 
 /// `page` of the person `name` as the galleries show it.
 pub fn lists(app: &LightcraftApp, page: &PersonPage, name: &str) -> Lists {
-    let confirmed = app.ui.rejected_confirmed.put_back(&page.confirmed);
+    let confirmed = app.ui.rejected_confirmed.put_back(&app.ui.person_rows.order(&page.confirmed));
     let more = app.ui.rejected_faces.put_back(&page.more);
     let entries = |faces: &[Face], rejected: &Rejected| -> Vec<Entry> {
         faces
@@ -213,6 +306,7 @@ pub fn lists(app: &LightcraftApp, page: &PersonPage, name: &str) -> Lists {
             .collect()
     };
     Lists {
+        visible: app.ui.person_rows.visible(confirmed.len()),
         confirmed_entries: entries(&confirmed, &app.ui.rejected_confirmed),
         more_entries: entries(&more, &app.ui.rejected_faces),
         confirmed,
@@ -224,8 +318,8 @@ pub fn lists(app: &LightcraftApp, page: &PersonPage, name: &str) -> Lists {
 /// faces whose names were rejected keep their tiles, in place, until the page is left.
 pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, gallery: &Gallery, lists: &Lists, face: face_tile::FaceKey) {
     let (faces, order) = match gallery {
-        Gallery::More(_) => (&lists.more, &lists.more_entries),
-        _ => (&lists.confirmed, &lists.confirmed_entries),
+        Gallery::More(_) => (&lists.more, &lists.more_entries[..]),
+        _ => (&lists.confirmed, lists.confirmed_entries.get(..lists.visible).unwrap_or(&lists.confirmed_entries)),
     };
     if let face_tile::Rejection::Rejected(keys) = face_tile::reject(app, ctx, gallery, order, face) {
         for key in keys {
@@ -298,6 +392,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
     let pass = ui.ctx().cumulative_pass_nr();
     app.ui.rejected_faces.visit(name, pass);
     app.ui.rejected_confirmed.visit(name, pass);
+    app.ui.person_rows.visit(name, pass);
+    app.ui.person_rows.see(&page.confirmed);
     let shown_name = if page.name.is_empty() { name.to_string() } else { page.name.clone() };
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -337,7 +433,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         return;
     }
     // the faces rejected on this visit stay where they were, as question marks
-    let lists = lists(app, &page, &shown_name);
+    let mut lists = lists(app, &page, &shown_name);
     let more: Vec<&Face> = lists.more.iter().collect();
     // (what "all above" and the A key may confirm: the faces with a suggestion left)
     let suggested: Vec<&Face> = more.iter().copied().filter(|f| !app.ui.rejected_faces.contains((f.photo, f.index))).collect();
@@ -362,30 +458,42 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
     let (confirmed_gallery, more_gallery) = (Gallery::Confirmed(shown_name.clone()), Gallery::More(shown_name.clone()));
     let (confirmed_entries, more_entries) = (&lists.confirmed_entries, &lists.more_entries);
     // what was selected and has since been named, hidden or removed is no longer selected
-    face_tile::retain_present(app, &confirmed_gallery, &confirmed_entries.iter().map(|e| e.key).collect());
     face_tile::retain_present(app, &more_gallery, &more_entries.iter().map(|e| e.key).collect());
     let mut hit: Option<(TileEvent, Face, Gallery)> = None;
+    let mut visible = lists.visible;
     egui::ScrollArea::vertical().auto_shrink(false).show_viewport(ui, |ui, viewport| {
         let width = ui.available_width();
         let cols = super::people::columns(width, edge);
         let row_h = tile_h + super::people::TILE_GAP;
-        let confirmed_rows = lists.confirmed.len().div_ceil(cols);
+        // the Confirmed section shows what its rows hold, or all when opened; a selection never reaches the faces left out
+        app.ui.person_rows.set_cols(cols);
+        let total = lists.confirmed.len();
+        visible = app.ui.person_rows.visible(total);
+        let shown_ids: std::collections::HashSet<(u64, usize)> = confirmed_entries.iter().take(visible).map(|e| e.key).collect();
+        face_tile::retain_present(app, &confirmed_gallery, &shown_ids);
+        let confirmed_rows = visible.div_ceil(cols);
         let more_rows = more.len().div_ceil(cols);
         // no faces of theirs in these photos: a line says so where the faces would be
         let none_here = lists.confirmed.is_empty();
-        let more_top = PAD + if none_here { NOTE_H } else { confirmed_rows as f32 * row_h } + 12.0;
+        let foot = if none_here { 0.0 } else { FOOT_H };
+        let more_top = PAD + if none_here { NOTE_H } else { confirmed_rows as f32 * row_h + foot } + 12.0;
         let total_h = more_top + SECTION_H + more_rows as f32 * row_h + PAD;
         let (area, _) = ui.allocate_exact_size(vec2(width, total_h), Sense::hover());
         // the scroll area gives the viewport relative to its content; the grids are laid out on screen, so it goes there too
         // (else the first row drawn runs ahead of the scroll offset, and far enough down no tile is drawn at all)
         let layout = Layout { name: &shown_name, viewport: viewport.translate(area.min.to_vec2()), cols, edge, ppp };
         let origin = |top: f32| area.min + vec2(PAD, top);
-        let confirmed: Vec<&Face> = lists.confirmed.iter().collect();
+        let confirmed: Vec<&Face> = lists.confirmed.iter().take(visible).collect();
+        let shown_entries = confirmed_entries.get(..visible).unwrap_or(confirmed_entries);
         if none_here {
             let line = crate::i18n::tr_format!("{name} has no named faces in these photos.", name = shown_name);
             ui.painter().text(pos2(area.left() + PAD, area.top() + PAD + NOTE_H / 2.0), Align2::LEFT_CENTER, line, t.font(13.0), t.text_dim);
         }
-        let mut shown = draw_grid(app, ui, &Grid { gallery: &confirmed_gallery, faces: &confirmed, entries: confirmed_entries, origin: origin(PAD), layout: &layout }, &mut hit);
+        let mut shown = draw_grid(app, ui, &Grid { gallery: &confirmed_gallery, faces: &confirmed, entries: shown_entries, origin: origin(PAD), layout: &layout }, &mut hit);
+        if !none_here {
+            let top = PAD + confirmed_rows as f32 * row_h;
+            confirmed_foot(app, ui, &lists.confirmed_entries, &confirmed_gallery, visible, total, area.min + vec2(PAD, top));
+        }
         // the "More" section
         let heading = pos2(area.left() + PAD, area.top() + more_top + 14.0);
         ui.painter().text(heading, Align2::LEFT_CENTER, crate::i18n::tr("More"), t.semibold(15.0), t.text);
@@ -414,6 +522,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         // the picture cache keeps every face on screen
         app.renderer.want_variants(shown);
     });
+    lists.visible = visible;
     if let Some((what, f, gallery)) = hit {
         match what {
             TileEvent::Open => {
@@ -431,6 +540,32 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
             TileEvent::ConfirmAbove => confirm_above(app, ui.ctx(), &shown_name, &suggested, f.score),
             TileEvent::Hide => reject(app, ui.ctx(), &gallery, &lists, (f.photo, f.index)),
             _ => {}
+        }
+    }
+}
+
+/// The row under the confirmed tiles: Select all (the faces on screen), and the button that opens the rest or closes it again.
+fn confirmed_foot(app: &mut LightcraftApp, ui: &mut egui::Ui, entries: &[Entry], gallery: &Gallery, visible: usize, total: usize, at: Pos2) {
+    let keys: Vec<face_tile::FaceKey> = entries.iter().take(visible).map(|e| e.key).collect();
+    let all = !keys.is_empty() && face_tile::selection(app, gallery).len() == keys.len();
+    let r = Rect::from_min_size(at + vec2(0.0, 4.0), vec2(110.0, 24.0));
+    let b = ui.put(r, egui::Button::new(crate::i18n::tr(if all { "Select none" } else { "Select all" })));
+    register(ui, "person:selectAll", b.rect);
+    if b.clicked() {
+        if all {
+            face_tile::clear_selection(app);
+        } else {
+            face_tile::select_all(app, gallery, keys);
+        }
+    }
+    if app.ui.person_rows.needs_button(total) {
+        let label =
+            if app.ui.person_rows.expanded { crate::i18n::tr("Show fewer").to_string() } else { crate::i18n::tr_format!("Show all {n}", n = total) };
+        let r = Rect::from_min_size(at + vec2(120.0, 4.0), vec2(130.0, 24.0));
+        let b = ui.put(r, egui::Button::new(label));
+        register(ui, "person:showAll", b.rect);
+        if b.clicked() {
+            app.ui.person_rows.expanded = !app.ui.person_rows.expanded;
         }
     }
 }

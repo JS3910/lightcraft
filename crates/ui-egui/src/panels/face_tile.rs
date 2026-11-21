@@ -172,6 +172,8 @@ pub fn forget_positions(app: &mut LightcraftApp) {
     for set in [&mut app.ui.rejected_faces, &mut app.ui.rejected_unnamed, &mut app.ui.rejected_confirmed] {
         set.clear();
     }
+    // (which faces are new this visit is no longer known either)
+    app.ui.person_rows.rebase();
 }
 
 /// Select exactly `keys` in `gallery`.
@@ -308,6 +310,7 @@ fn after_removal(app: &mut LightcraftApp, removed: &[FaceKey]) {
     for set in [&mut app.ui.rejected_faces, &mut app.ui.rejected_unnamed, &mut app.ui.rejected_confirmed] {
         set.forget(removed);
     }
+    app.ui.person_rows.forget(removed);
 }
 
 /// The check on a tile of `gallery`: confirm each face it applies to (the selection when `face` is selected, else `face`

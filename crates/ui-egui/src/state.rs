@@ -161,6 +161,9 @@ pub struct UiState {
     pub rejected_unnamed: crate::panels::person::Rejected,
     #[serde(skip)]
     pub rejected_confirmed: crate::panels::person::Rejected,
+    /// How the Confirmed section of the open person's page is laid out this visit (open or not, which faces are new).
+    #[serde(skip)]
+    pub person_rows: crate::panels::person::ConfirmedRows,
     /// The unnamed faces selected in the People view (photo, region), the list position last clicked (Shift-click selects a
     /// range from it) and the face the view should scroll to (Tab moved the name box there).
     #[serde(skip)]
@@ -468,6 +471,7 @@ impl Default for UiState {
             rejected_faces: Default::default(),
             rejected_unnamed: Default::default(),
             rejected_confirmed: Default::default(),
+            person_rows: Default::default(),
             unnamed_selected: Default::default(),
             unnamed_anchor: None,
             face_gallery: None,
