@@ -245,6 +245,7 @@ pub fn keep_places_held(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn
 ///   the best order there is while the rest is worked out;
 /// - with no list on screen the answer is shown when its order is final (sorted afresh), and while it is not, only as a
 ///   status: the tiles would jump when the order came in.
+#[cfg(test)]
 fn place(old: Option<&Unnamed>, shown: Option<Shown>, asked: Unnamed) -> Unnamed {
     place_held(old, shown, asked, &|_| false)
 }
