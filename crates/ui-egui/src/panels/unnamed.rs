@@ -156,6 +156,87 @@ fn order_sentence(list: &Unnamed) -> String {
     }
 }
 
+/// One cell of the grid: an entry of the list (a face or a stack), or a face of a stack that is open, which follows the
+/// stack's own cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cell {
+    Entry(usize),
+    Member { entry: usize, at: usize },
+}
+
+/// Whether the entry is a stack that was opened in place (it holds one of the faces `open` remembers).
+pub fn is_open(f: &UnnamedFace, open: &std::collections::HashSet<FaceKey>) -> bool {
+    f.is_stack() && f.stack.iter().any(|m| open.contains(&(m.photo, m.index)))
+}
+
+/// The cells of the grid, in order: every entry, and after an open stack its faces.
+pub fn cells(list: &Unnamed, open: &std::collections::HashSet<FaceKey>) -> Vec<Cell> {
+    let mut out = Vec::with_capacity(list.faces.len());
+    for (i, f) in list.faces.iter().enumerate() {
+        out.push(Cell::Entry(i));
+        if is_open(f, open) {
+            out.extend((0..f.stack.len()).map(|at| Cell::Member { entry: i, at }));
+        }
+    }
+    out
+}
+
+/// What of the list lies on the screen when the cells `first..end` do: how many entries are wholly above them and how many are
+/// at least partly in them (an open stack with its faces is one entry).
+pub fn shown_cells(cells: &[Cell], first: usize, end: usize) -> Shown {
+    let entry_of = |c: &Cell| match c {
+        Cell::Entry(i) | Cell::Member { entry: i, .. } => *i,
+    };
+    let seen = |range: std::ops::Range<usize>| -> std::collections::BTreeSet<usize> {
+        cells.get(range.start.min(cells.len())..range.end.min(cells.len())).unwrap_or_default().iter().map(entry_of).collect()
+    };
+    let above = seen(0..first);
+    let on = seen(first..end);
+    // (an entry cut by the top edge is in view, not above)
+    let above = above.iter().filter(|i| !on.contains(i)).count();
+    Shown { above, on_screen: on.len() }
+}
+
+/// Open the stack of `f` in place, or close it when it is open.
+fn toggle(app: &mut LightcraftApp, f: &UnnamedFace) {
+    if is_open(f, &app.ui.unnamed_open) {
+        for k in f.keys() {
+            app.ui.unnamed_open.remove(&k);
+        }
+    } else {
+        app.ui.unnamed_open.extend(f.keys());
+    }
+}
+
+/// One face of the open stack `list.faces[entry]` (number `at` in it), in `r`: a face with a cross that takes it out of the stack.
+pub fn member_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, (entry, at): (usize, usize), list: &Unnamed, r: Rect, ppp: f32) {
+    let Some(m) = list.faces.get(entry).and_then(|f| f.stack.get(at)) else { return };
+    let key = (m.photo, m.index);
+    let hover = Some(Hover {
+        confirm: false,
+        above: false,
+        hide: true,
+        removes: false,
+        person: "",
+        score: 0.0,
+        above_count: 0,
+        positional: true,
+        takes_out: true,
+    });
+    let spec = FaceTile { key, view: m.rect, suggestion: None, named: false, prefix: "unnamed-member", hover, count: 0, open: false };
+    match face_tile::show(app, ui, r, &spec, false, ppp) {
+        TileEvent::Hide => {
+            let _ = app.run("faces.takeOut", json!({"faces": [{"photo": m.photo, "index": m.index}]}));
+        }
+        TileEvent::Open => {
+            let _ = app.run("library.select", json!({"ids": [m.photo], "active": m.photo}));
+            let _ = app.run("view.detail", json!({}));
+            app.ui.person_from = Some((None, m.photo));
+        }
+        _ => {}
+    }
+}
+
 /// While the scan runs and learns more faces, the list is asked for again after this many seconds at most (arranging it
 /// works out a suggestion for every new face and the look-alike order of those without one). This holds when a result
 /// came in meanwhile too: asking again at once would start the next run at once, and the scan would have a run going
@@ -203,11 +284,16 @@ pub fn keep_places(old: &Unnamed, new: Unnamed, shown: Shown) -> Unnamed {
     let start = shown.above.min(old.faces.len());
     let end = start.saturating_add(shown.on_screen).min(old.faces.len());
     let holder: std::collections::HashMap<At, usize> = new_keys.iter().enumerate().flat_map(|(i, ks)| ks.iter().map(move |k| (*k, i))).collect();
-    // the entries in view, in their order, as far as the new list still has them
+    // the entries in view, in their order, as far as the new list still has them. An entry that held several faces stays the
+    // entry that holds most of them (a face taken out of a stack becomes a tile of its own, and the stack keeps its place)
     let mut taken: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut kept: Vec<UnnamedFace> = Vec::new();
     for ks in old_keys.get(start..end).unwrap_or_default() {
-        if let Some(i) = ks.iter().filter_map(|k| holder.get(k)).find(|i| !taken.contains(*i)).copied() {
+        let mut held: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for i in ks.iter().filter_map(|k| holder.get(k)).filter(|i| !taken.contains(*i)) {
+            *held.entry(*i).or_default() += 1;
+        }
+        if let Some(i) = held.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map(|(i, _)| i) {
             taken.insert(i);
             kept.extend(new.faces.get(i).cloned());
         }
@@ -420,8 +506,10 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
         score: 0.0,
         above_count: list.faces.iter().take(i + 1).filter(|c| shown(c, &app.ui.rejected_unnamed).is_some()).count(),
         positional: true,
+        takes_out: false,
     });
-    let spec = FaceTile { key, view: f.view, suggestion, named: false, prefix: "unnamed", hover, count: if stack { f.count() } else { 0 } };
+    let open = is_open(f, &app.ui.unnamed_open);
+    let spec = FaceTile { key, view: f.view, suggestion, named: false, prefix: "unnamed", hover, count: if stack { f.count() } else { 0 }, open };
     match face_tile::show(app, ui, r, &spec, selected, ppp) {
         TileEvent::Name => face_tile::open(
             app,
@@ -441,6 +529,7 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
         TileEvent::Confirm => face_tile::confirm_own(app, &Gallery::Unnamed, &entries(list, &app.ui.rejected_unnamed), key),
         TileEvent::ConfirmAbove => face_tile::confirm_through(app, &entries(list, &app.ui.rejected_unnamed), i),
         TileEvent::Hide => reject(app, ui.ctx(), list, key),
+        TileEvent::Badge => toggle(app, f),
         TileEvent::None => {}
     }
     if app.ui.name_edit.as_ref().is_some_and(|e| (e.photo, e.index) == key) {
@@ -704,6 +793,36 @@ mod tests {
         let new = Unnamed { faces: vec![stack(&[4, 3, 7]), face(2, 0, None), face(1, 0, None)], total: 5, ..list(&[]) };
         let now = keep_places(&old, new, Shown { above: 0, on_screen: 3 });
         assert_eq!(entries_of(&now), [vec![1], vec![4, 3, 7], vec![2]]);
+    }
+
+    #[test]
+    fn a_stack_that_lost_a_face_keeps_its_place_and_the_face_taken_out_is_a_tile_out_of_the_way() {
+        let old = Unnamed { faces: vec![face(1, 0, None), stack(&[3, 4, 5]), face(2, 0, None)], total: 5, ..list(&[]) };
+        // 3 was taken out of the stack: the engine lists it as a face of its own, last for now
+        let new = Unnamed { faces: vec![stack(&[4, 5]), face(1, 0, None), face(2, 0, None), face(3, 0, None)], total: 5, ..list(&[]) };
+        let now = keep_places(&old, new, Shown { above: 0, on_screen: 3 });
+        assert_eq!(entries_of(&now), [vec![1], vec![4, 5], vec![2], vec![3]], "the stack is where it was; no other tile moved");
+    }
+
+    #[test]
+    fn the_entries_on_screen_are_counted_from_the_cells_and_an_open_stack_is_one_entry() {
+        let c = [Cell::Entry(0), Cell::Entry(1), Cell::Member { entry: 1, at: 0 }, Cell::Member { entry: 1, at: 1 }, Cell::Entry(2)];
+        // the screen starts at the stack's second face: the stack is in view, only the entry before it is above
+        assert_eq!(shown_cells(&c, 3, 5), Shown { above: 1, on_screen: 2 });
+        assert_eq!(shown_cells(&c, 0, 2), Shown { above: 0, on_screen: 2 });
+        assert_eq!(shown_cells(&c, 4, 5), Shown { above: 2, on_screen: 1 });
+    }
+
+    #[test]
+    fn an_open_stack_is_followed_by_its_faces_in_the_cells() {
+        let l = Unnamed { faces: vec![face(1, 0, None), stack(&[3, 4]), face(2, 0, None)], total: 4, ..list(&[]) };
+        let none = std::collections::HashSet::new();
+        assert_eq!(cells(&l, &none), [Cell::Entry(0), Cell::Entry(1), Cell::Entry(2)]);
+        let open: std::collections::HashSet<FaceKey> = [(4, 0)].into_iter().collect();
+        assert_eq!(
+            cells(&l, &open),
+            [Cell::Entry(0), Cell::Entry(1), Cell::Member { entry: 1, at: 0 }, Cell::Member { entry: 1, at: 1 }, Cell::Entry(2)]
+        );
     }
 
     #[test]

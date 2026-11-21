@@ -170,6 +170,10 @@ pub struct UiState {
     pub unnamed_selected: std::collections::HashSet<(u64, usize)>,
     #[serde(skip)]
     pub unnamed_anchor: Option<usize>,
+    /// The stacks of the Unnamed faces opened in place, as the faces of them when they were opened: a stack is open while it
+    /// holds one of them. Cleared with the rest of the view's positions.
+    #[serde(skip)]
+    pub unnamed_open: std::collections::HashSet<(u64, usize)>,
     /// The gallery the selection is in (`face_tile::Gallery`): a selection lives in one at a time.
     #[serde(skip)]
     pub face_gallery: Option<crate::panels::face_tile::Gallery>,
@@ -474,6 +478,7 @@ impl Default for UiState {
             person_rows: Default::default(),
             unnamed_selected: Default::default(),
             unnamed_anchor: None,
+            unnamed_open: Default::default(),
             face_gallery: None,
             unnamed_scroll: None,
             hidden_locations: Vec::new(),

@@ -142,7 +142,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let rows = people.len().div_ceil(cols);
         let named_h = if people.is_empty() { 40.0 } else { PAD + rows as f32 * row_h };
         let (tile_cols, tile_row) = (columns(width, tile), tile + super::face_tile::STRIP_H + GAP);
-        let tile_rows = unnamed.faces.len().div_ceil(tile_cols);
+        // one cell per entry, and after a stack that was opened one per face of it
+        let cells = super::unnamed::cells(&unnamed, &app.ui.unnamed_open);
+        let tile_rows = cells.len().div_ceil(tile_cols);
         let section_top = named_h + 6.0;
         let (area, _) = ui.allocate_exact_size(vec2(width, section_top + SECTION_H + tile_rows as f32 * tile_row + PAD), Sense::hover());
         let visible = |top: f32, rows: usize, row_h: f32| {
@@ -176,25 +178,46 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let grid_top = section_top + SECTION_H;
         // Tab moved the name box to a tile that may be off screen
         if let Some(key) = app.ui.unnamed_scroll.take()
-            && let Some(i) = unnamed.faces.iter().position(|f| (f.photo, f.index) == key)
+            && let Some(entry) = unnamed.faces.iter().position(|f| (f.photo, f.index) == key)
+            && let Some(i) = cells.iter().position(|c| *c == super::unnamed::Cell::Entry(entry))
         {
             let min = area.min + vec2(PAD + (i % tile_cols) as f32 * (tile + GAP), grid_top + (i / tile_cols) as f32 * tile_row);
             ui.scroll_to_rect(Rect::from_min_size(min, vec2(tile, tile_row)), None);
         }
         // where the list lies on the screen: what a new list keeps in place
         let rows_on = visible(grid_top, tile_rows, tile_row);
-        let above = (rows_on.start * tile_cols).min(unnamed.faces.len());
-        let end = (rows_on.end * tile_cols).min(unnamed.faces.len());
-        app.caches.unnamed_shown = Some(super::unnamed::Shown { above, on_screen: end.saturating_sub(above) });
+        let above = (rows_on.start * tile_cols).min(cells.len());
+        let end = (rows_on.end * tile_cols).min(cells.len());
+        app.caches.unnamed_shown = Some(super::unnamed::shown_cells(&cells, above, end));
         for row in rows_on {
             for col in 0..tile_cols {
                 let i = row * tile_cols + col;
-                let Some(face) = unnamed.faces.get(i) else { break };
+                let Some(cell) = cells.get(i).copied() else { break };
                 shown += 1;
                 let min = area.min + vec2(PAD + col as f32 * (tile + GAP), grid_top + row as f32 * tile_row);
                 let r = Rect::from_min_size(min, vec2(tile, tile + super::face_tile::STRIP_H));
-                if let Some(to) = super::unnamed::tile(app, ui, &unnamed, i, r, face, ppp) {
-                    app.ui.unnamed_scroll = Some(to);
+                // an open stack and its faces sit on a tint
+                let (entry, member) = match cell {
+                    super::unnamed::Cell::Entry(e) => (e, None),
+                    super::unnamed::Cell::Member { entry, at } => (entry, Some(at)),
+                };
+                let Some(face) = unnamed.faces.get(entry) else { break };
+                if super::unnamed::is_open(face, &app.ui.unnamed_open) {
+                    let band = r.expand(GAP / 2.0);
+                    ui.painter().rect_filled(band, 4.0, Color32::from_rgba_unmultiplied(110, 160, 255, 34));
+                    let id = match member.and_then(|at| face.stack.get(at)) {
+                        Some(m) => format!("unnamed-tint-member:{}:{}", m.photo, m.index),
+                        None => format!("unnamed-tint-stack:{}:{}", face.photo, face.index),
+                    };
+                    register(ui, id, band);
+                }
+                match member {
+                    Some(at) => super::unnamed::member_tile(app, ui, (entry, at), &unnamed, r, ppp),
+                    None => {
+                        if let Some(to) = super::unnamed::tile(app, ui, &unnamed, entry, r, face, ppp) {
+                            app.ui.unnamed_scroll = Some(to);
+                        }
+                    }
                 }
             }
         }
@@ -222,6 +245,7 @@ pub(crate) fn follow_view(app: &mut LightcraftApp) {
     if let Some((was, seen, seen_revision)) = app.caches.people_seen.clone() {
         if was != ask {
             super::face_tile::forget_positions(app);
+            app.ui.unnamed_open.clear();
             app.caches.unnamed = None;
             app.caches.unnamed_shown = None;
             app.caches.person_page = None;
@@ -242,6 +266,7 @@ pub(crate) fn follow_view(app: &mut LightcraftApp) {
 
 /// Another view than the People view is drawn: opening the People view again sorts the Unnamed faces afresh.
 pub(crate) fn left(app: &mut LightcraftApp) {
+    app.ui.unnamed_open.clear();
     app.caches.unnamed = None;
     app.caches.unnamed_shown = None;
 }

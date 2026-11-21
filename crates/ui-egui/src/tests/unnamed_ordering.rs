@@ -37,7 +37,7 @@ fn the_list_is_asked_again_when_a_result_was_taken_in_and_not_on_every_frame() {
 }
 
 /// A unit vector of 64 numbers with the given parts (the dimension of the tiny test model).
-fn unit(parts: &[(usize, f32)]) -> Vec<f32> {
+pub(super) fn unit(parts: &[(usize, f32)]) -> Vec<f32> {
     let mut v = vec![0.0f32; 64];
     for (i, x) in parts {
         v[*i] = *x;
@@ -49,7 +49,7 @@ fn unit(parts: &[(usize, f32)]) -> Vec<f32> {
 /// [`people`] with face recognition on (a tiny model) and every face embedded, as a scan would leave them: photo 0 has Ann Lee
 /// and a face that looks like her, photo 1 two faces and photo 2 one face that look like nobody named. The People view is not
 /// open yet. The runs that put the unnamed faces in order are held while the returned flag is set.
-fn recognising(name: &str) -> (Headless, [PhotoId; 3], Arc<AtomicBool>, std::path::PathBuf) {
+pub(super) fn recognising(name: &str) -> (Headless, [PhotoId; 3], Arc<AtomicBool>, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("lc-unnamed-ordering-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("models")).unwrap();

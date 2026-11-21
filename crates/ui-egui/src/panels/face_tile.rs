@@ -65,6 +65,8 @@ pub struct Hover<'a> {
     pub positional: bool,
     /// The reject button removes the face box (the tile has no name left to reject).
     pub removes: bool,
+    /// The cross takes the face out of the stack it is shown in (a face of an opened stack).
+    pub takes_out: bool,
 }
 
 /// What the tile draws.
@@ -81,6 +83,8 @@ pub struct FaceTile<'a> {
     pub hover: Option<Hover<'a>>,
     /// A stack of this many faces (at least two) is drawn with the count on it; 0 for a single face.
     pub count: usize,
+    /// The stack is open: its faces follow it in the grid (only meaningful with a `count`).
+    pub open: bool,
 }
 
 /// What happened to the tile this frame.
@@ -101,6 +105,8 @@ pub enum TileEvent {
     ConfirmAbove,
     /// The cross button: reject it: it is not this person.
     Hide,
+    /// The count on a stack: open it, or close it when open.
+    Badge,
 }
 
 /// One entry of the list a tile belongs to, in the order shown: the face and the name on its strip (its own name in a
@@ -177,6 +183,7 @@ pub fn clear_selection(app: &mut LightcraftApp) {
 pub fn forget_positions(app: &mut LightcraftApp) {
     clear_selection(app);
     app.ui.name_edit = None;
+    app.ui.unnamed_open.clear();
     app.ui.quiet_faces.clear();
     for set in [&mut app.ui.rejected_faces, &mut app.ui.rejected_unnamed, &mut app.ui.rejected_confirmed] {
         set.clear();
@@ -362,9 +369,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect, tile: &FaceTile
     let editing = app.ui.name_edit.as_ref().is_some_and(|e| (e.photo, e.index) == tile.key);
     paint_picture(app, ui, tile, pic, ppp);
     paint_selection(ui, pic, selected, hovered);
-    if tile.count > 0 {
-        paint_count(ui, pic, tile.count, &format!("{}-stack-count:{photo}:{index}", tile.prefix));
-    }
+    let badge = (tile.count > 0).then(|| paint_count(ui, pic, tile.count, &format!("{}-stack-count:{photo}:{index}", tile.prefix)));
+    // (the count is a button of its own, put after the picture so that it wins where they overlap)
+    let badge = badge.map(|r| ui.interact(r, widget_id(tile.prefix, "count", tile.key), Sense::click()));
     if let (Some(b), Some(h)) = (&buttons, &tile.hover) {
         if hovered {
             paint_buttons(ui, b);
@@ -380,6 +387,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect, tile: &FaceTile
     let color = if tile.suggestion.is_some() { t.text } else { t.text_dim };
     p.text(pos2(strip.left() + 5.0, strip.center().y), Align2::LEFT_CENTER, &label, t.font(11.5), color);
     let name = name.on_hover_text(super::people::full_name_tip(&text, &label, crate::i18n::tr("Click to name this face")));
+    if let Some(b) = badge {
+        let tip = if tile.open { crate::i18n::tr("Hide the faces of this stack") } else { crate::i18n::tr("Show the faces of this stack") };
+        if b.on_hover_text(tip).clicked() {
+            return TileEvent::Badge;
+        }
+    }
     if let Some(event) = buttons.as_ref().and_then(Buttons::pressed) {
         return event;
     }
@@ -472,7 +485,9 @@ fn explain_buttons(picture: &egui::Response, b: &Buttons, hover: &Hover) {
         let _ = r.clone().on_hover_text(tip);
     }
     if let Some((_, r)) = &b.hide {
-        let tip = if hover.removes {
+        let tip = if hover.takes_out {
+            crate::i18n::tr("Take this face out of the stack: it will not stack with these faces again").to_string()
+        } else if hover.removes {
             crate::i18n::tr("Remove this face box from the photo").to_string()
         } else if person.is_empty() {
             crate::i18n::tr("Not this person: never suggest this name for this face again").to_string()
@@ -498,8 +513,8 @@ fn paint_picture(app: &mut LightcraftApp, ui: &egui::Ui, tile: &FaceTile, pic: R
 }
 
 /// The count badge of a stack, at the bottom left of the picture (the top left holds the selection's check, the right side the
-/// buttons). It is registered as `id` so that it can be found; opening the stack from it is a later part of the work.
-fn paint_count(ui: &egui::Ui, pic: Rect, count: usize, id: &str) {
+/// buttons). It is registered as `id` so that it can be found, and is a button: its rectangle is returned.
+fn paint_count(ui: &egui::Ui, pic: Rect, count: usize, id: &str) -> Rect {
     let t = Tokens::get(ui.ctx());
     let text = count.to_string();
     let galley = ui.painter().layout_no_wrap(text, t.semibold(12.0), Color32::WHITE);
@@ -509,6 +524,7 @@ fn paint_count(ui: &egui::Ui, pic: Rect, count: usize, id: &str) {
     p.rect_filled(badge, 10.0, Color32::from_rgba_unmultiplied(30, 30, 30, 225));
     p.galley(badge.center() - galley.size() / 2.0, galley, Color32::WHITE);
     crate::widgets::register(ui, id, badge);
+    badge
 }
 
 fn paint_selection(ui: &egui::Ui, pic: Rect, selected: bool, hovered: bool) {
