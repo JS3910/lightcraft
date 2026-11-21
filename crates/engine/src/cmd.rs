@@ -20,6 +20,8 @@ pub(crate) mod face_detect;
 mod face_models;
 mod face_recognize;
 mod face_reject;
+// (stacks of unnamed faces are worked out by the native background run: no recognition on the web)
+#[cfg(not(target_arch = "wasm32"))]
 mod face_stack;
 pub mod filters;
 mod focus;
@@ -184,6 +186,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(face_detect::specs());
         v.extend(face_recognize::specs());
         v.extend(face_reject::specs());
+        #[cfg(not(target_arch = "wasm32"))]
         v.extend(face_stack::specs());
         v.extend(focus::specs());
         v.extend(activity::specs());
