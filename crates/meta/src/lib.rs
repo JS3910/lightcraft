@@ -94,13 +94,26 @@ pub struct Region {
     /// re-read ([`carry_rejections`]), and read as none from a catalog written before the field existed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rejected: Vec<String>,
+    /// Other faces this one was taken out of a stack of: it never stacks with them again. Catalogue only, like
+    /// `rejected`: never written to a sidecar or a file, carried over a metadata re-read ([`carry_rejections`]), and read
+    /// as none from a catalogue written before the field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub apart: Vec<Apart>,
+}
+
+/// A face another face was taken out of a stack with: its photo, and its box as the face index keys it (the box in
+/// ten-thousandths), so that it is the same face after the catalogue is saved and opened again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Apart {
+    pub photo: u64,
+    pub rect: [i32; 4],
 }
 
 /// A face box with no extent, no name, no description and nothing catalogue-only: what a literal starts from
 /// (`Region { rect, name, ..Default::default() }`), so that a new catalogue-only field touches one place.
 impl Default for Region {
     fn default() -> Self {
-        Region { rect: Rect::default(), kind: RegionKind::Face, name: None, description: None, rejected: Vec::new() }
+        Region { rect: Rect::default(), kind: RegionKind::Face, name: None, description: None, rejected: Vec::new(), apart: Vec::new() }
     }
 }
 
@@ -112,16 +125,17 @@ impl Region {
     }
 }
 
-/// Keep the rejections of the regions a metadata re-read is about to replace: each region of `new` that is the same
-/// box as one of `old` (intersection over union of at least a half) takes that region's rejections, when it has none of
-/// its own. Rejections live in the catalog only, so a file never states them.
+/// Keep the catalogue-only marks of the regions a metadata re-read is about to replace (the names a face rejected, and the
+/// faces it was taken out of a stack with): each region of `new` that is the same box as one of `old` (intersection over
+/// union of at least a half) takes that region's marks, when it has none of its own. They live in the catalogue only, so a
+/// file never states them.
 pub fn carry_rejections(old: &[Region], new: &mut [Region]) {
     let mut taken = vec![false; old.len()];
-    for region in new.iter_mut().filter(|r| r.rejected.is_empty()) {
+    for region in new.iter_mut().filter(|r| r.rejected.is_empty() && r.apart.is_empty()) {
         let best = old
             .iter()
             .enumerate()
-            .filter(|(i, o)| !o.rejected.is_empty() && o.kind == region.kind && taken.get(*i) == Some(&false))
+            .filter(|(i, o)| (!o.rejected.is_empty() || !o.apart.is_empty()) && o.kind == region.kind && taken.get(*i) == Some(&false))
             .map(|(i, o)| (i, overlap(&o.rect, &region.rect)))
             .filter(|(_, v)| *v >= 0.5)
             .max_by(|a, b| a.1.total_cmp(&b.1));
@@ -129,6 +143,7 @@ pub fn carry_rejections(old: &[Region], new: &mut [Region]) {
             && let Some(o) = old.get(i)
         {
             region.rejected = o.rejected.clone();
+            region.apart = o.apart.clone();
             if let Some(t) = taken.get_mut(i) {
                 *t = true;
             }
@@ -501,6 +516,7 @@ mod tests {
             name: None,
             description: None,
             rejected: rejected.iter().map(|s| s.to_string()).collect(),
+            apart: Vec::new(),
         }
     }
 
@@ -534,6 +550,34 @@ mod tests {
         assert!(back.rejected.is_empty());
         let with: Region = serde_json::from_str(&serde_json::to_string(&face_at(0.1, &["Ann"])).unwrap()).unwrap();
         assert_eq!(with.rejected, ["Ann"]);
+    }
+
+    fn apart_from(photo: u64) -> Apart {
+        Apart { photo, rect: [1000, 2000, 3000, 5000] }
+    }
+
+    #[test]
+    fn a_re_read_region_takes_the_faces_it_was_taken_out_of_a_stack_with() {
+        let mut taken = face_at(0.1, &[]);
+        taken.apart = vec![apart_from(7), apart_from(8)];
+        let old = [taken, face_at(0.6, &["Bob"])];
+        let mut new = [face_at(0.61, &[]), face_at(0.11, &[])];
+        carry_rejections(&old, &mut new);
+        assert_eq!(new[1].apart, [apart_from(7), apart_from(8)]);
+        assert!(new[0].apart.is_empty());
+        assert_eq!(new[0].rejected, ["Bob"], "rejections are still carried");
+    }
+
+    #[test]
+    fn faces_taken_out_of_a_stack_are_not_written_when_there_are_none_and_old_catalogs_read_as_none() {
+        let json = serde_json::to_string(&face_at(0.1, &[])).unwrap();
+        assert!(!json.contains("apart"), "an empty list is not written: {json}");
+        let back: Region = serde_json::from_str(&json).unwrap();
+        assert!(back.apart.is_empty());
+        let mut with = face_at(0.1, &[]);
+        with.apart = vec![apart_from(3)];
+        let back: Region = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+        assert_eq!(back.apart, [apart_from(3)]);
     }
 
     #[test]
