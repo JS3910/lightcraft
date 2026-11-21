@@ -21,7 +21,7 @@ pub(crate) fn temp(name: &str) -> PathBuf {
 /// Seed CPU-only settings before installing models in a fresh test folder. These tests cover catalog and
 /// model logic; GPU kernels have separate tests. Calling the settings mutation command here would also
 /// detach the process-wide detector accelerator, interfering with other tests in the same process.
-fn keep_on_cpu(s: &mut Session) {
+pub(crate) fn keep_on_cpu(s: &mut Session) {
     let dir = s.face_models_dir.as_ref().unwrap();
     let settings = dir.join("settings.json");
     assert!(!settings.exists(), "only seed a fresh fixture's settings");

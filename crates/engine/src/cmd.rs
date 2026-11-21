@@ -20,6 +20,7 @@ pub(crate) mod face_detect;
 mod face_models;
 mod face_recognize;
 mod face_reject;
+mod face_stack;
 pub mod filters;
 mod focus;
 pub mod geocode;
@@ -183,6 +184,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(face_detect::specs());
         v.extend(face_recognize::specs());
         v.extend(face_reject::specs());
+        v.extend(face_stack::specs());
         v.extend(focus::specs());
         v.extend(activity::specs());
         v
