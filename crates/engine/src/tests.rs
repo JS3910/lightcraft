@@ -17,6 +17,7 @@ mod dcp_corpus;
 mod denoise;
 mod export;
 mod face_arrange_bg;
+mod face_stacks;
 mod face_models;
 mod face_person_cost;
 #[cfg(not(target_arch = "wasm32"))]

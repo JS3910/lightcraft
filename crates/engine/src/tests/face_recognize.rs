@@ -549,7 +549,7 @@ fn unnamed_faces_come_with_look_alikes_together_and_the_name_the_named_ones_sugg
     put(&mut s, a, 0.1, unit64(&[(0, 1.0)])); // Ann, named
     put(&mut s, a, 0.5, unit64(&[(1, 1.0)])); // like Bob
     put(&mut s, b, 0.1, unit64(&[(0, 0.97), (2, 0.2)])); // like Ann
-    put(&mut s, b, 0.5, unit64(&[(1, 0.98), (2, 0.2)])); // like Bob
+    put(&mut s, b, 0.5, unit64(&[(1, 0.6), (2, 0.8)])); // like Bob, but not enough to stack
     put(&mut s, c, 0.3, unit64(&[(0, 0.95), (3, 0.3)])); // like Ann
     // (a's last face, at 0.7, is not embedded yet)
     let r = s.execute("faces.unnamed", &json!({})).unwrap();
@@ -607,8 +607,8 @@ fn unnamed_faces_put_the_suggested_ones_first_by_score_then_look_alikes_then_the
     put(&mut s, a, 0.5, unit64(&[(5, 1.0)])); // a stranger
     put(&mut s, a, 0.6, unit64(&[(6, 1.0)])); // another kind of stranger
     put(&mut s, b, 0.1, unit64(&[(0, 0.99), (2, 0.1)])); // very like Ann
-    put(&mut s, b, 0.2, unit64(&[(5, 0.99), (7, 0.1)])); // looks like the first stranger
-    put(&mut s, b, 0.4, unit64(&[(6, 0.99), (7, 0.1)])); // looks like the other stranger
+    put(&mut s, b, 0.2, unit64(&[(5, 0.6), (8, 0.8)])); // looks like the first stranger, not enough to stack
+    put(&mut s, b, 0.4, unit64(&[(6, 0.6), (9, 0.8)])); // looks like the other stranger, not enough to stack
     put(&mut s, c, 0.1, unit64(&[(0, 0.95), (4, 0.3)])); // fairly like Ann
     put(&mut s, c, 0.2, unit64(&[(1, 0.97), (3, 0.2)])); // like Bob, as much as a's
     let r = s.execute("faces.unnamed", &json!({})).unwrap();

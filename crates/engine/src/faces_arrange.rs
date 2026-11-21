@@ -357,6 +357,10 @@ fn nearest_chain(embeddings: &[&[f32]], cancel: &AtomicBool) -> Option<Vec<usize
 #[derive(Default)]
 pub(crate) struct State {
     pub scorer: Scorer,
+    /// The highest similarity between two people, for the stacking bar.
+    pub calibration: crate::faces_stack::Calibration,
+    /// The stacks of the last run.
+    pub stacks: crate::faces_stack::StackState,
     /// A fingerprint of the faces in look-alike order, and their order: reused while those are the same faces.
     chain_of: u64,
     chain: Vec<Key>,
@@ -375,8 +379,15 @@ pub(crate) struct Input {
 pub(crate) struct Output {
     /// A face to the stamp it was scored at, its suggested name and the score.
     pub suggestions: HashMap<Key, (u64, String, f32)>,
-    /// The faces without a suggestion (the first [`MAX_ARRANGED`]) in look-alike order.
+    /// The faces without a suggestion and in no stack (the first [`MAX_ARRANGED`]) in look-alike order.
     pub chain: Vec<Key>,
+    /// The stacks of faces without a suggestion, the biggest first: each face with the stamp it was stacked at, the most typical first.
+    pub stacks: Vec<Vec<(Key, u64)>>,
+    /// The bar the stacks were made at.
+    pub bar: f32,
+    /// How many faces the stacking looked for look-alikes of, and how many comparisons it made (the rest was kept from the run before).
+    pub stack_new: usize,
+    pub stack_compared: usize,
     /// How many person scores the run worked out (a face against a person is one).
     pub scored: usize,
     /// The look-alike order of the last run was still the right one, so it was not worked out again.
@@ -397,6 +408,12 @@ pub(crate) fn arrange(state: &mut State, input: &Input, cancel: &AtomicBool, pro
             None => plain.push(face),
         }
     }
+    // faces that are virtually certain to be one person are one stack; the others are put next to their look-alikes
+    let bar = state.calibration.bar(&input.people, cancel)?;
+    let found = crate::faces_stack::stack(&mut state.stacks, &plain, bar, cancel, crate::faces_stack::BRUTE_LIMIT)?;
+    let stacked: std::collections::HashSet<usize> = found.iter().flatten().copied().collect();
+    let stacks: Vec<Vec<(Key, u64)>> = found.iter().map(|s| s.iter().filter_map(|i| plain.get(*i).map(|f| (f.key(), f.stamp))).collect()).collect();
+    let mut plain: Vec<&Face> = plain.into_iter().enumerate().filter(|(i, _)| !stacked.contains(i)).map(|(_, f)| f).collect();
     plain.truncate(MAX_ARRANGED);
     let chain_of = fingerprint(&plain.iter().map(|f| (f.key(), f.stamp)).collect::<Vec<_>>());
     let chain_reused = state.chain_of == chain_of && state.chain.len() == plain.len();
@@ -405,7 +422,16 @@ pub(crate) fn arrange(state: &mut State, input: &Input, cancel: &AtomicBool, pro
         state.chain = order.into_iter().filter_map(|i| plain.get(i).map(|f| f.key())).collect();
         state.chain_of = chain_of;
     }
-    Some(Output { suggestions, chain: state.chain.clone(), scored: state.scorer.last_scored, chain_reused })
+    Some(Output {
+        suggestions,
+        chain: state.chain.clone(),
+        stacks,
+        bar,
+        stack_new: state.stacks.last_new,
+        stack_compared: state.stacks.last_compared,
+        scored: state.scorer.last_scored,
+        chain_reused,
+    })
 }
 
 /// A fingerprint of what a run is asked: the model and bars, the people with their faces, and the faces with their stamps.
@@ -417,10 +443,13 @@ pub(crate) fn signature(settings: Settings, people: &[Person], faces: &[Face]) -
 }
 
 /// What the last finished run worked out, and for which [`signature`].
+#[derive(Default)]
 struct Last {
     sig: u64,
     suggestions: HashMap<Key, (u64, String, f32)>,
     chain: HashMap<Key, usize>,
+    /// For each stacked face (at the stamp it was stacked at): which stack it is in, and its place in it (the most typical first).
+    stack_of: HashMap<Key, (usize, u64, usize)>,
 }
 
 /// A run on its thread: what it is for, how to stop it, and where its result comes.
@@ -458,6 +487,11 @@ pub(crate) struct Jobs {
     pub last_scored: usize,
     /// The last result's run took the look-alike order of the run before it instead of working it out again.
     pub chain_reused: bool,
+    /// What the last result's stacking cost: the faces it looked for look-alikes of, and the comparisons of two faces it made.
+    pub stack_new: usize,
+    pub stack_compared: usize,
+    /// The bar the last result's stacks were made at.
+    pub bar: f32,
     /// Tests only: a run waits here until this is false (or half a minute has passed, so a regression fails instead of hanging).
     #[cfg(any(test, feature = "test-hooks"))]
     pub hold: Option<Arc<AtomicBool>>,
@@ -532,7 +566,9 @@ impl Jobs {
                 self.stopped = None;
                 let chain = output.chain.iter().enumerate().map(|(i, k)| (*k, i)).collect();
                 (self.last_scored, self.chain_reused) = (output.scored, output.chain_reused);
-                self.last = Some(Last { sig, suggestions: output.suggestions, chain });
+                (self.stack_new, self.stack_compared, self.bar) = (output.stack_new, output.stack_compared, output.bar);
+                let stack_of = output.stacks.iter().enumerate().flat_map(|(s, m)| m.iter().enumerate().map(move |(pos, (k, stamp))| (*k, (s, *stamp, pos)))).collect();
+                self.last = Some(Last { sig, suggestions: output.suggestions, chain, stack_of });
             }
             Ok(Done { state, output: None }) => {
                 self.state = Some(state);
@@ -616,40 +652,67 @@ impl Jobs {
     /// photo and region order) as they are put now: the positions in the order, which of them carry a suggestion, and
     /// whether any were put next to look-alikes.
     ///
-    /// Faces the last run scored at the same stamp keep their suggestion, the likeliest first. The others without one
-    /// are in look-alike order where the last run had them in it, then in photo order, then the faces not embedded.
+    /// Faces the last run scored at the same stamp keep their suggestion, the likeliest first. Then the stacks the last
+    /// run made, the biggest first, with the faces of each that are listed (a stack with one face listed is that face alone,
+    /// after the look-alikes), then the others without a suggestion in look-alike order where the last run had them in it,
+    /// then in photo order, then the faces not embedded.
     ///
-    /// The names of the suggestions are copied for the first `limit` faces of the order only.
+    /// The names of the suggestions are copied for the first `limit` entries of the order only.
     pub fn arrange(&self, listed: &[Listed], limit: usize) -> Arrangement {
         let last = self.last.as_ref();
-        // (group, position in the look-alike order, score, place in `listed`)
-        let mut keyed: Vec<(u8, usize, f32, usize)> = Vec::with_capacity(listed.len());
+        // the listed faces of each stack: (place in the stack, place in `listed`)
+        let mut in_stack: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+        // (group, size order, score, position in the look-alike order, place in `listed`)
+        let mut keyed: Vec<(u8, usize, f32, usize, usize)> = Vec::with_capacity(listed.len());
         for (at, (photo, _, rect, ord, stamp)) in listed.iter().enumerate() {
             let key = (*photo, *rect, *ord);
             let Some(stamp) = stamp else {
-                keyed.push((3, 0, 0.0, at));
+                keyed.push((4, 0, 0.0, 0, at));
                 continue;
             };
             if let Some((_, _, score)) = last.and_then(|l| l.suggestions.get(&key)).filter(|(was, _, _)| was == stamp) {
-                keyed.push((0, 0, *score, at));
+                keyed.push((0, 0, *score, 0, at));
+            } else if let Some((s, _, pos)) = last.and_then(|l| l.stack_of.get(&key)).filter(|(_, was, _)| was == stamp) {
+                in_stack.entry(*s).or_default().push((*pos, at));
             } else if let Some(pos) = last.and_then(|l| l.chain.get(&key)) {
-                keyed.push((1, *pos, 0.0, at));
+                keyed.push((2, 0, 0.0, *pos, at));
             } else {
-                keyed.push((2, 0, 0.0, at));
+                keyed.push((3, 0, 0.0, 0, at));
+            }
+        }
+        let mut stacks: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (_, mut faces) in in_stack {
+            faces.sort_unstable();
+            let places: Vec<usize> = faces.into_iter().map(|(_, at)| at).collect();
+            match places.as_slice() {
+                // a stack with one face in scope is a single face
+                [only] => keyed.push((2, 0, 0.0, usize::MAX, *only)),
+                [first, ..] => {
+                    keyed.push((1, usize::MAX - places.len(), 0.0, 0, *first));
+                    stacks.insert(*first, places);
+                }
+                [] => {}
             }
         }
         // `listed` is in photo and region order, so the place in it is that order
-        keyed.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.total_cmp(&a.2)).then(a.1.cmp(&b.1)).then(a.3.cmp(&b.3)));
+        keyed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(b.2.total_cmp(&a.2)).then(a.3.cmp(&b.3)).then(a.4.cmp(&b.4)));
         let mut suggestions = HashMap::new();
-        for (photo, index, rect, ord, _) in keyed.iter().take(limit).filter(|k| k.0 == 0).filter_map(|k| listed.get(k.3)) {
+        for (photo, index, rect, ord, _) in keyed.iter().take(limit).filter(|k| k.0 == 0).filter_map(|k| listed.get(k.4)) {
             if let Some((_, name, score)) = last.and_then(|l| l.suggestions.get(&(*photo, *rect, *ord))) {
                 suggestions.insert((*photo, *index), (name.clone(), *score));
             }
         }
         Arrangement {
             suggested: keyed.first().is_some_and(|k| k.0 == 0),
-            look_alike: keyed.iter().filter(|k| k.0 == 1).count() >= 2,
-            order: keyed.into_iter().map(|k| k.3).collect(),
+            look_alike: keyed.iter().filter(|k| k.0 == 2 && k.3 != usize::MAX).count() >= 2,
+            stacks: keyed.iter().filter(|k| k.0 == 1).count(),
+            order: keyed
+                .into_iter()
+                .map(|k| match k.0 {
+                    1 => Item::Stack(stacks.remove(&k.4).unwrap_or_default()),
+                    _ => Item::Face(k.4),
+                })
+                .collect(),
             suggestions,
         }
     }
@@ -659,12 +722,21 @@ impl Jobs {
 /// very box it is ([`Key`]) and the stamp it was embedded and scored at (none when not embedded).
 pub(crate) type Listed = (u64, usize, [u64; 4], u32, Option<u64>);
 
+/// One tile of the arrangement: a face, or a stack of faces (the most typical first).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Item {
+    Face(usize),
+    Stack(Vec<usize>),
+}
+
 /// How the faces were put by [`Jobs::arrange`].
 pub(crate) struct Arrangement {
-    /// Places in the list that was asked about, in the order to show.
-    pub order: Vec<usize>,
+    /// What to show, in order: a face or a stack, as places in the list that was asked about.
+    pub order: Vec<Item>,
     pub suggested: bool,
     pub look_alike: bool,
+    /// How many stacks there are in `order`.
+    pub stacks: usize,
     pub suggestions: HashMap<(u64, usize), (String, f32)>,
 }
 
@@ -826,9 +898,12 @@ mod tests {
     /// The faces in the order a list of them is shown, as `outcome` puts them (they are listed in photo and region order).
     fn shown_order(outcome: &Output, faces: &[Face]) -> Vec<usize> {
         let chain = outcome.chain.iter().enumerate().map(|(i, k)| (*k, i)).collect();
-        let jobs = Jobs { last: Some(Last { sig: 0, suggestions: outcome.suggestions.clone(), chain }), ..Jobs::default() };
+        let jobs = Jobs { last: Some(Last { sig: 0, suggestions: outcome.suggestions.clone(), chain, ..Last::default() }), ..Jobs::default() };
         let listed: Vec<Listed> = faces.iter().enumerate().map(|(i, f)| (f.photo, i, f.rect, f.ord, Some(f.stamp))).collect();
-        jobs.arrange(&listed, usize::MAX).order
+        jobs.arrange(&listed, usize::MAX).order.into_iter().flat_map(|i| match i {
+            Item::Face(i) => vec![i],
+            Item::Stack(s) => s,
+        }).collect()
     }
 
     /// What `state` (which has worked through the changes so far) gives for `w`, against what a fresh state gives for the same
@@ -993,10 +1068,10 @@ mod tests {
         let out = arrange(&mut state, &input, &quiet, &|_, _| {}).expect("not cancelled");
         assert_eq!(out.suggestions.get(&input.faces[0].key()).map(|s| s.1.as_str()), Some("Ann"));
         assert!(!out.suggestions.contains_key(&input.faces[1].key()), "the one that rejected Ann is not suggested her");
-        let jobs = Jobs { last: Some(Last { sig: 0, suggestions: out.suggestions.clone(), chain: HashMap::new() }), ..Jobs::default() };
+        let jobs = Jobs { last: Some(Last { sig: 0, suggestions: out.suggestions.clone(), ..Last::default() }), ..Jobs::default() };
         let listed: Vec<Listed> = input.faces.iter().enumerate().map(|(i, f)| (f.photo, i, f.rect, f.ord, Some(f.stamp))).collect();
         let a = jobs.arrange(&listed, usize::MAX);
-        assert_eq!(a.order, vec![0, 1]);
+        assert_eq!(a.order, vec![Item::Face(0), Item::Face(1)]);
         assert_eq!(a.suggestions.get(&(9, 0)).map(|s| s.0.as_str()), Some("Ann"));
         assert!(!a.suggestions.contains_key(&(9, 1)));
         // and neither is scored again on the next run

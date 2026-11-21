@@ -150,7 +150,12 @@ fn a_changed_set_of_named_faces_or_a_rejection_changes_the_suggestions_after_the
     let (mut s, [a, b, _], _, d) = library("scope-cache");
     let suggestion = |s: &mut Session, photo: PhotoId, index: u64| -> Value {
         let r = s.execute("faces.unnamed", &json!({})).unwrap();
-        r["faces"].as_array().unwrap().iter().find(|f| f["photo"] == photo.0 && f["index"] == index).unwrap()["suggestion"]["name"].clone()
+        // (a face with no suggestion may be in a stack of look-alikes: then what is listed for it has none)
+        let holds = |f: &&Value| {
+            (f["photo"] == photo.0 && f["index"] == index)
+                || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| x["photo"] == photo.0 && x["index"] == index))
+        };
+        r["faces"].as_array().unwrap().iter().find(holds).unwrap()["suggestion"]["name"].clone()
     };
     assert_eq!(suggestion(&mut s, a, 1), "Ann");
     assert_eq!(suggestion(&mut s, a, 1), "Ann", "asked again, the same answer");
@@ -186,7 +191,12 @@ fn a_rename_that_only_changes_the_capitalization_changes_the_name_suggested() {
     let (mut s, [a, b, _], _, d) = library("scope-case");
     let suggestion = |s: &mut Session, photo: PhotoId, index: u64| -> Value {
         let r = s.execute("faces.unnamed", &json!({})).unwrap();
-        r["faces"].as_array().unwrap().iter().find(|f| f["photo"] == photo.0 && f["index"] == index).unwrap()["suggestion"]["name"].clone()
+        // (a face with no suggestion may be in a stack of look-alikes: then what is listed for it has none)
+        let holds = |f: &&Value| {
+            (f["photo"] == photo.0 && f["index"] == index)
+                || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| x["photo"] == photo.0 && x["index"] == index))
+        };
+        r["faces"].as_array().unwrap().iter().find(holds).unwrap()["suggestion"]["name"].clone()
     };
     assert_eq!(suggestion(&mut s, b, 1), "Ann");
     s.execute("faces.renamePerson", &json!({"from": "Ann", "to": "ANN"})).unwrap();

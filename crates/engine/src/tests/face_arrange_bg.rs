@@ -15,7 +15,7 @@ use crate::Session;
 use crate::faces_arrange::Fail;
 
 /// Photo `a` holds Ann and Bob (named) and a face like Ann; photo `b` a face like Ann and a face like nobody; photo `c` two
-/// faces that look like each other and like nobody named. Every face is embedded.
+/// faces that look like each other (but not enough to be one stack) and like nobody named. Every face is embedded.
 fn library(name: &str) -> (Session, std::path::PathBuf, [PhotoId; 3]) {
     let d = temp(name);
     let (mut s, _) = setup(&d, 64);
@@ -32,7 +32,7 @@ fn library(name: &str) -> (Session, std::path::PathBuf, [PhotoId; 3]) {
     put(b, 0.1, unit64(&[(0, 0.9), (4, 0.4)])); // a little less like Ann
     put(b, 0.5, unit64(&[(5, 1.0)])); // like nobody
     put(c, 0.1, unit64(&[(6, 1.0)])); // like nobody
-    put(c, 0.5, unit64(&[(6, 0.99), (7, 0.1)])); // like the one before
+    put(c, 0.5, unit64(&[(6, 0.6), (7, 0.8)])); // like the one before, but not nearly enough to stack
     (s, d, [a, b, c])
 }
 
@@ -527,13 +527,18 @@ fn after_every_random_change_the_order_is_what_scoring_everyone_again_gives() {
             let fresh = s.execute("faces.unnamed", &json!({})).unwrap();
             s.faces.arrange = kept;
             assert_eq!(inc, fresh, "seed {seed} step {step}");
+            // (the faces in stacks have no suggestion, and are listed only inside their stack)
             let got: std::collections::HashMap<(u64, usize), Option<(String, f32)>> = inc["faces"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|f| {
+                .flat_map(|f| {
                     let k = (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap() as usize);
-                    (k, f["suggestion"]["name"].as_str().map(|n| (n.to_string(), f["suggestion"]["score"].as_f64().unwrap() as f32)))
+                    let own = (k, f["suggestion"]["name"].as_str().map(|n| (n.to_string(), f["suggestion"]["score"].as_f64().unwrap() as f32)));
+                    match f["stack"]["faces"].as_array() {
+                        Some(m) => m.iter().map(|x| ((x["photo"].as_u64().unwrap(), x["index"].as_u64().unwrap() as usize), None)).collect(),
+                        None => vec![own],
+                    }
                 })
                 .collect();
             let want = from_scratch(&s, threshold);
