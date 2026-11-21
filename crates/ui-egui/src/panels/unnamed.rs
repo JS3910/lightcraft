@@ -418,11 +418,8 @@ pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, list: &Unnamed, face
     if let face_tile::Rejection::Rejected(keys) = face_tile::reject(app, ctx, &Gallery::Unnamed, &order, face) {
         for (at, f) in list.faces.iter().enumerate().filter(|(_, f)| f.keys().iter().any(|k| keys.contains(k))) {
             // (every face of a stack is remembered: the stack's head may change while it stays in place)
-            let members: Vec<(FaceKey, lightcraft_geom::Rect)> = if f.is_stack() {
-                f.stack.iter().map(|m| ((m.photo, m.index), m.rect)).collect()
-            } else {
-                vec![((f.photo, f.index), f.view)]
-            };
+            let members: Vec<(FaceKey, lightcraft_geom::Rect)> =
+                if f.is_stack() { f.stack.iter().map(|m| ((m.photo, m.index), m.rect)).collect() } else { vec![((f.photo, f.index), f.view)] };
             for ((photo, index), rect) in members {
                 app.ui.rejected_unnamed.remember(&super::person::Face { photo, index, rect, score: 0.0 }, at);
             }

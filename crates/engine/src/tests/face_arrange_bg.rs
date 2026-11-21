@@ -539,7 +539,9 @@ fn after_every_random_change_the_order_is_what_scoring_everyone_again_gives() {
                         // (a stack with a suggestion says it for every face; the score is its representative's)
                         Some(m) => m
                             .iter()
-                            .map(|x| ((x["photo"].as_u64().unwrap(), x["index"].as_u64().unwrap() as usize), own.1.clone().map(|(n, _)| (n, f32::NAN))))
+                            .map(|x| {
+                                ((x["photo"].as_u64().unwrap(), x["index"].as_u64().unwrap() as usize), own.1.clone().map(|(n, _)| (n, f32::NAN)))
+                            })
                             .collect(),
                         None => vec![own],
                     }
@@ -551,7 +553,9 @@ fn after_every_random_change_the_order_is_what_scoring_everyone_again_gives() {
                 let g = got.get(&k).unwrap_or_else(|| panic!("seed {seed} step {step}: {k:?} is not listed"));
                 match (g, &w) {
                     (None, None) => {}
-                    (Some((n, x)), Some((m, y))) => assert!(n == m && (x.is_nan() || (x - y).abs() < 1e-6), "seed {seed} step {step} {k:?}: {g:?} vs {w:?}"),
+                    (Some((n, x)), Some((m, y))) => {
+                        assert!(n == m && (x.is_nan() || (x - y).abs() < 1e-6), "seed {seed} step {step} {k:?}: {g:?} vs {w:?}")
+                    }
                     _ => panic!("seed {seed} step {step} {k:?}: {g:?} vs {w:?}"),
                 }
             }

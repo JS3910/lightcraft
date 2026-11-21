@@ -416,7 +416,8 @@ pub(crate) fn arrange(state: &mut State, input: &Input, cancel: &AtomicBool, pro
     let bar = state.calibration.bar(&input.people, cancel)?;
     let found = crate::faces_stack::stack(&mut state.stacks, &plain, bar, cancel, crate::faces_stack::BRUTE_LIMIT)?;
     let stacked: std::collections::HashSet<usize> = found.iter().flatten().copied().collect();
-    let mut stacks: Vec<Vec<(Key, u64)>> = found.iter().map(|s| s.iter().filter_map(|i| plain.get(*i).map(|f| (f.key(), f.stamp))).collect()).collect();
+    let mut stacks: Vec<Vec<(Key, u64)>> =
+        found.iter().map(|s| s.iter().filter_map(|i| plain.get(*i).map(|f| (f.key(), f.stamp))).collect()).collect();
     let (mut stack_new, mut stack_compared) = (state.stacks.last_new, state.stacks.last_compared);
     // the faces suggested one name are stacked among themselves, under the same bar and the same no-chaining rule
     for (name, faces) in &named {
@@ -436,16 +437,7 @@ pub(crate) fn arrange(state: &mut State, input: &Input, cancel: &AtomicBool, pro
         state.chain = order.into_iter().filter_map(|i| plain.get(i).map(|f| f.key())).collect();
         state.chain_of = chain_of;
     }
-    Some(Output {
-        suggestions,
-        chain: state.chain.clone(),
-        stacks,
-        bar,
-        stack_new,
-        stack_compared,
-        scored: state.scorer.last_scored,
-        chain_reused,
-    })
+    Some(Output { suggestions, chain: state.chain.clone(), stacks, bar, stack_new, stack_compared, scored: state.scorer.last_scored, chain_reused })
 }
 
 /// A fingerprint of what a run is asked: the model and bars, the people with their faces, and the faces with their stamps.

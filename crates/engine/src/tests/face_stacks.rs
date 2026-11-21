@@ -364,11 +364,12 @@ const NEAR_BOB: [(usize, f32); 2] = [(0, 0.643), (1, 0.766)];
 fn faces_with_the_same_suggestion_are_a_stack_that_carries_it_and_faces_with_different_suggestions_never_share_one() {
     let (mut s, d, [_, b]) = suggested(
         "stacks-sg-names",
-        &[&[NEAR_ANN[0], NEAR_ANN[1], (20, 0.02)], &[NEAR_BOB[0], NEAR_BOB[1], (21, 0.02)], &[NEAR_ANN[0], NEAR_ANN[1], (20, 0.03)], &[
-            NEAR_BOB[0],
-            NEAR_BOB[1],
-            (21, 0.03),
-        ]],
+        &[
+            &[NEAR_ANN[0], NEAR_ANN[1], (20, 0.02)],
+            &[NEAR_BOB[0], NEAR_BOB[1], (21, 0.02)],
+            &[NEAR_ANN[0], NEAR_ANN[1], (20, 0.03)],
+            &[NEAR_BOB[0], NEAR_BOB[1], (21, 0.03)],
+        ],
         &[],
     );
     let r = settle(&mut s);
@@ -408,10 +409,14 @@ fn a_stack_with_a_suggestion_sorts_among_the_suggested_faces_by_the_score_of_its
         &[],
     );
     let r = settle(&mut s);
-    let order: Vec<Vec<Key>> = entries(&r).into_iter().take(3).map(|mut e| {
-        e.sort_unstable();
-        e
-    }).collect();
+    let order: Vec<Vec<Key>> = entries(&r)
+        .into_iter()
+        .take(3)
+        .map(|mut e| {
+            e.sort_unstable();
+            e
+        })
+        .collect();
     assert_eq!(order, vec![vec![(p.0, 2)], vec![(p.0, 1), (p.0, 3)], vec![(p.0, 0)]], "the better face, the stack, the weaker face: {r}");
     let score = |at: usize| r["faces"][at]["suggestion"]["score"].as_f64().unwrap();
     assert!(score(0) > score(1) && score(1) > score(2), "{r}");
