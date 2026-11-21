@@ -531,6 +531,44 @@ those photos. A person with named faces in the library but none in these photos 
 section says "{name} has no named faces in these photos." and More goes on searching these photos for them. The page stays
 open when the source or a filter changes. A person nobody has named has no page: "No faces by that name".
 
+#### Confirmed faces in three rows
+
+A person with thousands of confirmed faces would fill the screen with them and push More far down, so the Confirmed section
+shows at most **three rows** of tiles (how many fit in a row depends on the window's width). A button under the rows, **Show all N**
+(N is the number of confirmed faces listed), opens the rest in place and then reads **Show fewer**; with every face in three
+rows there is no button. Opening the page again starts with three rows. Beside it, **Select all** selects the faces on screen.
+
+- *Order.* The faces you confirmed during this visit (from More, or by naming) come first, the latest first, inside the three
+  rows (they take places there and never add a row, so the page does not jump). Then a **varied set**: the most typical face first
+  (the closest to the average of the person's embedded faces), and each next face the one least like the faces already picked,
+  so the three rows show the person's different looks rather than five hundred near-identical frames. Faces without an
+  embedding yet come after the embedded ones. Opened, the same faces stay at the top and the rest follow in the order the
+  Confirmed section had before.
+- *Only what is on screen.* Select all, a click-range, the Delete key and the reject buttons act on the tiles on screen, never on
+  faces left out of the rows: closing the section drops the hidden faces from a selection.
+- *Where it is worked out.* In the engine, by `faces.person` with `varied: N` (the page asks for as many as three rows of a 4,096-point
+  window with the smallest tiles hold, 174, so a window change never asks again; a narrower window shows a prefix of the same
+  picks). It runs when the page asks for the person again, which is when the catalog changes (and at most once a second while the
+  scan learns faces), never per frame; it is a greedy farthest-point pass, N times the confirmed faces times 512 numbers, on rayon's
+  threads. Faces whose embedding is missing, has the wrong length or is not a finite number are never picked and follow in
+  their own order. `confirmed` stays capped at 5,000 faces; the picks are made among them.
+- *Which faces are new.* The window notes which confirmed faces the page had when it was opened and puts any that come later
+  first; a source or filter change, or Undo or Redo, starts that over (the faces then in scope are not "new").
+
+Measured in a release build with 5,000 confirmed faces of 512 numbers (twelve looks with noise) and 2,000 unnamed faces for More to
+look through, the best of five asks, `cargo test --release -p lightcraft-engine --lib face_person_cost -- --ignored --nocapture`
+(`RAYON_NUM_THREADS` sets the threads; one run each on a 32-thread machine with other work going on, so the last digit means little).
+"Without" is `faces.person` as it was (most of it is More); "more" is what `varied` adds on the calling thread:
+
+| Threads | Without `varied` | `varied: 21` | `varied: 63` | `varied: 174` (what the page asks) |
+|---|---|---|---|---|
+| 32 | 55 ms | +9.7 ms | +14.8 ms | **+31 ms** |
+| 8 | 86 ms | +9.1 ms | +13.7 ms | **+21 ms** |
+| 4 | 148 ms | +7.4 ms | +11.6 ms | **+18 ms** |
+
+So the picks cost 18 to 31 ms, once per change to the person's faces, on top of the 55 to 148 ms `faces.person` already took with
+2,000 candidate faces for More (which a person with thousands of faces has always paid; the picks are not the larger part of it).
+
 ### Rejecting a name
 
 `×` on a face tile says "this is not that person", and LightCraft remembers it. It is on every tile of the Unnamed faces and of a person's page: on a More face or an unnamed face with a suggestion it rejects the suggested name; on a confirmed face it removes the name and rejects it (the face is then no longer that person's); on a tile with nothing left to reject it removes the face box (see below). The rejected name is kept on the face
@@ -608,7 +646,7 @@ reuses the pictures of its step instead of rendering every face again.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?, scope?}` (a person's faces and the unnamed faces that look like them; `scope: "visible"` limits them to the People view's photos), `faces.unnamed {limit?, scope?, wait?}` (every unnamed face, or with `scope: "visible"` only those in the People view's photos, the most confident suggestions first, then the look-alikes together, then the faces not embedded yet; with suggested names; `wait: false` answers at once with the best order there is and `ordering: true`), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?, scope?, varied?}` (a person's faces and the unnamed faces that look like them; `scope: "visible"` limits them to the People view's photos; `varied: N` puts the N most varied confirmed faces first), `faces.unnamed {limit?, scope?, wait?}` (every unnamed face, or with `scope: "visible"` only those in the People view's photos, the most confident suggestions first, then the look-alikes together, then the faces not embedded yet; with suggested names; `wait: false` answers at once with the best order there is and `ordering: true`), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 

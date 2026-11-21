@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### A person's page shows three rows of confirmed faces
+- A person with thousands of confirmed faces no longer fills the screen with them: the Confirmed section shows three rows (how
+  many tiles a row has depends on the window's width), and **Show all N** under them opens the rest in place (then **Show fewer**).
+  With every face in three rows there is no button, and the page starts with three rows each time it is opened.
+- The three rows hold the faces you confirmed during this visit first, the latest first (they take places in the rows and never
+  add one), then faces that look as different from each other as possible: the most typical face first, then each next face the
+  one least like those already picked, so the rows show the person's different looks. Faces whose embedding is not there yet come
+  after the others. Opened, the same faces stay at the top.
+- **Select all** under the faces selects the ones on screen. Select all, the Delete key and the reject buttons never touch a face
+  left out of the rows.
+- `faces.person` takes `varied: N` (at most 5,000) to list the N most varied confirmed faces first, the others after them in
+  their old order; it adds 18 to 31 ms for a person of 5,000 faces, once per change to their faces.
+
 ### The People view follows the grid
 - With a folder or album chosen in the sidebar, or any filter on, the People view works from the photos the grid shows. The
   Named People cards show only the people named in them, each counting the photos among those that the person is in, with

@@ -18,6 +18,7 @@ mod denoise;
 mod export;
 mod face_arrange_bg;
 mod face_models;
+mod face_person_cost;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) mod face_recognize;
 pub(super) mod face_rejections;
