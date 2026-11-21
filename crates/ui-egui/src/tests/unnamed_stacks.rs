@@ -246,3 +246,114 @@ fn the_cross_on_a_face_of_an_opened_stack_takes_it_out_to_a_tile_of_its_own_and_
     let _ = ids;
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- stacks with a suggested name ----
+
+/// [`stack_up`] for faces that are all suggested `name`: the stack carries it.
+fn stack_up_suggested(h: &mut Headless, members: &[(PhotoId, usize)], name: &str) {
+    stack_up(h, members);
+    let mut list = (*crate::panels::unnamed::faces(&mut h.app, 0.0)).clone();
+    if let Some(head) = list.faces.iter_mut().find(|f| f.is_stack()) {
+        head.suggestion = Some(name.to_string());
+    }
+    let (rev, indexed) = (h.app.session.catalog.revision, h.app.caches.faces_indexed);
+    h.app.caches.unnamed = Some((rev, indexed, f64::MAX, Arc::new(list)));
+    h.step();
+    h.step();
+}
+
+fn rejected(h: &Headless, id: PhotoId) -> Vec<Vec<String>> {
+    h.app.session.catalog.photo(id).unwrap().meta.regions.iter().map(|r| r.rejected.clone()).collect()
+}
+
+#[test]
+fn a_stack_with_a_suggestion_says_it_with_a_question_mark_and_has_the_tick_the_arrow_and_the_cross() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Ann Lee");
+    for kind in ["hide", "confirm", "above"] {
+        assert_eq!(widgets(&mut h, &format!("unnamed-face-{kind}:{}:0", p1.0)).len(), 1, "{kind} on the stack");
+        assert_eq!(widgets(&mut h, &format!("unnamed-face-{kind}:{}:1", p0.0)).len(), usize::from(kind == "hide"), "{kind} on the single face");
+    }
+    assert_eq!(widgets(&mut h, "unnamed-stack-count:"), [count_id(p1, 0)]);
+    let list = h.app.caches.unnamed.as_ref().unwrap().3.clone();
+    let shown = crate::panels::unnamed::entries(&list, &h.app.ui.rejected_unnamed);
+    assert_eq!(shown[0].suggestion.as_deref(), Some("Ann Lee"), "the strip says it, with its question mark");
+}
+
+#[test]
+fn the_tick_on_a_stack_names_every_face_of_it_as_the_suggestion_in_one_undo_step() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Ann Lee");
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": format!("unnamed-face-confirm:{}:0", p1.0)}));
+    let ann = |s: &str| Some(s.to_string());
+    assert_eq!((names(&h, p1), names(&h, p2)), (vec![ann("Ann Lee"), ann("Ann Lee")], vec![ann("Ann Lee")]));
+    assert_eq!(names(&h, p0), [ann("Ann Lee"), None], "a face outside the stack is left alone");
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one step");
+    done(&mut h);
+    assert!(widgets(&mut h, "unnamed-stack-count:").is_empty(), "the stack has left the grid");
+    ok(&mut h, "engine.execute", json!({"command": "edit.undo"}));
+    assert_eq!((names(&h, p1), names(&h, p2)), (vec![None, None], vec![None]), "one undo puts every face back");
+}
+
+#[test]
+fn the_cross_on_a_stack_rejects_the_suggestion_for_every_face_in_one_step_and_the_stack_stays_in_place_as_a_question_mark() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Ann Lee");
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": format!("unnamed-face-hide:{}:0", p1.0)}));
+    let ann = vec!["Ann Lee".to_string()];
+    assert_eq!(
+        (rejected(&h, p1), rejected(&h, p2)),
+        (vec![ann.clone(), ann.clone()], vec![ann.clone()]),
+        "stored on each face, as a single rejection is"
+    );
+    assert_eq!(rejected(&h, p0)[1], Vec::<String>::new(), "a face outside the stack is left alone");
+    assert_eq!(names(&h, p1), [None, None], "nothing is named");
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one step");
+    done(&mut h);
+    // still one tile with its count, at the same place, and its strip is a question mark
+    assert_eq!(widgets(&mut h, "unnamed-stack-count:"), [count_id(p1, 0)], "the stack stays in place");
+    let list = h.app.caches.unnamed.as_ref().unwrap().3.clone();
+    assert!(list.faces[0].is_stack() && list.faces[0].count() == 3, "{:?}", list.faces);
+    let shown = crate::panels::unnamed::entries(&list, &h.app.ui.rejected_unnamed);
+    assert_eq!(shown[0].suggestion, None, "a question mark, not the name again");
+    assert_eq!(widgets(&mut h, "unnamed-face-hide:").len(), 1, "no cross on it now: it has no suggestion (only the single face has one)");
+    ok(&mut h, "engine.execute", json!({"command": "edit.undo"}));
+    assert_eq!(rejected(&h, p1), vec![Vec::<String>::new(), Vec::new()], "one undo takes the rejection back from every face");
+}
+
+#[test]
+fn the_delete_key_on_a_stack_with_a_suggestion_does_what_its_cross_does() {
+    let (mut h, [_, p1, p2]) = people();
+    stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Ann Lee");
+    h.app.ui.face_gallery = Some(crate::panels::face_tile::Gallery::Unnamed);
+    h.app.ui.unnamed_selected = [(p1.0, 0)].into_iter().collect();
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.key", json!({"key": "delete"}));
+    let ann = vec!["Ann Lee".to_string()];
+    assert_eq!((rejected(&h, p1), rejected(&h, p2)), (vec![ann.clone(), ann.clone()], vec![ann]));
+    assert_eq!(h.app.session.catalog.photo(p1).unwrap().meta.regions.len(), 2, "no box was removed");
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+}
+
+#[test]
+fn the_arrow_on_a_tile_after_a_stack_names_every_face_of_the_stack_too() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Bob Ray");
+    // the face after the stack is suggested a name of its own
+    let mut list = (*crate::panels::unnamed::faces(&mut h.app, 0.0)).clone();
+    for f in list.faces.iter_mut().filter(|f| !f.is_stack()) {
+        f.suggestion = Some("Cy Dee".into());
+    }
+    let (rev, indexed) = (h.app.session.catalog.revision, h.app.caches.faces_indexed);
+    h.app.caches.unnamed = Some((rev, indexed, f64::MAX, Arc::new(list)));
+    h.step();
+    h.step();
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": format!("unnamed-face-above:{}:1", p0.0)}));
+    let some = |s: &str| Some(s.to_string());
+    assert_eq!((names(&h, p1), names(&h, p2)), (vec![some("Bob Ray"), some("Bob Ray")], vec![some("Bob Ray")]));
+    assert_eq!(names(&h, p0), [some("Ann Lee"), some("Cy Dee")]);
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one step");
+}

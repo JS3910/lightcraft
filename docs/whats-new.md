@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Faces of the same person are one tile in the Unnamed faces
+- Faces that are suggested the same name and are virtually certain to be the same person stack too: the tile reads the name with a
+  question mark (for example "Agne?") and a count, among the suggested faces by its score. The tick (or the up arrow) names every
+  face of the stack in one undo step; the cross, or the Delete key, rejects the suggestion for every face in one step, and the stack
+  stays where it is as a "?" stack until you leave the view. Faces with different suggestions never share a stack, and neither does
+  a face that rejected the name.
 - Faces nothing is suggested for that are virtually certain to be the same person are one tile with a count on it. A person who
   appears in hundreds of photos but matches nobody named yet becomes one tile near the top of the faces without a suggestion
   (stacks come first there, the biggest first), where before their faces were scattered or out of sight.

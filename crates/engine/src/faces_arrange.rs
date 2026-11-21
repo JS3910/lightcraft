@@ -388,8 +388,10 @@ pub(crate) struct State {
     pub scorer: Scorer,
     /// The highest similarity between two people, for the stacking bar.
     pub calibration: crate::faces_stack::Calibration,
-    /// The stacks of the last run.
+    /// The stacks of the faces without a suggestion, as the last run left them.
     pub stacks: crate::faces_stack::StackState,
+    /// The stacks of the faces suggested a name, a state for each name (faces suggested different names never share a stack).
+    pub named_stacks: HashMap<String, crate::faces_stack::StackState>,
     /// A fingerprint of the faces in look-alike order, and their order: reused while those are the same faces.
     chain_of: u64,
     chain: Vec<Key>,
@@ -429,9 +431,11 @@ pub(crate) fn arrange(state: &mut State, input: &Input, cancel: &AtomicBool, pro
     let scored = state.scorer.update(input.settings, &input.people, &input.faces, cancel, progress)?;
     let mut suggestions = HashMap::new();
     let mut plain: Vec<&Face> = Vec::new();
+    let mut named: std::collections::BTreeMap<String, Vec<&Face>> = std::collections::BTreeMap::new();
     for (face, suggestion) in input.faces.iter().zip(scored) {
         match suggestion {
             Some((name, score)) => {
+                named.entry(name.clone()).or_default().push(face);
                 suggestions.insert(face.key(), (face.stamp, name, score));
             }
             None => plain.push(face),
@@ -441,7 +445,18 @@ pub(crate) fn arrange(state: &mut State, input: &Input, cancel: &AtomicBool, pro
     let bar = state.calibration.bar(&input.people, cancel)?;
     let found = crate::faces_stack::stack(&mut state.stacks, &plain, bar, cancel, crate::faces_stack::BRUTE_LIMIT)?;
     let stacked: std::collections::HashSet<usize> = found.iter().flatten().copied().collect();
-    let stacks: Vec<Vec<(Key, u64)>> = found.iter().map(|s| s.iter().filter_map(|i| plain.get(*i).map(|f| (f.key(), f.stamp))).collect()).collect();
+    let mut stacks: Vec<Vec<(Key, u64)>> =
+        found.iter().map(|s| s.iter().filter_map(|i| plain.get(*i).map(|f| (f.key(), f.stamp))).collect()).collect();
+    let (mut stack_new, mut stack_compared) = (state.stacks.last_new, state.stacks.last_compared);
+    // the faces suggested one name are stacked among themselves, under the same bar and the same no-chaining rule
+    for (name, faces) in &named {
+        let kept = state.named_stacks.entry(name.clone()).or_default();
+        let found = crate::faces_stack::stack(kept, faces, bar, cancel, crate::faces_stack::BRUTE_LIMIT)?;
+        stack_new += kept.last_new;
+        stack_compared += kept.last_compared;
+        stacks.extend(found.iter().map(|s| s.iter().filter_map(|i| faces.get(*i).map(|f| (f.key(), f.stamp))).collect::<Vec<_>>()));
+    }
+    state.named_stacks.retain(|name, _| named.contains_key(name));
     let mut plain: Vec<&Face> = plain.into_iter().enumerate().filter(|(i, _)| !stacked.contains(i)).map(|(_, f)| f).collect();
     plain.truncate(MAX_ARRANGED);
     let chain_of = fingerprint(&plain.iter().map(|f| (f.key(), f.stamp)).collect::<Vec<_>>());
@@ -451,16 +466,7 @@ pub(crate) fn arrange(state: &mut State, input: &Input, cancel: &AtomicBool, pro
         state.chain = order.into_iter().filter_map(|i| plain.get(i).map(|f| f.key())).collect();
         state.chain_of = chain_of;
     }
-    Some(Output {
-        suggestions,
-        chain: state.chain.clone(),
-        stacks,
-        bar,
-        stack_new: state.stacks.last_new,
-        stack_compared: state.stacks.last_compared,
-        scored: state.scorer.last_scored,
-        chain_reused,
-    })
+    Some(Output { suggestions, chain: state.chain.clone(), stacks, bar, stack_new, stack_compared, scored: state.scorer.last_scored, chain_reused })
 }
 
 /// A fingerprint of what a run is asked: the model and bars, the people with their faces, and the faces with their stamps.
@@ -713,10 +719,10 @@ impl Jobs {
                 keyed.push((4, 0, 0.0, 0, at));
                 continue;
             };
-            if let Some((_, _, score)) = last.and_then(|l| l.suggestions.get(&key)).filter(|(was, _, _)| was == stamp) {
-                keyed.push((0, 0, *score, 0, at));
-            } else if let Some((s, _, pos)) = last.and_then(|l| l.stack_of.get(&key)).filter(|(_, was, _)| was == stamp) {
+            if let Some((s, _, pos)) = last.and_then(|l| l.stack_of.get(&key)).filter(|(_, was, _)| was == stamp) {
                 in_stack.entry(*s).or_default().push((*pos, at));
+            } else if let Some((_, _, score)) = last.and_then(|l| l.suggestions.get(&key)).filter(|(was, _, _)| was == stamp) {
+                keyed.push((0, 0, *score, 0, at));
             } else if let Some(pos) = last.and_then(|l| l.chain.get(&key)) {
                 keyed.push((2, 0, 0.0, *pos, at));
             } else {
@@ -724,14 +730,26 @@ impl Jobs {
             }
         }
         let mut stacks: HashMap<usize, Vec<usize>> = HashMap::new();
+        // the score a face was suggested its name with, when the last run scored it at the stamp it has now
+        let suggestion_at = |at: usize| -> Option<f32> {
+            let (photo, _, rect, ord, stamp) = listed.get(at)?;
+            last?.suggestions.get(&(*photo, *rect, *ord)).filter(|(was, _, _)| Some(was) == stamp.as_ref()).map(|(_, _, score)| *score)
+        };
         for (_, mut faces) in in_stack {
             faces.sort_unstable();
             let places: Vec<usize> = faces.into_iter().map(|(_, at)| at).collect();
             match places.as_slice() {
-                // a stack with one face in scope is a single face
-                [only] => keyed.push((2, 0, 0.0, usize::MAX, *only)),
+                // a stack with one face in scope is that face alone: where it goes with its suggestion, else after the look-alikes
+                [only] => match suggestion_at(*only) {
+                    Some(score) => keyed.push((0, 0, score, 0, *only)),
+                    None => keyed.push((2, 0, 0.0, usize::MAX, *only)),
+                },
+                // a stack with a suggestion (all its faces share it) sorts among the suggested faces by its representative's score
                 [first, ..] => {
-                    keyed.push((1, usize::MAX - places.len(), 0.0, 0, *first));
+                    match suggestion_at(*first) {
+                        Some(score) => keyed.push((0, 0, score, 0, *first)),
+                        None => keyed.push((1, usize::MAX - places.len(), 0.0, 0, *first)),
+                    }
                     stacks.insert(*first, places);
                 }
                 [] => {}
@@ -740,7 +758,9 @@ impl Jobs {
         // `listed` is in photo and region order, so the place in it is that order
         keyed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(b.2.total_cmp(&a.2)).then(a.3.cmp(&b.3)).then(a.4.cmp(&b.4)));
         let mut suggestions = HashMap::new();
-        for (photo, index, rect, ord, _) in keyed.iter().take(limit).filter(|k| k.0 == 0).filter_map(|k| listed.get(k.4)) {
+        // (every face of a stack with a suggestion carries it, not only the one that shows it)
+        let suggested = keyed.iter().take(limit).filter(|k| k.0 == 0).flat_map(|k| stacks.get(&k.4).cloned().unwrap_or_else(|| vec![k.4]));
+        for (photo, index, rect, ord, _) in suggested.filter_map(|at| listed.get(at)) {
             if let Some((_, name, score)) = last.and_then(|l| l.suggestions.get(&(*photo, *rect, *ord))) {
                 suggestions.insert((*photo, *index), (name.clone(), *score));
             }
@@ -748,12 +768,12 @@ impl Jobs {
         Arrangement {
             suggested: keyed.first().is_some_and(|k| k.0 == 0),
             look_alike: keyed.iter().filter(|k| k.0 == 2 && k.3 != usize::MAX).count() >= 2,
-            stacks: keyed.iter().filter(|k| k.0 == 1).count(),
+            stacks: keyed.iter().filter(|k| stacks.contains_key(&k.4)).count(),
             order: keyed
                 .into_iter()
-                .map(|k| match k.0 {
-                    1 => Item::Stack(stacks.remove(&k.4).unwrap_or_default()),
-                    _ => Item::Face(k.4),
+                .map(|k| match stacks.remove(&k.4) {
+                    Some(places) => Item::Stack(places),
+                    None => Item::Face(k.4),
                 })
                 .collect(),
             suggestions,

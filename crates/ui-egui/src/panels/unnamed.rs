@@ -260,6 +260,13 @@ pub struct Shown {
 /// So a face that left (named, or its box removed) just disappears and the tiles after it move up one place, a face the scan
 /// found takes its sorted place out of sight, and what is out of sight is sorted again as confidences change.
 pub fn keep_places(old: &Unnamed, new: Unnamed, shown: Shown) -> Unnamed {
+    keep_places_held(old, new, shown, &|_| false)
+}
+
+/// [`keep_places`], and a stack in view that `held` says is to stay is kept as it is even when the new list lists its faces one
+/// by one (what the engine answers between a change to every face of a stack, a rejected suggestion, and the run that stacks
+/// them again), provided it lists all of them and no stack of its own.
+pub fn keep_places_held(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn(&UnnamedFace) -> bool) -> Unnamed {
     // A face is told apart by its photo and its own box, not by its region index: removing a box (or undoing that) renumbers
     // the later regions of the photo, and a tile must stay with its face, not with a slot. Not by the box it is shown by
     // either: that changes when the scan embeds the face, which is just when the list is asked for again. (Two faces of
@@ -288,12 +295,26 @@ pub fn keep_places(old: &Unnamed, new: Unnamed, shown: Shown) -> Unnamed {
     // entry that holds most of them (a face taken out of a stack becomes a tile of its own, and the stack keeps its place)
     let mut taken: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut kept: Vec<UnnamedFace> = Vec::new();
-    for ks in old_keys.get(start..end).unwrap_or_default() {
-        let mut held: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-        for i in ks.iter().filter_map(|k| holder.get(k)).filter(|i| !taken.contains(*i)) {
-            *held.entry(*i).or_default() += 1;
+    for (n, ks) in old_keys.get(start..end).unwrap_or_default().iter().enumerate() {
+        let was = old.faces.get(start + n);
+        if let Some(was) = was.filter(|w| w.is_stack() && held(w)) {
+            let at: Vec<Option<usize>> = ks.iter().map(|k| holder.get(k).copied().filter(|i| !taken.contains(i))).collect();
+            let singles = at.iter().all(|i| i.is_some_and(|i| new.faces.get(i).is_some_and(|f| !f.is_stack())));
+            let distinct: std::collections::HashSet<_> = at.iter().flatten().collect();
+            if singles && distinct.len() == at.len() {
+                taken.extend(at.iter().flatten().copied());
+                let suggestion = at.first().copied().flatten().and_then(|i| new.faces.get(i)).and_then(|f| f.suggestion.clone());
+                kept.push(UnnamedFace { suggestion, ..was.clone() });
+                continue;
+            }
         }
-        if let Some(i) = held.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map(|(i, _)| i) {
+        // (an entry that held several faces stays the entry that holds most of them: a face taken out of a stack becomes a
+        // tile of its own, and the stack keeps its place)
+        let mut share: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for i in ks.iter().filter_map(|k| holder.get(k)).filter(|i| !taken.contains(*i)) {
+            *share.entry(*i).or_default() += 1;
+        }
+        if let Some(i) = share.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map(|(i, _)| i) {
             taken.insert(i);
             kept.extend(new.faces.get(i).cloned());
         }
@@ -312,10 +333,16 @@ pub fn keep_places(old: &Unnamed, new: Unnamed, shown: Shown) -> Unnamed {
 ///   the best order there is while the rest is worked out;
 /// - with no list on screen the answer is shown when its order is final (sorted afresh), and while it is not, only as a
 ///   status: the tiles would jump when the order came in.
-fn place(old: Option<&Unnamed>, shown: Option<Shown>, mut asked: Unnamed) -> Unnamed {
+#[cfg(test)]
+fn place(old: Option<&Unnamed>, shown: Option<Shown>, asked: Unnamed) -> Unnamed {
+    place_held(old, shown, asked, &|_| false)
+}
+
+/// [`place`], keeping the stacks `held` names as they are ([`keep_places_held`]).
+fn place_held(old: Option<&Unnamed>, shown: Option<Shown>, mut asked: Unnamed, held: &dyn Fn(&UnnamedFace) -> bool) -> Unnamed {
     match old.filter(|old| !waiting(old) && !old.faces.is_empty()) {
         Some(old) => match shown {
-            Some(shown) => keep_places(old, asked, shown),
+            Some(shown) => keep_places_held(old, asked, shown, held),
             None => asked,
         },
         None if !asked.complete => {
@@ -358,7 +385,11 @@ pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
         app.caches.faces_ordering = true;
         app.caches.faces_next_pump = 0.0;
     }
-    let list = Arc::new(place(old, app.caches.unnamed_shown, asked));
+    // a stack whose suggestion was rejected in this visit stays one tile in its place, a question mark, until the run that stacks
+    // its faces again has finished
+    let rejected = app.ui.rejected_unnamed.clone();
+    let held = |f: &UnnamedFace| f.keys().iter().all(|k| rejected.contains(*k));
+    let list = Arc::new(place_held(old, app.caches.unnamed_shown, asked, &held));
     app.caches.unnamed_arranged = arranged;
     // what was selected, rejected in place or being named and has since been named (or removed, or left the view with its
     // photo) is no longer so
@@ -464,9 +495,9 @@ pub fn entries(list: &Unnamed, rejected: &super::person::Rejected) -> Vec<Entry>
 }
 
 /// The name on a face's strip: its suggestion, unless it was rejected during this visit (nothing new is offered straight
-/// after a rejection).
+/// after a rejection; a stack's suggestion was rejected when any of its faces was).
 fn shown<'a>(f: &'a UnnamedFace, rejected: &super::person::Rejected) -> Option<&'a str> {
-    f.suggestion.as_deref().filter(|_| !rejected.contains((f.photo, f.index)))
+    f.suggestion.as_deref().filter(|_| !f.keys().iter().any(|k| rejected.contains(*k)))
 }
 
 /// Reject on a tile, or the Delete key with any selected face as `face`: the faces whose names were rejected stay in place
@@ -474,9 +505,13 @@ fn shown<'a>(f: &'a UnnamedFace, rejected: &super::person::Rejected) -> Option<&
 pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, list: &Unnamed, face: FaceKey) {
     let order = entries(list, &app.ui.rejected_unnamed);
     if let face_tile::Rejection::Rejected(keys) = face_tile::reject(app, ctx, &Gallery::Unnamed, &order, face) {
-        for f in list.faces.iter().filter(|f| keys.contains(&(f.photo, f.index))) {
-            let at = list.faces.iter().position(|o| (o.photo, o.index) == (f.photo, f.index)).unwrap_or(0);
-            app.ui.rejected_unnamed.remember(&super::person::Face { photo: f.photo, index: f.index, rect: f.view, score: 0.0 }, at);
+        for (at, f) in list.faces.iter().enumerate().filter(|(_, f)| f.keys().iter().any(|k| keys.contains(k))) {
+            // (every face of a stack is remembered: the stack's head may change while it stays in place)
+            let members: Vec<(FaceKey, lightcraft_geom::Rect)> =
+                if f.is_stack() { f.stack.iter().map(|m| ((m.photo, m.index), m.rect)).collect() } else { vec![((f.photo, f.index), f.view)] };
+            for ((photo, index), rect) in members {
+                app.ui.rejected_unnamed.remember(&super::person::Face { photo, index, rect, score: 0.0 }, at);
+            }
         }
     }
 }
@@ -497,14 +532,15 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
     let suggestion = shown(f, &app.ui.rejected_unnamed);
     // a face with a suggestion can be confirmed; reject is on every tile (and removes the box when there is nothing to reject)
     let stack = f.is_stack();
-    let hover = (!stack).then(|| Hover {
+    // (a stack with no suggestion has none of them: a cross on it would remove the boxes of many faces nobody looked at)
+    let hover = (!stack || suggestion.is_some()).then(|| Hover {
         confirm: suggestion.is_some(),
         above: suggestion.is_some(),
         hide: true,
         removes: suggestion.is_none(),
         person: suggestion.unwrap_or_default(),
         score: 0.0,
-        above_count: list.faces.iter().take(i + 1).filter(|c| shown(c, &app.ui.rejected_unnamed).is_some()).count(),
+        above_count: list.faces.iter().take(i + 1).filter(|c| shown(c, &app.ui.rejected_unnamed).is_some()).map(UnnamedFace::count).sum(),
         positional: true,
         takes_out: false,
     });

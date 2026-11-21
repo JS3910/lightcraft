@@ -240,7 +240,8 @@ pub fn name_each(app: &mut LightcraftApp, names: &[(FaceKey, String)], clearing:
 
 /// The faces of `order` that have a name on their strip, each with that name, for naming them as it says.
 fn own_names(order: &[Entry], faces: &[FaceKey]) -> Vec<(FaceKey, String)> {
-    faces.iter().filter_map(|k| order.iter().find(|e| e.key == *k).and_then(|e| Some((*k, e.suggestion.clone()?)))).collect()
+    // (a face of a stack has the stack's name)
+    faces.iter().filter_map(|k| order.iter().find(|e| e.key == *k || e.members.contains(k)).and_then(|e| Some((*k, e.suggestion.clone()?)))).collect()
 }
 
 /// What reject does over `targets` of a list: while any has a name on its strip (a suggestion, or among confirmed faces
@@ -284,8 +285,9 @@ pub enum Rejection {
 /// reject the names of every face it applies to (the selection when `face` is selected, else `face` alone) while any has
 /// one, else remove their face boxes. Either way one command, so one undo step.
 pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, gallery: &Gallery, order: &[Entry], face: FaceKey) -> Rejection {
-    // a stack has no cross: removing the boxes of many faces nobody looked at must never be one click (or a key)
-    if order.iter().any(|e| e.key == face && !e.members.is_empty()) {
+    // a stack with no suggestion has no cross: removing the boxes of many faces nobody looked at must never be one click (or a
+    // key). With a suggestion it rejects the name for every face in it.
+    if order.iter().any(|e| e.key == face && !e.members.is_empty() && e.suggestion.is_none()) {
         return Rejection::Nothing;
     }
     let targets = apply_to(&selection(app, gallery), order, face);
@@ -343,7 +345,8 @@ pub fn confirm_own(app: &mut LightcraftApp, gallery: &Gallery, order: &[Entry], 
 /// "All above" by position: confirm every suggestion from the first tile of `order` through tile `at`, each face as its
 /// own suggestion, in one undo step. Faces without a suggestion are skipped; the selection is not touched.
 pub fn confirm_through(app: &mut LightcraftApp, order: &[Entry], at: usize) {
-    let faces: Vec<FaceKey> = order.get(..=at).unwrap_or(order).iter().map(|e| e.key).collect();
+    let faces: Vec<FaceKey> =
+        order.get(..=at).unwrap_or(order).iter().flat_map(|e| if e.members.is_empty() { vec![e.key] } else { e.members.clone() }).collect();
     name_each(app, &own_names(order, &faces), false);
 }
 

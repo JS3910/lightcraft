@@ -29,7 +29,7 @@ fn library(name: &str) -> (Session, std::path::PathBuf, [PhotoId; 3]) {
     put(a, 0.1, unit64(&[(0, 1.0)])); // Ann
     put(a, 0.4, unit64(&[(1, 1.0)])); // Bob
     put(a, 0.65, unit64(&[(0, 0.97), (3, 0.2)])); // like Ann
-    put(b, 0.1, unit64(&[(0, 0.9), (4, 0.4)])); // a little less like Ann
+    put(b, 0.1, unit64(&[(0, 0.7), (4, 0.71)])); // less like Ann, and not like the face before: no stack
     put(b, 0.5, unit64(&[(5, 1.0)])); // like nobody
     put(c, 0.1, unit64(&[(6, 1.0)])); // like nobody
     put(c, 0.5, unit64(&[(6, 0.6), (7, 0.8)])); // like the one before, but not nearly enough to stack
@@ -45,7 +45,7 @@ fn keys(r: &Value) -> Vec<(u64, u64)> {
 }
 
 fn suggestion(r: &Value, photo: PhotoId, index: u64) -> Option<String> {
-    let f = r["faces"].as_array().unwrap().iter().find(|f| f["photo"] == photo.0 && f["index"] == index)?;
+    let f = super::face_recognize::entry_listing(r, photo.0, index)?;
     f["suggestion"]["name"].as_str().map(str::to_string)
 }
 
@@ -527,7 +527,7 @@ fn after_every_random_change_the_order_is_what_scoring_everyone_again_gives() {
             let fresh = s.execute("faces.unnamed", &json!({})).unwrap();
             s.faces.arrange = kept;
             assert_eq!(inc, fresh, "seed {seed} step {step}");
-            // (the faces in stacks have no suggestion, and are listed only inside their stack)
+            // (the faces in stacks are listed only inside their stack)
             let got: std::collections::HashMap<(u64, usize), Option<(String, f32)>> = inc["faces"]
                 .as_array()
                 .unwrap()
@@ -536,7 +536,13 @@ fn after_every_random_change_the_order_is_what_scoring_everyone_again_gives() {
                     let k = (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap() as usize);
                     let own = (k, f["suggestion"]["name"].as_str().map(|n| (n.to_string(), f["suggestion"]["score"].as_f64().unwrap() as f32)));
                     match f["stack"]["faces"].as_array() {
-                        Some(m) => m.iter().map(|x| ((x["photo"].as_u64().unwrap(), x["index"].as_u64().unwrap() as usize), None)).collect(),
+                        // (a stack with a suggestion says it for every face; the score is its representative's)
+                        Some(m) => m
+                            .iter()
+                            .map(|x| {
+                                ((x["photo"].as_u64().unwrap(), x["index"].as_u64().unwrap() as usize), own.1.clone().map(|(n, _)| (n, f32::NAN)))
+                            })
+                            .collect(),
                         None => vec![own],
                     }
                 })
@@ -547,7 +553,9 @@ fn after_every_random_change_the_order_is_what_scoring_everyone_again_gives() {
                 let g = got.get(&k).unwrap_or_else(|| panic!("seed {seed} step {step}: {k:?} is not listed"));
                 match (g, &w) {
                     (None, None) => {}
-                    (Some((n, x)), Some((m, y))) => assert!(n == m && (x - y).abs() < 1e-6, "seed {seed} step {step} {k:?}: {g:?} vs {w:?}"),
+                    (Some((n, x)), Some((m, y))) => {
+                        assert!(n == m && (x.is_nan() || (x - y).abs() < 1e-6), "seed {seed} step {step} {k:?}: {g:?} vs {w:?}")
+                    }
                     _ => panic!("seed {seed} step {step} {k:?}: {g:?} vs {w:?}"),
                 }
             }

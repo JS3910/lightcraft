@@ -609,22 +609,25 @@ fn unnamed_faces_put_the_suggested_ones_first_by_score_then_look_alikes_then_the
     put(&mut s, b, 0.1, unit64(&[(0, 0.99), (2, 0.1)])); // very like Ann
     put(&mut s, b, 0.2, unit64(&[(5, 0.6), (8, 0.8)])); // looks like the first stranger, not enough to stack
     put(&mut s, b, 0.4, unit64(&[(6, 0.6), (9, 0.8)])); // looks like the other stranger, not enough to stack
-    put(&mut s, c, 0.1, unit64(&[(0, 0.95), (4, 0.3)])); // fairly like Ann
-    put(&mut s, c, 0.2, unit64(&[(1, 0.97), (3, 0.2)])); // like Bob, as much as a's
+    put(&mut s, c, 0.1, unit64(&[(0, 0.7), (4, 0.71)])); // fairly like Ann, not like the face of b (no stack)
+    put(&mut s, c, 0.2, unit64(&[(1, 0.97), (3, 0.2)])); // like Bob, as much as a's: the two are one stack, shown by the earlier photo's
     let r = s.execute("faces.unnamed", &json!({})).unwrap();
     let faces = r["faces"].as_array().unwrap();
     let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
     let order: Vec<(u64, u64)> = faces.iter().map(at).collect();
-    // suggested faces first, the most confident first, with Ann's and Bob's mixed; the tie goes to the earlier photo
+    // suggested faces first, the most confident first, with Ann's and Bob's mixed; the two faces like Bob, as much as each other
+    // and alike, are one stack, shown by the earlier photo's (the tie)
     let (first, second) = if a.0 < c.0 { ((a.0, 2), (c.0, 1)) } else { ((c.0, 1), (a.0, 2)) };
-    assert_eq!(&order[..4], &[(b.0, 0), first, second, (c.0, 0)], "{order:?}");
-    let names: Vec<&str> = faces[..4].iter().map(|f| f["suggestion"]["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["Ann", "Bob", "Bob", "Ann"]);
-    let scores: Vec<f64> = faces[..4].iter().map(|f| f["suggestion"]["score"].as_f64().unwrap()).collect();
+    assert_eq!(&order[..3], &[(b.0, 0), first, (c.0, 0)], "{order:?}");
+    assert_eq!(faces[1]["stack"]["faces"].as_array().map(Vec::len), Some(2), "{}", faces[1]);
+    assert!(faces[1]["stack"]["faces"].as_array().unwrap().iter().any(|f| at(f) == second), "{}", faces[1]);
+    let names: Vec<&str> = faces[..3].iter().map(|f| f["suggestion"]["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Ann", "Bob", "Ann"]);
+    let scores: Vec<f64> = faces[..3].iter().map(|f| f["suggestion"]["score"].as_f64().unwrap()).collect();
     assert!(scores.windows(2).all(|w| w[0] >= w[1]), "{scores:?}");
     // then the faces nobody is suggested for, look-alikes together; the unembedded ones last, in photo order
-    let rest = &order[4..];
-    assert!(faces[4..].iter().all(|f| f["suggestion"].is_null()));
+    let rest = &order[3..];
+    assert!(faces[3..].iter().all(|f| f["suggestion"].is_null()));
     let pos = |x: (u64, u64)| rest.iter().position(|o| *o == x).unwrap();
     assert_eq!(pos((a.0, 4)).abs_diff(pos((b.0, 1))), 1, "{rest:?}");
     assert_eq!(pos((a.0, 5)).abs_diff(pos((b.0, 3))), 1, "{rest:?}");
@@ -939,4 +942,13 @@ fn evaluating_the_visible_photos_covers_the_hidden_photos_of_a_collapsed_stack()
     let r = s.execute("faces.evaluate", &json!({"budgetMs": 0, "scope": "visible"})).unwrap();
     assert_eq!(r["pendingPhotos"], 2, "the stack's hidden photo is evaluated too: {r}");
     let _ = c;
+}
+
+/// The entry of a `faces.unnamed` answer that lists the face `(photo, index)`: the face itself, or the stack that holds it (faces
+/// that share a suggestion, or are alike without one, are listed inside one entry).
+pub(crate) fn entry_listing(r: &Value, photo: u64, index: u64) -> Option<&Value> {
+    r["faces"].as_array()?.iter().find(|f| {
+        (f["photo"] == photo && f["index"] == index)
+            || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| x["photo"] == photo && x["index"] == index))
+    })
 }

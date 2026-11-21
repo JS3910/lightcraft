@@ -15,7 +15,7 @@ use crate::Session;
 /// Three photos: `a` has Ann (e0) and Bob (e1) named, so the bar is the fixed minimum; the unnamed faces are
 /// - a stack of three: `a` x 0.5 and 0.7, `b` x 0.1 (the middle one is the most typical),
 /// - a pair in `c`,
-/// - a face like Ann and another like Ann (suggested her: these never stack),
+/// - a face like Ann and another like Ann (suggested her; not alike each other, so they do not stack),
 /// - three faces in a chain (A like B, B like C, A not like C), in `b`,
 /// - a lone face, and one not embedded.
 pub(super) fn library(name: &str) -> (Session, std::path::PathBuf, [PhotoId; 3]) {
@@ -41,7 +41,7 @@ pub(super) fn library(name: &str) -> (Session, std::path::PathBuf, [PhotoId; 3])
     put(&mut s, c, 0.1, unit64(&[(12, 1.0), (13, 0.05)])); // the pair
     put(&mut s, c, 0.2, unit64(&[(12, 1.0), (13, 0.06)]));
     put(&mut s, a, 0.8, unit64(&[(0, 0.97), (40, 0.2)])); // like Ann
-    put(&mut s, a, 0.85, unit64(&[(0, 0.96), (41, 0.2)])); // like Ann, and like the one before
+    put(&mut s, a, 0.85, unit64(&[(0, 0.7), (41, 0.7)])); // like Ann too, but not like the one before
     // a chain: the middle one first, then two that are 0.9 alike it and 0.62 alike each other
     put(&mut s, b, 0.2, unit64(&[(20, 1.0)]));
     put(&mut s, b, 0.3, unit64(&[(20, 0.9), (21, 0.436)]));
@@ -309,5 +309,149 @@ fn after_another_scope_a_stack_the_old_run_found_shows_only_the_faces_in_scope_a
     assert_eq!(r["ordering"], true, "{r}");
     assert!(entries(&r).contains(&vec![(b.0, 0)]), "the one face of the trio in scope is a face: {:?}", entries(&r));
     assert!(r["faces"].as_array().unwrap().iter().all(|f| f["stack"]["count"].as_u64().is_none_or(|n| n >= 2)), "no stack of one: {r}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+// ---- stacks of faces that share a suggested name ----
+
+/// Ann is `e0` and Bob 50 degrees away, both named in photo `a`; photo `b` holds the unnamed faces `faces` in order (the `i`th
+/// at `x = 0.1 * (i + 1)`), each given by its non-zero components.
+fn suggested(name: &str, faces: &[&[(usize, f32)]], reject_ann: &[usize]) -> (Session, std::path::PathBuf, [PhotoId; 2]) {
+    let d = temp(name);
+    let (mut s, _) = setup(&d, 64);
+    s.execute("faces.index", &json!({"budgetMs": 0})).unwrap();
+    let mut ids: Vec<PhotoId> = s.catalog.photos().map(|p| p.id).collect();
+    ids.sort();
+    let [a, b] = [ids[0], ids[1]];
+    set_regions(&mut s, a, vec![region(0.05, Some("Ann")), region(0.1, Some("Bob"))]);
+    let regions: Vec<_> = (0..faces.len())
+        .map(|i| {
+            let mut r = region(0.1 * (i + 1) as f64, None);
+            if reject_ann.contains(&i) {
+                r.rejected.push("Ann".into());
+            }
+            r
+        })
+        .collect();
+    set_regions(&mut s, b, regions);
+    s.faces.index.insert(a.0, &region(0.05, None).rect, unit64(&[(0, 1.0)]));
+    s.faces.index.insert(a.0, &region(0.1, None).rect, unit64(&[(0, 0.5), (1, 0.866)]));
+    for (i, f) in faces.iter().enumerate() {
+        s.faces.index.insert(b.0, &region(0.1 * (i + 1) as f64, None).rect, unit64(f));
+    }
+    (s, d, [a, b])
+}
+
+/// The entry of the list that holds `key`, with the suggestion it carries.
+fn entry_of(r: &Value, key: Key) -> (Vec<Key>, Option<String>) {
+    let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
+    let f = r["faces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| at(f) == key || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| at(x) == key)))
+        .unwrap_or_else(|| panic!("{key:?} is not listed: {r}"));
+    let faces = f["stack"]["faces"].as_array().map_or_else(|| vec![at(f)], |m| m.iter().map(at).collect());
+    (faces, f["suggestion"]["name"].as_str().map(str::to_string))
+}
+
+/// Two faces 10 degrees from Ann towards Bob, and two 10 degrees from Bob towards Ann: each close to the other pair (0.766, above
+/// the minimum bar), each pair suggested a different person.
+const NEAR_ANN: [(usize, f32); 2] = [(0, 0.985), (1, 0.174)];
+const NEAR_BOB: [(usize, f32); 2] = [(0, 0.643), (1, 0.766)];
+
+#[test]
+fn faces_with_the_same_suggestion_are_a_stack_that_carries_it_and_faces_with_different_suggestions_never_share_one() {
+    let (mut s, d, [_, b]) = suggested(
+        "stacks-sg-names",
+        &[
+            &[NEAR_ANN[0], NEAR_ANN[1], (20, 0.02)],
+            &[NEAR_BOB[0], NEAR_BOB[1], (21, 0.02)],
+            &[NEAR_ANN[0], NEAR_ANN[1], (20, 0.03)],
+            &[NEAR_BOB[0], NEAR_BOB[1], (21, 0.03)],
+        ],
+        &[],
+    );
+    let r = settle(&mut s);
+    let (ann, ann_name) = entry_of(&r, (b.0, 0));
+    let (bob, bob_name) = entry_of(&r, (b.0, 1));
+    let sorted = |mut v: Vec<Key>| {
+        v.sort_unstable();
+        v
+    };
+    assert_eq!((sorted(ann), ann_name.as_deref()), (vec![(b.0, 0), (b.0, 2)], Some("Ann")), "{r}");
+    assert_eq!((sorted(bob), bob_name.as_deref()), (vec![(b.0, 1), (b.0, 3)], Some("Bob")), "{r}");
+    assert_eq!(r["stacks"], 2, "{r}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_face_that_rejected_a_name_is_never_in_a_stack_suggesting_it() {
+    let same = |extra: f32| -> Vec<(usize, f32)> { vec![NEAR_ANN[0], NEAR_ANN[1], (20, extra)] };
+    let (a, b, c) = (same(0.02), same(0.03), same(0.04));
+    let (mut s, d, [_, p]) = suggested("stacks-sg-rejected", &[&a, &b, &c], &[2]);
+    let r = settle(&mut s);
+    let (two, name) = entry_of(&r, (p.0, 0));
+    assert_eq!((two.len(), name.as_deref()), (2, Some("Ann")), "{r}");
+    assert!(!two.contains(&(p.0, 2)), "{two:?}");
+    let (alone, name) = entry_of(&r, (p.0, 2));
+    assert_eq!(alone, vec![(p.0, 2)], "it is in no stack of the name it rejected");
+    assert_ne!(name.as_deref(), Some("Ann"), "and is not suggested it");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_stack_with_a_suggestion_sorts_among_the_suggested_faces_by_the_score_of_its_representative() {
+    // three faces near Ann, 0.95, 0.75 and 0.62 alike her, none alike another (their other parts are apart): the 0.75 ones are two
+    let (mut s, d, [_, p]) = suggested(
+        "stacks-sg-order",
+        &[&[(0, 0.62), (13, 0.785)], &[(0, 0.75), (11, 0.661), (12, 0.01)], &[(0, 0.95), (10, 0.312)], &[(0, 0.75), (11, 0.661), (12, 0.02)]],
+        &[],
+    );
+    let r = settle(&mut s);
+    let order: Vec<Vec<Key>> = entries(&r)
+        .into_iter()
+        .take(3)
+        .map(|mut e| {
+            e.sort_unstable();
+            e
+        })
+        .collect();
+    assert_eq!(order, vec![vec![(p.0, 2)], vec![(p.0, 1), (p.0, 3)], vec![(p.0, 0)]], "the better face, the stack, the weaker face: {r}");
+    let score = |at: usize| r["faces"][at]["suggestion"]["score"].as_f64().unwrap();
+    assert!(score(0) > score(1) && score(1) > score(2), "{r}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn naming_a_stack_with_a_suggestion_is_one_undo_step_and_rejecting_its_suggestion_is_one_step_that_holds_for_every_face() {
+    let same = |extra: f32| -> Vec<(usize, f32)> { vec![NEAR_ANN[0], NEAR_ANN[1], (20, extra)] };
+    let (a, b, c) = (same(0.02), same(0.03), same(0.04));
+    let (mut s, d, [_, p]) = suggested("stacks-sg-act", &[&a, &b, &c], &[]);
+    let r = settle(&mut s);
+    let (faces, name) = entry_of(&r, (p.0, 0));
+    assert_eq!((faces.len(), name.as_deref()), (3, Some("Ann")), "{r}");
+    let list: Vec<Value> = faces.iter().map(|(p, i)| json!({"photo": p, "index": i, "name": "Ann"})).collect();
+    // the tick: every face is named with the suggestion, in one undo step
+    let undo = s.undo.len();
+    s.execute("faces.nameFaces", &json!({"faces": list})).unwrap();
+    assert_eq!(s.undo.len(), undo + 1);
+    let named = |s: &Session| s.catalog.photo(p).unwrap().meta.regions.iter().filter(|r| r.name.as_deref() == Some("Ann")).count();
+    assert_eq!(named(&s), 3);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(named(&s), 0, "one undo puts every face back");
+    // the cross: the suggestion is rejected for every face in one undo step, and no stack suggests it again
+    let list: Vec<Value> = faces.iter().map(|(p, i)| json!({"photo": p, "index": i, "name": "Ann"})).collect();
+    let undo = s.undo.len();
+    s.execute("faces.reject", &json!({"faces": list})).unwrap();
+    assert_eq!(s.undo.len(), undo + 1);
+    let rejected = |s: &Session| s.catalog.photo(p).unwrap().meta.regions.iter().filter(|r| r.rejected.iter().any(|n| n == "Ann")).count();
+    assert_eq!(rejected(&s), 3, "stored on each face, as a single rejection is");
+    let r = settle(&mut s);
+    let (still, name) = entry_of(&r, (p.0, 0));
+    assert_ne!(name.as_deref(), Some("Ann"), "nobody suggests the rejected name again: {r}");
+    assert_eq!(still.len(), 3, "the three are still alike, and stack for the name they are suggested now: {r}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(rejected(&s), 0);
     let _ = std::fs::remove_dir_all(&d);
 }
