@@ -302,7 +302,11 @@ pub fn lists(app: &LightcraftApp, page: &PersonPage, name: &str) -> Lists {
     let entries = |faces: &[Face], rejected: &Rejected| -> Vec<Entry> {
         faces
             .iter()
-            .map(|f| Entry { key: (f.photo, f.index), suggestion: (!rejected.contains((f.photo, f.index))).then(|| name.to_string()) })
+            .map(|f| Entry {
+                key: (f.photo, f.index),
+                suggestion: (!rejected.contains((f.photo, f.index))).then(|| name.to_string()),
+                members: Vec::new(),
+            })
             .collect()
     };
     Lists {
@@ -641,7 +645,7 @@ fn draw_tile<'a>(app: &mut LightcraftApp, ui: &mut egui::Ui, grid: &Grid<'a>, i:
         positional: false,
     });
     let suggestion = (!rejected).then_some(grid.layout.name);
-    let spec = FaceTile { key, view: f.rect, suggestion, named: !more, prefix: if more { "more" } else { "person" }, hover };
+    let spec = FaceTile { key, view: f.rect, suggestion, named: !more, prefix: if more { "more" } else { "person" }, hover, count: 0 };
     let selected = face_tile::is_selected(app, grid.gallery, key);
     let mut out = None;
     match face_tile::show(app, ui, r, &spec, selected, grid.layout.ppp) {

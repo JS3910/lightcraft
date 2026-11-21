@@ -118,6 +118,7 @@ mod titlebar;
 mod tool_overlay;
 mod two_step_reject;
 mod unnamed_ordering;
+mod unnamed_stacks;
 mod unnamed_tiles;
 mod unsaved;
 mod view_cost;

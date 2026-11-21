@@ -79,6 +79,8 @@ pub struct FaceTile<'a> {
     pub prefix: &'a str,
     /// The hover buttons, when this gallery has them.
     pub hover: Option<Hover<'a>>,
+    /// A stack of this many faces (at least two) is drawn with the count on it; 0 for a single face.
+    pub count: usize,
 }
 
 /// What happened to the tile this frame.
@@ -107,10 +109,17 @@ pub enum TileEvent {
 pub struct Entry {
     pub key: FaceKey,
     pub suggestion: Option<String>,
+    /// A stack: every face in it (the first is `key`). Empty for a single face.
+    pub members: Vec<FaceKey>,
 }
 
 /// The faces an action on `face` applies to: all selected faces (in list order) when `face` is selected, else `face` alone.
+///
+/// A stack is its faces: an action on a stack applies to every face in it.
 pub fn apply_to(selected: &HashSet<FaceKey>, order: &[Entry], face: FaceKey) -> Vec<FaceKey> {
+    if let Some(e) = order.iter().find(|e| e.key == face && !e.members.is_empty()) {
+        return e.members.clone();
+    }
     if selected.contains(&face) {
         let list: Vec<FaceKey> = order.iter().map(|e| e.key).filter(|k| selected.contains(k)).collect();
         if !list.is_empty() {
@@ -268,6 +277,10 @@ pub enum Rejection {
 /// reject the names of every face it applies to (the selection when `face` is selected, else `face` alone) while any has
 /// one, else remove their face boxes. Either way one command, so one undo step.
 pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, gallery: &Gallery, order: &[Entry], face: FaceKey) -> Rejection {
+    // a stack has no cross: removing the boxes of many faces nobody looked at must never be one click (or a key)
+    if order.iter().any(|e| e.key == face && !e.members.is_empty()) {
+        return Rejection::Nothing;
+    }
     let targets = apply_to(&selection(app, gallery), order, face);
     match plan(&targets, order) {
         Plan::Reject(names) => {
@@ -339,7 +352,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect, tile: &FaceTile
     let pic = Rect::from_min_size(r.min, vec2(r.width(), (r.height() - STRIP_H).max(1.0)));
     let strip = Rect::from_min_max(pos2(r.left(), pic.bottom()), r.right_bottom());
     let resp = ui.interact(pic, widget_id(tile.prefix, "face", tile.key), Sense::click());
-    crate::widgets::announce_selected(&resp, crate::i18n::tr("Face"), selected);
+    // a stack says how many faces it holds to a screen reader
+    let said = if tile.count > 0 { crate::i18n::tr_format!("Stack of {n} faces", n = tile.count) } else { crate::i18n::tr("Face").to_string() };
+    crate::widgets::announce_selected(&resp, said, selected);
     register(ui, format!("{}-face:{photo}:{index}", tile.prefix), pic);
     let name = ui.interact(strip, widget_id(tile.prefix, "name", tile.key), Sense::click());
     register(ui, format!("{}-name:{photo}:{index}", tile.prefix), strip);
@@ -349,6 +364,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect, tile: &FaceTile
     let editing = app.ui.name_edit.as_ref().is_some_and(|e| (e.photo, e.index) == tile.key);
     paint_picture(app, ui, tile, pic, ppp);
     paint_selection(ui, pic, selected, hovered);
+    if tile.count > 0 {
+        paint_count(ui, pic, tile.count, &format!("{}-stack-count:{photo}:{index}", tile.prefix));
+    }
     if let (Some(b), Some(h)) = (&buttons, &tile.hover) {
         if hovered {
             paint_buttons(ui, b);
@@ -474,6 +492,20 @@ fn paint_picture(app: &mut LightcraftApp, ui: &egui::Ui, tile: &FaceTile, pic: R
     {
         p.image(tex.id(), pic, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
+}
+
+/// The count badge of a stack, at the bottom left of the picture (the top left holds the selection's check, the right side the
+/// buttons). It is registered as `id` so that it can be found; opening the stack from it is a later part of the work.
+fn paint_count(ui: &egui::Ui, pic: Rect, count: usize, id: &str) {
+    let t = Tokens::get(ui.ctx());
+    let text = count.to_string();
+    let galley = ui.painter().layout_no_wrap(text, t.semibold(12.0), Color32::WHITE);
+    let size = vec2((galley.size().x + 12.0).max(22.0), 20.0);
+    let badge = Rect::from_min_size(pos2(pic.left() + 4.0, pic.bottom() - 4.0 - size.y), size);
+    let p = ui.painter();
+    p.rect_filled(badge, 10.0, Color32::from_rgba_unmultiplied(30, 30, 30, 225));
+    p.galley(badge.center() - galley.size() / 2.0, galley, Color32::WHITE);
+    crate::widgets::register(ui, id, badge);
 }
 
 fn paint_selection(ui: &egui::Ui, pic: Rect, selected: bool, hovered: bool) {
@@ -631,7 +663,7 @@ mod tests {
     use super::*;
 
     fn order(n: usize) -> Vec<Entry> {
-        (0..n).map(|i| Entry { key: (1, i), suggestion: None }).collect()
+        (0..n).map(|i| Entry { key: (1, i), suggestion: None, members: Vec::new() }).collect()
     }
 
     #[test]
@@ -667,9 +699,9 @@ mod tests {
     #[test]
     fn reject_clears_names_while_any_target_has_one_and_removes_boxes_once_none_has() {
         let o = vec![
-            Entry { key: (1, 0), suggestion: Some("Ann".into()) },
-            Entry { key: (1, 1), suggestion: None },
-            Entry { key: (2, 0), suggestion: Some("Bob".into()) },
+            Entry { key: (1, 0), suggestion: Some("Ann".into()), members: Vec::new() },
+            Entry { key: (1, 1), suggestion: None, members: Vec::new() },
+            Entry { key: (2, 0), suggestion: Some("Bob".into()), members: Vec::new() },
         ];
         assert_eq!(plan(&[(1, 0), (1, 1), (2, 0)], &o), Plan::Reject(vec![((1, 0), "Ann".into()), ((2, 0), "Bob".into())]));
         assert_eq!(plan(&[(1, 1)], &o), Plan::Remove(vec![(1, 1)]));

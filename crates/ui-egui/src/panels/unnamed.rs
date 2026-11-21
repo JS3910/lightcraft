@@ -16,7 +16,17 @@ use crate::LightcraftApp;
 use crate::theme::Tokens;
 use crate::widgets::register;
 
-/// One unnamed face: which photo and region, the box to show it by, and a suggested name.
+/// One face of a stack: which photo and region, and its own box.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StackFace {
+    pub photo: u64,
+    pub index: usize,
+    pub rect: lightcraft_geom::Rect,
+}
+
+/// One entry of the list, one tile: an unnamed face (which photo and region, the box to show it by, and a suggested name), or a
+/// stack of faces that are virtually certain to be the same person, shown by its representative face (the face fields
+/// are the representative's).
 #[derive(Clone, Debug, PartialEq)]
 pub struct UnnamedFace {
     pub photo: u64,
@@ -26,6 +36,25 @@ pub struct UnnamedFace {
     pub rect: lightcraft_geom::Rect,
     pub view: lightcraft_geom::Rect,
     pub suggestion: Option<String>,
+    /// A stack: all its faces, the most typical first (the representative is the first), at least two. Empty for a single face.
+    pub stack: Vec<StackFace>,
+}
+
+impl UnnamedFace {
+    /// Whether the entry is a stack.
+    pub fn is_stack(&self) -> bool {
+        !self.stack.is_empty()
+    }
+
+    /// How many faces the entry holds: those of the stack, or one.
+    pub fn count(&self) -> usize {
+        self.stack.len().max(1)
+    }
+
+    /// Every face the entry holds, as photo and region.
+    pub fn keys(&self) -> Vec<FaceKey> {
+        if self.is_stack() { self.stack.iter().map(|f| (f.photo, f.index)).collect() } else { vec![(self.photo, self.index)] }
+    }
 }
 
 /// What `faces.unnamed` said.
@@ -46,6 +75,18 @@ pub struct Unnamed {
     pub stopped: bool,
 }
 
+impl Unnamed {
+    /// How many faces the list shows: those in stacks count too.
+    pub fn face_count(&self) -> usize {
+        self.faces.iter().map(UnnamedFace::count).sum()
+    }
+
+    /// Every face of the list, in stacks too.
+    pub fn all_keys(&self) -> impl Iterator<Item = FaceKey> + '_ {
+        self.faces.iter().flat_map(UnnamedFace::keys)
+    }
+}
+
 fn rect_of(v: &Value) -> Option<lightcraft_geom::Rect> {
     Some(lightcraft_geom::Rect { x0: v["x0"].as_f64()?, y0: v["y0"].as_f64()?, x1: v["x1"].as_f64()?, y1: v["y1"].as_f64()? })
 }
@@ -57,7 +98,23 @@ fn face_of(v: &Value) -> Option<UnnamedFace> {
         rect: rect_of(&v["rect"]).or_else(|| rect_of(&v["view"]))?,
         view: rect_of(&v["view"]).or_else(|| rect_of(&v["rect"]))?,
         suggestion: v["suggestion"]["name"].as_str().map(str::to_string),
+        stack: stack_of(v),
     })
+}
+
+/// The faces of the stack an entry stands for (none when it is a single face, or its stack has fewer than two faces we can read).
+fn stack_of(v: &Value) -> Vec<StackFace> {
+    let faces: Vec<StackFace> = v["stack"]["faces"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| {
+                    Some(StackFace { photo: f["photo"].as_u64()?, index: usize::try_from(f["index"].as_u64()?).ok()?, rect: rect_of(&f["rect"])? })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if faces.len() >= 2 { faces } else { Vec::new() }
 }
 
 /// The engine's answer as a list (anything that does not make sense is left out).
@@ -90,7 +147,13 @@ fn order_sentence(list: &Unnamed) -> String {
         (false, false) => "",
     };
     let hint = crate::i18n::tr("Click faces to select them, Shift-click for a range; click the name under a face to name it (or the selected ones).");
-    if lead.is_empty() { hint.to_string() } else { format!("{lead} {hint}") }
+    let lead = if lead.is_empty() { String::new() } else { format!("{lead} ") };
+    if list.faces.iter().any(UnnamedFace::is_stack) {
+        let stacks = crate::i18n::tr("A tile with a number is a stack of faces that are almost certainly the same person: naming it names them all.");
+        format!("{lead}{stacks} {hint}")
+    } else {
+        format!("{lead}{hint}")
+    }
 }
 
 /// While the scan runs and learns more faces, the list is asked for again after this many seconds at most (arranging it
@@ -120,28 +183,36 @@ pub fn keep_places(old: &Unnamed, new: Unnamed, shown: Shown) -> Unnamed {
     // the later regions of the photo, and a tile must stay with its face, not with a slot. Not by the box it is shown by
     // either: that changes when the scan embeds the face, which is just when the list is asked for again. (Two faces of
     // a photo with the very same box are told apart by which of them it is, so neither tile is lost.)
-    let keys = |faces: &[UnnamedFace]| -> Vec<(u64, [u64; 4], usize)> {
+    //
+    // A stack is told apart by the faces it holds: it is the stack in the new list that holds one of the faces of the one in
+    // view (so a stack that grew, or whose most typical face changed, keeps its place, and several tiles that became one stack
+    // leave one tile, in the place of the first of them).
+    type At = (u64, [u64; 4], usize);
+    let keys = |faces: &[UnnamedFace]| -> Vec<Vec<At>> {
         let mut seen: std::collections::HashMap<(u64, [u64; 4]), usize> = std::collections::HashMap::new();
-        faces
-            .iter()
-            .map(|f| {
-                let at = (f.photo, [f.rect.x0.to_bits(), f.rect.y0.to_bits(), f.rect.x1.to_bits(), f.rect.y1.to_bits()]);
-                let n = seen.entry(at).or_insert(0);
-                let ord = *n;
-                *n += 1;
-                (at.0, at.1, ord)
-            })
-            .collect()
+        let mut at = |photo: u64, r: &lightcraft_geom::Rect| -> At {
+            let at = (photo, [r.x0.to_bits(), r.y0.to_bits(), r.x1.to_bits(), r.y1.to_bits()]);
+            let n = seen.entry(at).or_insert(0);
+            let ord = *n;
+            *n += 1;
+            (at.0, at.1, ord)
+        };
+        faces.iter().map(|f| if f.is_stack() { f.stack.iter().map(|m| at(m.photo, &m.rect)).collect() } else { vec![at(f.photo, &f.rect)] }).collect()
     };
     let (old_keys, new_keys) = (keys(&old.faces), keys(&new.faces));
     let start = shown.above.min(old.faces.len());
     let end = start.saturating_add(shown.on_screen).min(old.faces.len());
-    let mut latest: std::collections::HashMap<_, &UnnamedFace> = new_keys.iter().copied().zip(new.faces.iter()).collect();
-    // the faces in view, in their order, as far as the new list still has them
-    let in_view_keys = old_keys.get(start..end).unwrap_or_default();
-    let kept: Vec<UnnamedFace> = in_view_keys.iter().filter_map(|k| latest.remove(k).cloned()).collect();
-    let in_view: std::collections::HashSet<_> = in_view_keys.iter().copied().collect();
-    let mut rest: Vec<UnnamedFace> = new.faces.iter().zip(&new_keys).filter(|(_, k)| !in_view.contains(*k)).map(|(f, _)| f.clone()).collect();
+    let holder: std::collections::HashMap<At, usize> = new_keys.iter().enumerate().flat_map(|(i, ks)| ks.iter().map(move |k| (*k, i))).collect();
+    // the entries in view, in their order, as far as the new list still has them
+    let mut taken: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut kept: Vec<UnnamedFace> = Vec::new();
+    for ks in old_keys.get(start..end).unwrap_or_default() {
+        if let Some(i) = ks.iter().filter_map(|k| holder.get(k)).find(|i| !taken.contains(*i)).copied() {
+            taken.insert(i);
+            kept.extend(new.faces.get(i).cloned());
+        }
+    }
+    let mut rest: Vec<UnnamedFace> = new.faces.iter().enumerate().filter(|(i, _)| !taken.contains(i)).map(|(_, f)| f.clone()).collect();
     let below = rest.split_off(start.min(rest.len()));
     let mut faces = rest;
     faces.extend(kept);
@@ -205,7 +276,7 @@ pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
     app.caches.unnamed_arranged = arranged;
     // what was selected, rejected in place or being named and has since been named (or removed, or left the view with its
     // photo) is no longer so
-    let present: std::collections::HashSet<(u64, usize)> = list.faces.iter().map(|f| (f.photo, f.index)).collect();
+    let present: std::collections::HashSet<(u64, usize)> = list.all_keys().collect();
     face_tile::retain_present(app, &Gallery::Unnamed, &present);
     app.ui.rejected_unnamed.retain_present(&present);
     if app.ui.name_edit.as_ref().is_some_and(|e| !present.contains(&(e.photo, e.index))) {
@@ -217,7 +288,7 @@ pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
 
 /// What the section says under its heading: a status while the faces are being put in order and there is no list to show,
 /// else why there are no faces, else how the list is ordered and how to use it.
-fn subtitle(list: &Unnamed, pending: u64) -> String {
+pub(crate) fn subtitle(list: &Unnamed, pending: u64) -> String {
     if waiting(list) && list.stopped {
         crate::i18n::tr("Putting the faces in order was stopped.").to_string()
     } else if waiting(list) {
@@ -238,8 +309,8 @@ fn subtitle(list: &Unnamed, pending: u64) -> String {
 /// What the heading counts: the faces, or "n of N" when the list was cut. While the order is worked out there are no tiles to
 /// count and "0 of 40000" would read as an error, so it is the total alone.
 fn count_text(list: &Unnamed) -> String {
-    if !waiting(list) && list.total > list.faces.len() {
-        crate::i18n::tr_format!("{shown} of {total}", shown = list.faces.len(), total = list.total)
+    if !waiting(list) && list.total > list.face_count() {
+        crate::i18n::tr_format!("{shown} of {total}", shown = list.face_count(), total = list.total)
     } else {
         list.total.to_string()
     }
@@ -279,14 +350,16 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
         }
     } else if !list.faces.is_empty() {
         let r = Rect::from_min_size(pos2(right - 130.0, at.y + 12.0), vec2(130.0, 22.0));
-        let all = !list.faces.is_empty() && face_tile::selection(app, &Gallery::Unnamed).len() == list.faces.len();
+        // (the faces in stacks are not selected with it: selecting a stack is its own thing)
+        let singles = || list.faces.iter().filter(|f| !f.is_stack()).map(|f| (f.photo, f.index));
+        let all = singles().next().is_some() && face_tile::selection(app, &Gallery::Unnamed).len() == singles().count();
         let b = ui.put(r, egui::Button::new(crate::i18n::tr(if all { "Select none" } else { "Select all" })));
         register(ui, "unnamed:selectAll", b.rect);
         if b.clicked() {
             if all {
                 face_tile::clear_selection(app);
             } else {
-                face_tile::select_all(app, &Gallery::Unnamed, list.faces.iter().map(|f| (f.photo, f.index)));
+                face_tile::select_all(app, &Gallery::Unnamed, singles());
             }
         }
     }
@@ -294,7 +367,14 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
 
 /// The list as the name box and the selection see it: the faces in the order shown, with their suggestions.
 pub fn entries(list: &Unnamed, rejected: &super::person::Rejected) -> Vec<Entry> {
-    list.faces.iter().map(|f| Entry { key: (f.photo, f.index), suggestion: shown(f, rejected).map(str::to_string) }).collect()
+    list.faces
+        .iter()
+        .map(|f| Entry {
+            key: (f.photo, f.index),
+            suggestion: shown(f, rejected).map(str::to_string),
+            members: if f.is_stack() { f.keys() } else { Vec::new() },
+        })
+        .collect()
 }
 
 /// The name on a face's strip: its suggestion, unless it was rejected during this visit (nothing new is offered straight
@@ -330,7 +410,8 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
     let selected = face_tile::is_selected(app, &Gallery::Unnamed, key);
     let suggestion = shown(f, &app.ui.rejected_unnamed);
     // a face with a suggestion can be confirmed; reject is on every tile (and removes the box when there is nothing to reject)
-    let hover = Some(Hover {
+    let stack = f.is_stack();
+    let hover = (!stack).then(|| Hover {
         confirm: suggestion.is_some(),
         above: suggestion.is_some(),
         hide: true,
@@ -340,9 +421,15 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
         above_count: list.faces.iter().take(i + 1).filter(|c| shown(c, &app.ui.rejected_unnamed).is_some()).count(),
         positional: true,
     });
-    let spec = FaceTile { key, view: f.view, suggestion, named: false, prefix: "unnamed", hover };
+    let spec = FaceTile { key, view: f.view, suggestion, named: false, prefix: "unnamed", hover, count: if stack { f.count() } else { 0 } };
     match face_tile::show(app, ui, r, &spec, selected, ppp) {
-        TileEvent::Name => face_tile::open(app, ui.ctx(), &Entry { key, suggestion: suggestion.map(str::to_string) }),
+        TileEvent::Name => face_tile::open(
+            app,
+            ui.ctx(),
+            &Entry { key, suggestion: suggestion.map(str::to_string), members: f.keys().into_iter().filter(|_| stack).collect() },
+        ),
+        // (selecting a stack is not done yet: a click on one selects nothing)
+        TileEvent::Click { .. } if stack => {}
         TileEvent::Click { shift } => face_tile::click(app, &Gallery::Unnamed, &entries(list, &app.ui.rejected_unnamed), i, shift),
         // a double click opens the photo, as in the grid; its second click must not undo the first one's selection
         TileEvent::Open => {
@@ -369,7 +456,7 @@ mod tests {
 
     fn face(photo: u64, index: usize, suggestion: Option<&str>) -> UnnamedFace {
         let whole = lightcraft_geom::Rect { x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 };
-        UnnamedFace { photo, index, rect: whole, view: whole, suggestion: suggestion.map(str::to_string) }
+        UnnamedFace { photo, index, rect: whole, view: whole, suggestion: suggestion.map(str::to_string), stack: Vec::new() }
     }
 
     #[test]
@@ -573,5 +660,65 @@ mod tests {
         new.total = 7;
         let now = keep_places(&old, new, Shown { above: 0, on_screen: 3 });
         assert_eq!((order(&now), now.faces[1].suggestion.as_deref(), now.total), (vec![1, 2, 3], Some("Jane"), 7));
+    }
+
+    /// A stack of the faces `(photo, 0)` for the photos given, shown by the first.
+    fn stack(photos: &[u64]) -> UnnamedFace {
+        let mut head = face(photos[0], 0, None);
+        head.stack = photos.iter().map(|p| StackFace { photo: *p, index: 0, rect: head.rect }).collect();
+        head
+    }
+
+    fn entries_of(l: &Unnamed) -> Vec<Vec<u64>> {
+        l.faces.iter().map(|f| f.keys().iter().map(|k| k.0).collect()).collect()
+    }
+
+    #[test]
+    fn the_engines_answer_may_hold_stacks_and_a_stack_of_fewer_than_two_faces_is_a_single_face() {
+        let rect = json!({"x0": 0.1, "y0": 0.1, "x1": 0.3, "y1": 0.4});
+        let v = json!({"total": 5, "ready": true, "faces": [
+            {"photo": 1, "index": 0, "rect": rect, "stack": {"count": 3, "faces": [
+                {"photo": 1, "index": 0, "rect": rect}, {"photo": 2, "index": 1, "rect": rect}, {"photo": 3, "index": 0, "rect": rect}]}},
+            {"photo": 4, "index": 0, "rect": rect, "stack": {"count": 1, "faces": [{"photo": 4, "index": 0, "rect": rect}]}},
+            {"photo": 5, "index": 0, "rect": rect},
+        ]});
+        let l = parse(&v);
+        assert_eq!(entries_of(&l), [vec![1, 2, 3], vec![4], vec![5]]);
+        assert_eq!((l.faces[0].count(), l.faces[1].count(), l.face_count(), l.faces[0].is_stack(), l.faces[1].is_stack()), (3, 1, 5, true, false));
+        assert_eq!(l.all_keys().collect::<Vec<_>>(), [(1, 0), (2, 1), (3, 0), (4, 0), (5, 0)], "the faces in stacks are in the list too");
+    }
+
+    #[test]
+    fn faces_that_became_a_stack_leave_one_tile_in_the_place_of_the_first_of_them() {
+        let old = list(&[1, 2, 3, 4, 5, 6]);
+        // 3 4 5 are in view and now one stack; the engine sorts the stack first
+        let new = Unnamed { faces: vec![stack(&[3, 4, 5]), face(1, 0, None), face(2, 0, None), face(6, 0, None)], total: 6, ..list(&[]) };
+        let now = keep_places(&old, new, Shown { above: 2, on_screen: 3 });
+        assert_eq!(entries_of(&now), [vec![1], vec![2], vec![3, 4, 5], vec![6]], "one tile where 3 was, and what came after it moved up");
+    }
+
+    #[test]
+    fn a_stack_that_grows_or_changes_its_most_typical_face_keeps_its_place() {
+        let old = Unnamed { faces: vec![face(1, 0, None), stack(&[3, 4]), face(2, 0, None)], total: 4, ..list(&[]) };
+        // 7 joined and 4 is the most typical now
+        let new = Unnamed { faces: vec![stack(&[4, 3, 7]), face(2, 0, None), face(1, 0, None)], total: 5, ..list(&[]) };
+        let now = keep_places(&old, new, Shown { above: 0, on_screen: 3 });
+        assert_eq!(entries_of(&now), [vec![1], vec![4, 3, 7], vec![2]]);
+    }
+
+    #[test]
+    fn a_stack_that_was_named_closes_its_gap() {
+        let old = Unnamed { faces: vec![face(1, 0, None), stack(&[3, 4]), face(2, 0, None)], total: 4, ..list(&[]) };
+        let new = Unnamed { faces: vec![face(1, 0, None), face(2, 0, None)], total: 2, ..list(&[]) };
+        let now = keep_places(&old, new, Shown { above: 0, on_screen: 3 });
+        assert_eq!(entries_of(&now), [vec![1], vec![2]]);
+    }
+
+    #[test]
+    fn the_subtitle_mentions_stacks_only_when_the_list_has_some() {
+        let with = Unnamed { faces: vec![stack(&[1, 2]), face(3, 0, None)], total: 3, ready: true, complete: true, ..Default::default() };
+        let without = Unnamed { faces: vec![face(3, 0, None)], ..with.clone() };
+        assert!(subtitle(&with, 0).contains("stack of faces that are almost certainly the same person"), "{}", subtitle(&with, 0));
+        assert!(!subtitle(&without, 0).contains("stack"));
     }
 }

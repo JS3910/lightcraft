@@ -74,7 +74,8 @@ fn recognising(name: &str) -> (Headless, [PhotoId; 3], Arc<AtomicBool>, std::pat
     put(&mut h, ids[0], 0.1, unit(&[(0, 1.0)]));
     put(&mut h, ids[0], 0.5, unit(&[(0, 0.97), (3, 0.2)]));
     put(&mut h, ids[1], 0.3, unit(&[(5, 1.0)]));
-    put(&mut h, ids[1], 0.6, unit(&[(5, 0.99), (7, 0.1)]));
+    // (alike, but not nearly enough to be one stack)
+    put(&mut h, ids[1], 0.6, unit(&[(5, 0.6), (8, 0.8)]));
     put(&mut h, ids[2], 0.3, unit(&[(6, 1.0)]));
     (h, [ids[0], ids[1], ids[2]], hold, dir)
 }
@@ -203,7 +204,36 @@ fn with_nobody_named_yet_the_status_comes_first_not_the_empty_view_then_the_tile
     run_ended(&mut h);
     assert!(frames_until(&mut h, 40, |h| !shown(h).is_empty()).is_some(), "the tiles never came");
     h.settle(T);
-    assert_eq!((widgets(&mut h, "unnamed:status"), shown(&h).len()), (0, 5));
+    // (the two faces of photo 0 are so alike that they are one stack: four tiles for five faces)
+    assert_eq!((widgets(&mut h, "unnamed:status"), shown(&h).len()), (0, 4));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn two_faces_the_engine_stacks_are_one_tile_with_a_count_and_naming_it_names_both_in_one_step() {
+    let (mut h, [p0, _, _], _hold, dir) = recognising("stack");
+    // nobody is named: the two faces of photo 0 (0.97 alike) are one stack once the run is done, shown by one of them
+    set_regions(&mut h, p0, vec![region(0.1, None), region(0.5, None)]);
+    h.request("ui.set", json!({"view": "people"}), T);
+    assert!(frames_until(&mut h, 400, |h| !shown(h).is_empty()).is_some(), "the tiles never came");
+    h.settle(T);
+    let list = h.app.caches.unnamed.as_ref().map(|(_, _, _, l)| l.clone()).unwrap();
+    assert_eq!((list.faces.len(), list.face_count(), list.total), (4, 5, 5), "{list:?}");
+    let stack = list.faces.iter().find(|f| f.is_stack()).expect("the stack").clone();
+    assert_eq!(stack.count(), 2);
+    assert_eq!(widgets(&mut h, "unnamed-stack-count:"), 1, "one count badge, on the stack");
+    assert_eq!(widgets(&mut h, "unnamed-face:"), 4, "the stack and the three faces that stack with nothing");
+    // type a name on the stack's strip
+    let undo = h.app.session.undo.len();
+    let strip = format!("unnamed-name:{}:{}", stack.photo, stack.index);
+    assert_eq!(h.request("ui.clickWidget", json!({"id": strip}), T)["ok"], true);
+    step(&mut h);
+    assert_eq!(h.request("ui.text", json!({"text": "Zed Q"}), T)["ok"], true);
+    assert_eq!(h.request("ui.key", json!({"key": "enter"}), T)["ok"], true);
+    step(&mut h);
+    let names: Vec<Option<String>> = h.app.session.catalog.photo(p0).unwrap().meta.regions.iter().map(|r| r.name.clone()).collect();
+    assert_eq!(names, vec![Some("Zed Q".to_string()), Some("Zed Q".to_string())], "both faces of the stack");
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one undo step");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
