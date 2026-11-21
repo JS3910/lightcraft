@@ -40,10 +40,10 @@ fn at(c: f32, a: usize, b: usize, sign: f32) -> Arc<[f32]> {
 fn with_nobody_or_one_person_named_the_bar_is_the_fixed_minimum() {
     let mut c = Calibration::default();
     let none = AtomicBool::new(false);
-    assert_eq!(c.bar(&[], &none), Some(MIN_BAR));
+    assert_eq!(c.bar(&[], &none), Some(0.75));
     // one person, however alike their own faces are: nobody to be told apart from
     let ann = person("Ann", &[unit(&[(0, 1.0)]), unit(&[(0, 1.0), (1, 0.01)])]);
-    assert_eq!(c.bar(&[ann], &none), Some(MIN_BAR));
+    assert_eq!(c.bar(&[ann], &none), Some(0.75));
     // the minimum is clearly stricter than the suggestion bars of the known models (0.55 and 0.40)
     assert!(MIN_BAR >= 0.55 + 0.15, "{MIN_BAR}");
 }
@@ -56,11 +56,11 @@ fn the_bar_is_above_the_highest_similarity_between_two_people_but_never_below_th
     let ann = person("Ann", &[unit(&[(0, 1.0)]), at(0.2, 0, 3, 1.0)]);
     let bob = person("Bob", &[at(0.9, 0, 1, 1.0), unit(&[(5, 1.0)])]);
     let bar = c.bar(&[ann, bob], &none).expect("bar");
-    assert!((bar - (0.9 + BAR_MARGIN)).abs() < 1e-4, "{bar}");
+    assert!((bar - 0.95).abs() < 1e-4, "the highest similarity (0.9) and the margin (0.05): {bar}");
     // two people who are not alike leave the minimum
     let ann = person("Ann", &[unit(&[(0, 1.0)])]);
     let bob = person("Bob", &[at(0.5, 0, 1, 1.0)]);
-    assert_eq!(c.bar(&[ann, bob], &none), Some(MIN_BAR));
+    assert_eq!(c.bar(&[ann, bob], &none), Some(0.75));
 }
 
 /// The highest similarity between two people the long way.
@@ -117,13 +117,19 @@ fn after_every_change_the_bar_is_what_comparing_everyone_gives() {
 #[test]
 fn a_chain_of_look_alikes_never_puts_the_ends_in_one_stack() {
     // A and B are 0.9 alike, B and C are 0.9 alike, A and C only 0.62
-    let a = face(1, at(0.9, 0, 1, 1.0));
-    let b = face(2, unit(&[(0, 1.0)]));
-    let c = face(3, at(0.9, 0, 1, -1.0));
-    let stacks = run(&mut StackState::default(), &[a, b, c], 0.8, BRUTE_LIMIT);
-    assert!(stacks.iter().all(|s| !(s.contains(&1) && s.contains(&3))), "{stacks:?}");
-    assert_eq!(stacks.len(), 1, "one of the two pairs is still a stack: {stacks:?}");
-    assert_eq!(stacks[0].len(), 2);
+    // (whichever of them comes first: the search starts from the first one)
+    for order in [[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]] {
+        let make = |id: u64| match id {
+            1 => face(1, at(0.9, 0, 1, 1.0)),
+            2 => face(2, unit(&[(0, 1.0)])),
+            _ => face(3, at(0.9, 0, 1, -1.0)),
+        };
+        let faces: Vec<Face> = order.iter().map(|id| make(*id)).collect();
+        let stacks = run(&mut StackState::default(), &faces, 0.8, BRUTE_LIMIT);
+        assert!(stacks.iter().all(|s| !(s.contains(&1) && s.contains(&3))), "{order:?}: {stacks:?}");
+        assert_eq!(stacks.len(), 1, "{order:?}: one of the two pairs is still a stack: {stacks:?}");
+        assert_eq!(stacks[0].len(), 2, "{order:?}");
+    }
 }
 
 #[test]

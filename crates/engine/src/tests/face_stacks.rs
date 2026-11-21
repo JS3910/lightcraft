@@ -42,9 +42,9 @@ fn library(name: &str) -> (Session, std::path::PathBuf, [PhotoId; 3]) {
     put(&mut s, c, 0.2, unit64(&[(12, 1.0), (13, 0.06)]));
     put(&mut s, a, 0.8, unit64(&[(0, 0.97), (40, 0.2)])); // like Ann
     put(&mut s, a, 0.85, unit64(&[(0, 0.96), (41, 0.2)])); // like Ann, and like the one before
-    // a chain: 20 and 22 are 0.9 alike the middle one, and 0.62 alike each other
-    put(&mut s, b, 0.2, unit64(&[(20, 0.9), (21, 0.436)]));
-    put(&mut s, b, 0.3, unit64(&[(20, 1.0)]));
+    // a chain: the middle one first, then two that are 0.9 alike it and 0.62 alike each other
+    put(&mut s, b, 0.2, unit64(&[(20, 1.0)]));
+    put(&mut s, b, 0.3, unit64(&[(20, 0.9), (21, 0.436)]));
     put(&mut s, b, 0.4, unit64(&[(20, 0.9), (21, -0.436)]));
     put(&mut s, b, 0.5, unit64(&[(30, 1.0)])); // alone
     // (b's last face, at 0.6, and c's last, at 0.3, are not embedded)
@@ -136,9 +136,9 @@ fn among_the_faces_without_a_suggestion_stacks_come_first_biggest_first_then_sin
 fn a_chain_of_look_alikes_never_puts_its_ends_in_one_stack() {
     let (mut s, d, [_, b, _]) = library("stacks-chain");
     let r = settle(&mut s);
-    // b's faces at index 1 and 3 are the ends of the chain (0.62 alike)
-    assert!(stacks(&r).iter().all(|st| !(st.contains(&(b.0, 1)) && st.contains(&(b.0, 3)))), "{:?}", stacks(&r));
-    let with_middle = stacks(&r).into_iter().filter(|st| st.contains(&(b.0, 2))).count();
+    // b's faces at index 2 and 3 are the ends of the chain (0.62 alike)
+    assert!(stacks(&r).iter().all(|st| !(st.contains(&(b.0, 2)) && st.contains(&(b.0, 3)))), "{:?}", stacks(&r));
+    let with_middle = stacks(&r).into_iter().filter(|st| st.contains(&(b.0, 1))).count();
     assert_eq!(with_middle, 1, "the middle one stacks with one of the ends");
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -277,5 +277,33 @@ fn with_recognition_off_there_are_no_stacks_and_faces_without_embeddings_never_s
     s.execute("faces.enable", &json!({"enabled": false})).unwrap();
     let r = ask(&mut s);
     assert_eq!((r["ready"].clone(), stacks(&r).len(), r["stacks"].clone()), (json!(false), 0, json!(0)), "{r}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_face_whose_stamp_changed_since_the_run_is_out_of_its_stack_until_the_next_run() {
+    let (mut s, d, [_, b, _]) = library("stacks-stamp");
+    settle(&mut s);
+    // a face of the trio is rejected a name (its own stamp changes): until the run is done for it, it is out of the stack
+    s.execute("faces.reject", &json!({"faces": [{"photo": b.0, "index": 0}], "name": "Zed"})).unwrap();
+    let r = s.execute("faces.unnamed", &json!({"wait": false})).unwrap();
+    assert_eq!(r["ordering"], true, "{r}");
+    assert!(entries(&r).contains(&vec![(b.0, 0)]), "the face is a tile of its own: {:?}", entries(&r));
+    assert!(stacks(&r).iter().any(|st| st.len() == 2 && !st.contains(&(b.0, 0))), "the trio is two faces now: {:?}", stacks(&r));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn after_another_scope_a_stack_the_old_run_found_shows_only_the_faces_in_scope_and_one_left_is_a_single_face() {
+    let (mut s, d, [_, b, _]) = library("stacks-stale-scope");
+    settle(&mut s);
+    let album = s.execute("album.create", &json!({"name": "Only b"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.addPhotos", &json!({"id": album, "ids": [b.0]})).unwrap();
+    s.execute("library.source", &json!({"kind": "album", "id": album})).unwrap();
+    // asked at once, the answer is what the run for the whole library found, as far as it holds for the faces in scope
+    let r = s.execute("faces.unnamed", &json!({"scope": "visible", "wait": false})).unwrap();
+    assert_eq!(r["ordering"], true, "{r}");
+    assert!(entries(&r).contains(&vec![(b.0, 0)]), "the one face of the trio in scope is a face: {:?}", entries(&r));
+    assert!(r["faces"].as_array().unwrap().iter().all(|f| f["stack"]["count"].as_u64().is_none_or(|n| n >= 2)), "no stack of one: {r}");
     let _ = std::fs::remove_dir_all(&d);
 }
