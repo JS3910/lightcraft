@@ -45,7 +45,7 @@ fn with_nobody_or_one_person_named_the_bar_is_the_fixed_minimum() {
     let ann = person("Ann", &[unit(&[(0, 1.0)]), unit(&[(0, 1.0), (1, 0.01)])]);
     assert_eq!(c.bar(&[ann], &none), Some(0.75));
     // the minimum is clearly stricter than the suggestion bars of the known models (0.55 and 0.40)
-    assert!(MIN_BAR >= 0.55 + 0.15, "{MIN_BAR}");
+    const { assert!(MIN_BAR >= 0.55 + 0.15) };
 }
 
 #[test]
