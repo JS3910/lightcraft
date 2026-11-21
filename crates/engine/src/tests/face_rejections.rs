@@ -35,7 +35,7 @@ fn library(name: &str) -> (Session, std::path::PathBuf, PhotoId, PhotoId) {
 
 fn suggestion(s: &mut Session, id: PhotoId, i: usize) -> Option<String> {
     let r = s.execute("faces.unnamed", &json!({})).unwrap();
-    let f = r["faces"].as_array().unwrap().iter().find(|f| f["photo"] == id.0 && f["index"] == i).cloned().unwrap_or(Value::Null);
+    let f = super::face_recognize::entry_listing(&r, id.0, i as u64).cloned().unwrap_or(Value::Null);
     f["suggestion"]["name"].as_str().map(str::to_string)
 }
 

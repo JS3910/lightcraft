@@ -34,7 +34,17 @@ fn library(tag: &str) -> (Session, [PhotoId; 3], u64, std::path::PathBuf) {
 }
 
 fn faces(r: &Value, key: &str) -> Vec<(u64, u64)> {
-    let mut v: Vec<(u64, u64)> = r[key].as_array().unwrap().iter().map(|f| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap())).collect();
+    // (every face, those inside a stack too)
+    let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
+    let mut v: Vec<(u64, u64)> = r[key]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|f| match f["stack"]["faces"].as_array() {
+            Some(m) => m.iter().map(at).collect::<Vec<_>>(),
+            None => vec![at(f)],
+        })
+        .collect();
     v.sort();
     v
 }
@@ -177,7 +187,7 @@ fn a_face_embedded_again_at_the_same_box_is_scored_again() {
     let (mut s, [_, b, _], _, d) = library("scope-reembed");
     let suggestion = |s: &mut Session| -> Value {
         let r = s.execute("faces.unnamed", &json!({})).unwrap();
-        r["faces"].as_array().unwrap().iter().find(|f| f["photo"] == b.0 && f["index"] == 1).unwrap()["suggestion"]["name"].clone()
+        super::face_recognize::entry_listing(&r, b.0, 1).unwrap()["suggestion"]["name"].clone()
     };
     assert_eq!(suggestion(&mut s), "Ann");
     // the photo's file was replaced and the scan made another embedding for the face at the same box: nothing named changed
