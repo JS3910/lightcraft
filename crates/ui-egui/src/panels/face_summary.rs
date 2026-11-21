@@ -65,7 +65,7 @@ mod tests {
             kind: RegionKind::Face,
             name: name.map(str::to_string),
             description: None,
-            rejected: Vec::new(),
+            ..Default::default()
         }
     }
 

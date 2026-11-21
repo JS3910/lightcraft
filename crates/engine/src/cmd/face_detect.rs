@@ -282,7 +282,7 @@ fn detect(s: &mut Session, p: &Value) -> Result<Value> {
                     kind: RegionKind::Face,
                     name: None,
                     description: Some(format!("{MARK}{LABEL}")),
-                    rejected: Vec::new(),
+                    ..Default::default()
                 });
             }
             ops.push(Op::SetMeta { id, meta: Box::new(meta) });
@@ -334,7 +334,7 @@ mod tests {
             kind: RegionKind::Face,
             name: Some("Ann".into()),
             description: None,
-            rejected: Vec::new(),
+            ..Default::default()
         }
     }
 

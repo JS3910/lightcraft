@@ -1101,7 +1101,7 @@ mod region_drag_tests {
             kind: lightcraft_meta::RegionKind::Face,
             name: Some("Jane".to_string()),
             description: None,
-            rejected: Vec::new(),
+            ..Default::default()
         }];
         let mut editing = None;
         let mut run_frame = |events: &[egui::Event]| -> Option<RegionEdit> {
@@ -1164,7 +1164,7 @@ mod region_drag_tests {
             kind: lightcraft_meta::RegionKind::Face,
             name: name.map(str::to_string),
             description: None,
-            rejected: Vec::new(),
+            ..Default::default()
         };
         let mut hints = crate::panels::faces::Hints::default();
         hints.by_index.insert(0, crate::panels::faces::Hint { suggestion: Some(("Ann Lee".to_string(), 0.8)), candidates: Vec::new() });

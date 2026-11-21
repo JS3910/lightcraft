@@ -629,7 +629,7 @@ fn naming_a_face_in_the_loupe() {
         kind: lightcraft_meta::RegionKind::Face,
         name: None,
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     }];
     h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
     h.request("ui.set", json!({"view": "detail", "right": "none"}), t);
@@ -832,7 +832,7 @@ fn people_and_the_name_box_offer_to_set_face_recognition_up() {
         kind: lightcraft_meta::RegionKind::Face,
         name: None,
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     }];
     h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
     let offers = |h: &mut Headless| h.request("ui.widgets", json!({}), t).to_string().contains("\"faces:setup\"");
@@ -922,7 +922,7 @@ fn a_persons_page_shows_their_faces_and_back_returns_to_everyone() {
         kind: lightcraft_meta::RegionKind::Face,
         name: Some(name.to_string()),
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     };
     // Jane Doe twice in the first photo and once in the second; John Roe in the third
     for (id, regions) in
@@ -1020,7 +1020,7 @@ fn person_more_confirms_all_above_with_one_undo_step() {
         kind: lightcraft_meta::RegionKind::Face,
         name: name.map(str::to_string),
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     };
     for (id, name) in ids.iter().zip([Some("Jane Doe"), None, None, None, None, None, Some("John Roe")]) {
         let mut meta = h.app.session.catalog.photo(*id).unwrap().meta.clone();
@@ -1127,7 +1127,7 @@ fn unnamed_faces_are_selected_and_named_together() {
         kind: lightcraft_meta::RegionKind::Face,
         name: name.map(str::to_string),
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     };
     for (id, regions) in [
         (ids[0], vec![face(0.1, Some("Jane Doe")), face(0.5, None)]),
@@ -1210,7 +1210,7 @@ fn double_clicking_an_unnamed_face_opens_its_photo() {
             kind: lightcraft_meta::RegionKind::Face,
             name: None,
             description: None,
-            rejected: Vec::new(),
+            ..Default::default()
         }];
         h.app.session.commit("setup", Op::SetMeta { id: *id, meta: Box::new(meta) }).unwrap();
     }
@@ -1259,7 +1259,7 @@ fn the_unnamed_faces_name_box_pastes_and_escape_closes_it_then_clears_the_select
         kind: lightcraft_meta::RegionKind::Face,
         name: None,
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     }];
     h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
     h.request("engine.execute", json!({"command": "view.people"}), t);
@@ -1304,7 +1304,7 @@ fn a_screenful_of_small_faces_is_not_evicted_and_left_blank() {
                 kind: lightcraft_meta::RegionKind::Face,
                 name: None,
                 description: None,
-                rejected: Vec::new(),
+                ..Default::default()
             })
             .collect();
         h.app.session.commit("setup", Op::SetMeta { id: *id, meta: Box::new(meta) }).unwrap();
@@ -5286,7 +5286,7 @@ fn the_loupe_toolbar_says_who_is_in_the_photo() {
         kind: lightcraft_meta::RegionKind::Face,
         name: name.map(str::to_string),
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     };
     let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
     meta.regions = vec![face(0.7, Some("Sasha")), face(0.4, None), face(0.1, Some("Johan"))];
@@ -5349,7 +5349,7 @@ fn the_face_boxes_button_and_its_text_sit_in_the_left_group() {
             kind: lightcraft_meta::RegionKind::Face,
             name: Some((*n).to_string()),
             description: None,
-            rejected: Vec::new(),
+            ..Default::default()
         })
         .collect();
     h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();

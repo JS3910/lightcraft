@@ -569,7 +569,7 @@ mod imp {
                 kind: RegionKind::Face,
                 name: None,
                 description: Some(format!("{MARK}{LABEL}")),
-                rejected: Vec::new(),
+                ..Default::default()
             });
         }
         if s.apply_system(Op::SetMeta { id, meta: Box::new(meta) }).is_ok() {

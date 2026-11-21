@@ -96,6 +96,14 @@ pub struct Region {
     pub rejected: Vec<String>,
 }
 
+/// A face box with no extent, no name, no description and nothing catalogue-only: what a literal starts from
+/// (`Region { rect, name, ..Default::default() }`), so that a new catalogue-only field touches one place.
+impl Default for Region {
+    fn default() -> Self {
+        Region { rect: Rect::default(), kind: RegionKind::Face, name: None, description: None, rejected: Vec::new() }
+    }
+}
+
 impl Region {
     /// Whether `name` is one of the names rejected for this face (trimmed, ignoring capitalization).
     pub fn rejects(&self, name: &str) -> bool {
@@ -684,7 +692,7 @@ mod tests {
             kind: RegionKind::Face,
             name: None,
             description: None,
-            rejected: Vec::new(),
+            ..Default::default()
         };
         let turned = |o: Orientation, drawn_on: (f64, f64), stored: (u32, u32)| {
             let mut regions = [region()];

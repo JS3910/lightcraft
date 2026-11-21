@@ -38,7 +38,7 @@ fn unit(v: Vec<f32>) -> Vec<f32> {
 
 fn region_at(i: usize, name: Option<String>) -> Region {
     let (x0, y0) = ((i % 1000) as f64 * 0.0009, (i / 1000) as f64 * 0.0004);
-    Region { rect: Rect { x0, y0, x1: x0 + 0.0005, y1: y0 + 0.0003 }, kind: RegionKind::Face, name, description: None, rejected: Vec::new() }
+    Region { rect: Rect { x0, y0, x1: x0 + 0.0005, y1: y0 + 0.0003 }, kind: RegionKind::Face, name, description: None, ..Default::default() }
 }
 
 /// What `faces.unnamed` took, and what it listed.
