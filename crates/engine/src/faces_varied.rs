@@ -68,7 +68,7 @@ mod tests {
 
     /// A unit vector of 8 numbers with weight on `axis`, tilted a little by `tilt` towards the next axis.
     fn near(axis: usize, tilt: f32) -> Vec<f32> {
-        let mut v = vec![0.0; 8];
+        let mut v = [0.0; 8];
         v[axis % 8] = 1.0;
         v[(axis + 1) % 8] = tilt;
         let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -111,7 +111,11 @@ mod tests {
         let picked = pick(&faces, 8, 10);
         assert!(picked.iter().all(|i| [3, 6].contains(i)), "only the usable ones: {picked:?}");
         assert_eq!(picked.len(), 2);
-        assert!(pick(&[], 8, 5).is_empty() && pick(&refs(&[good.clone()]), 8, 0).is_empty() && pick(&refs(&[good]), 0, 5).is_empty());
+        assert!(
+            pick(&[], 8, 5).is_empty()
+                && pick(&refs(std::slice::from_ref(&good)), 8, 0).is_empty()
+                && pick(&refs(std::slice::from_ref(&good)), 0, 5).is_empty()
+        );
     }
 
     #[test]

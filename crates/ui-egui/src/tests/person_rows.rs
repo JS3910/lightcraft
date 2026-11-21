@@ -190,5 +190,5 @@ fn the_page_asks_for_the_most_varied_faces_of_the_widest_window() {
     let r = crate::panels::person::request("Ann Lee");
     assert_eq!((r["name"].as_str(), r["scope"].as_str()), (Some("Ann Lee"), Some("visible")));
     let picks = r["varied"].as_u64().unwrap();
-    assert!(picks >= 3 * 50 && picks <= 5000, "three rows of a 4K window, bounded: {picks}");
+    assert!((3 * 50..=5000).contains(&picks), "three rows of a 4K window, bounded: {picks}");
 }
