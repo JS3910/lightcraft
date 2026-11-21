@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Faces of the same person are one tile in the Unnamed faces
+- Faces nothing is suggested for that are virtually certain to be the same person are one tile with a count on it. A person who
+  appears in hundreds of photos but matches nobody named yet becomes one tile near the top of the faces without a suggestion
+  (stacks come first there, the biggest first), where before their faces were scattered or out of sight.
+- Typing a name on a stack names every face in it in one undo step, and the stack leaves the grid. A stack has no cross, so one
+  click never removes the face boxes of many faces you have not looked at.
+- Only faces that are more alike than any two faces you named as different people (plus a margin, and never less alike than a fixed
+  minimum) stack, and every face of a stack is that alike to every other, so a chain of look-alikes never joins two different people.
+- Stacks follow the People view's source and filters, are worked out in the background with the existing **Putting unnamed faces
+  in order** row, and `faces.unnamed` reports each as one entry with its faces, count and representative face.
+
 ### A person's page shows three rows of confirmed faces
 - A person with thousands of confirmed faces no longer fills the screen with them: the Confirmed section shows three rows (how
   many tiles a row has depends on the window's width), and **Show all N** under them opens the rest in place (then **Show fewer**).

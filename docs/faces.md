@@ -327,7 +327,7 @@ library, as `faces.evaluate` does):
 - The Named People cards come from `faces.people`: each card counts the photos among those that the person is in and shows
   their largest face among them, most photos first, then by name. It also reports `hidden`, how many faces (named or
   unnamed) are in library photos the source and filters leave out. The header names the source as the grid does.
-- The Unnamed faces come from `faces.unnamed`: the unnamed faces in those photos, with `total` counted there.
+- The Unnamed faces come from `faces.unnamed`: the unnamed faces in those photos, with `total` counted there, and the stacks of them (*Stacks of the same person*).
 - A person's page comes from `faces.person`: their confirmed faces in those photos, and More from those photos too.
 - The background scan does those photos first (see *The background scan*).
 - Suggestions, the name box's ranking and More's scores always compare against every named face in the library, so a
@@ -346,9 +346,9 @@ ask the cards, so what a held view lets go of leaves them too; the tiles on scre
 
 Below the cards come the **Unnamed faces**: every face nobody has named in those photos, as cropped pictures. With recognition running, the faces the
 named ones recognise come first, the most confident suggestion first (different names mixed, ties by photo and then by
-face), each carrying its suggested name on its name strip; then the faces nothing is suggested for, faces that look alike
-next to each other (put in order by looking at every pair, for up to the first 1,500 of them); then the faces not
-embedded yet, in photo order. Every embedded unnamed face is scored against the named people for this order, not only the
+face), each carrying its suggested name on its name strip; then the **stacks** (below), the biggest first; then the other faces
+nothing is suggested for, faces that look alike next to each other (put in order by looking at every pair, for up to the first
+1,500 of them); then the faces not embedded yet, in photo order. Every embedded unnamed face is scored against the named people for this order, not only the
 ones listed, on a thread of its own, never on the window's (see *The cost of the order* below). Every tile has that strip under its picture, always
 shown: the suggested name followed by a question mark (**Jane Doe?**), or a lone **?** when there is no suggestion. Faces are
 named in place: click a strip and the shared name box opens on that tile (a suggestion is filled in and selected, so the
@@ -373,7 +373,52 @@ one place, without re-sorting, so confirming from the bottom of the screen upwar
 face whose suggested name was rejected stays a **?** in place. A face the scan finds takes its sorted place out of sight, never
 inside the faces in view. Scrolling does not re-sort; what scrolls into view has already been put in its place. The subtitle
 under **Unnamed faces** names only the order the list really is in: the likeliest names first when any face has a suggestion,
-look-alikes next to each other when some faces have none.
+look-alikes next to each other when some faces have none, and (when there are any) what a tile with a number is. A stack
+counts as one tile: it takes one place, so when faces on screen become a stack the stack takes the place of the first of them
+and the tiles after it move up; a stack that grows, or whose most typical face changes, keeps its place (a stack is told apart
+by the faces it holds); when a stack is named the tiles after it move up one place.
+
+#### Stacks of the same person
+
+A person who appears in hundreds of photos but matches nobody named yet would be hundreds of near-identical tiles in a row,
+and, past the first 1,500 faces without a suggestion, would never be put next to their look-alikes at all. So **faces without
+a suggestion that are virtually certain to be the same person are one tile** with a count on it (a **512** badge at the
+bottom left of the picture), shown by the face most typical of them (the one closest to the average of the faces). Stacks come
+after the faces with a suggestion, the biggest first, then the single faces in look-alike order, then the faces not embedded.
+A stack is a face tile: its name strip reads **?**; typing a name on it (or picking one) names every face in it, as one undo
+step (`faces.nameFaces` with its faces), and the stack leaves the grid. A stack has **no cross and no tick**, since a cross
+without a suggestion would remove the face boxes of many faces nobody looked at with one click; the Delete key on a stack does
+nothing. A screen reader hears **Stack of 512 faces**. Clicking a stack selects nothing yet. Stacks are not stored: a stack is
+the result of stacking the unnamed faces as they are now, and becomes a person only by being named, as any face does. Faces
+with a suggestion are not stacked yet.
+
+- *Scope.* Stacks follow the People view's source and filters: only faces in those photos are stacked, and a count shows
+  those faces; a stack left with one face in scope is that face alone.
+- *The bar.* Two faces are alike enough when the cosine of their embeddings, the measure the suggestions use (not the
+  person's score, which is the mean of the two closest faces), reaches the bar. The bar is calibrated from the library's own
+  named faces: **above the highest similarity found between two faces named as different people, plus 0.05** (`BAR_MARGIN`),
+  and **never below 0.75** (`MIN_BAR`). The minimum is clearly stricter than the suggestion bars of the known models (0.40 and
+  0.55; 0.45 for others), because naming a stack names faces nobody looked at one by one. With nobody, or one person, named
+  there is nothing to tell apart, and the bar is the minimum. One mistake in the named faces (a face named as two people in
+  two photos) raises the bar, perhaps past 1, and then nothing stacks: when in doubt, don't stack. The calibration is kept
+  between runs per person (a person's highest similarity to anyone else, and who that was): a naming works out the rows of the
+  people whose named faces changed against everybody, and the others only against those.
+- *No chaining.* A face joins a stack only when it reaches the bar against **every** face already in it, so A like B and B
+  like C with A not like C never end up together. (A face that reaches the bar against all faces of a stack also reaches it
+  against their average, which is what finds the stacks worth comparing face by face.) A stack holds at most 4,500 faces, so
+  naming one is a single `faces.nameFaces` command (it takes 5,000).
+- *Faces nothing can be said of.* A face without an embedding, one of another length than its neighbours (another model) or one
+  with a non-finite number is never stacked.
+- *Where it runs.* In the same background run that scores the faces (the **Putting unnamed faces in order** row, cancellable,
+  checked between chunks of 256 faces), after the scoring. Until the run is done every face is a tile of its own; a caller that
+  waits gets the stacks. What a run found is kept for the next: a stack whose faces are all still there stays as it is, a new
+  face joins the stack it fits or is compared with the faces that have no stack, faces already compared with each other are not
+  compared again, a stack that lost a face is looked at again, and another bar starts afresh. A face the search through cells
+  (below) missed stays out of a stack, never in a wrong one.
+- *Not O(n²).* Comparing every pair of 30,000 faces would be 450 million comparisons of 512 numbers. Up to 4 million
+  comparisons the run compares every new face with every face without a stack; above that the faces are put in cells (about
+  the square root of their number, each face in the cells of its two nearest centres) and a face is compared with the faces of
+  its own cells only. Cells can miss a pair that is alike; that only makes stacks smaller, never wrong.
 
 **The order is worked out in the background.** The window asks for the list without waiting (`faces.unnamed` with
 `wait: false`), so a click never waits for the scoring. The answer is the best order there is now: every face that is still
@@ -501,6 +546,52 @@ Reading the tables:
 - A first arrangement of 30,000 faces against 6,000 named takes 1.7 s with 8 threads and 3.8 s with 4: the longest the Unnamed
   section shows its status; narrowing the source or the filters (the People view follows the grid) keeps it small.
 
+
+**What the stacks cost.** The stacking is part of the run above, after the scoring, and only on that thread; the window's
+thread does nothing more than list the stacks the last run found (the calling-thread columns are the same as without stacks).
+- *The first arrangement* compares the faces without a suggestion with each other: up to 4 million comparisons when every pair
+  is compared, else through cells (about 11 million comparisons for 15,000 faces without a suggestion, 31 million for 30,000, of
+  512 numbers each). It adds 0.1 to 0.2 s at 10,000 unnamed faces and 0.5 s (8 threads) to 1.5 s (4 threads) at 30,000, to the
+  time the Unnamed section shows its status; the faces without a suggestion were also put next to their look-alikes before, in
+  a pass over at most 1,500 of them, which now only the faces in no stack take part in.
+- *A change* costs what it changed: a naming that changes no bar compares nothing again (the stacks and the faces already
+  compared are kept), the scan finding 600 faces (300 without a suggestion) compares them with the faces that have no stack,
+  0.2 to 0.3 s in the background at 30,000 unnamed faces. A change of the bar starts the stacking afresh (the cost of the first
+  arrangement): naming one face as someone else when it is the face of another named person is a change of the bar, as it raises
+  it.
+- *The calibration of the bar* compares the named faces of every person with those of every other once: 18 million
+  comparisons for 6,000 named faces of 600 people, which is inside the first arrangement's time above; a naming works out the
+  naming's person against the others only.
+
+Measured like the tables above, with a quarter of the unnamed faces made faces of people nobody has named (groups of 50 around
+one face, which stack; `face_unnamed_stacks_cost`, the same command with that name), and the others as before: the time until the order was complete in the
+background, in release builds, one run each on the same loaded machine (so the last digit means little). "Before" is the same
+harness without those faces, as it ran on this code (`face_unnamed_cost`; the faces without a suggestion are stacked there too, they are only
+never alike): the stacks themselves change the cost very little; what they add is comparing faces without a suggestion with each
+other at all.
+
+8 threads:
+
+| Unnamed faces | Named faces (people) | Stacks in the list | First arrangement (without stack groups) | After one naming | Scan finds 2 % more | `faces.unnamed` on the calling thread (first / unchanged / after a naming) |
+|---|---|---|---|---|---|---|
+| 10,000 | 3,000 (300) | 85 | 0.42 s (0.42 s) | 35 ms | 0.10 s | 17 / 15 / 17 ms |
+| 30,000 | 6,000 (600) | 267 | 2.27 s (2.26 s) | 71 ms | 0.22 s | 29 / 32 / 36 ms |
+| 60,000 | 3,000 (300) | 842 | 3.17 s (3.05 s) | 0.12 s | 0.36 s | 53 / 56 / 57 ms |
+
+4 threads:
+
+| Unnamed faces | Named faces (people) | Stacks in the list | First arrangement (without stack groups) | After one naming | Scan finds 2 % more | `faces.unnamed` on the calling thread (first / unchanged / after a naming) |
+|---|---|---|---|---|---|---|
+| 10,000 | 3,000 (300) | 85 | 0.76 s (0.78 s) | 35 ms | 0.12 s | 17 / 15 / 17 ms |
+| 30,000 | 6,000 (600) | 267 | 4.82 s (5.29 s) | 69 ms | 0.28 s | 29 / 32 / 35 ms |
+| 60,000 | 3,000 (300) | 842 | 5.90 s (5.81 s) | 0.12 s | 0.43 s | 48 / 57 / 61 ms |
+
+Stacking made the first arrangement longer than the figures of the tables above (which were measured before there were
+stacks): 1.7 s became 2.3 s for 30,000 unnamed faces against 6,000 named with 8 threads, and 3.8 s became 5.3 s with 4
+threads. A naming (74 ms before) and the scan finding faces (0.15 s before) cost what they cost then, plus 0 to 0.1 s. The stacks listed
+are the entries among the first 3,000 of the list (the faces with a suggestion come first, so with that many suggestions the stacks
+are further down than the list is cut); `stacks` in the answer counts all of them.
+
 ### A person's page
 
 In **People**, a click on a person opens their page: **only cropped faces**, never whole photos. First the faces named
@@ -592,6 +683,8 @@ the view; a second click, or the first on a face with no suggestion, removes the
 is therefore gone in two clicks without leaving the gallery. The removal is catalog only (the sidecar is never rewritten),
 and the background scan does not detect the box again: a photo that lost its last face box is remembered as searched.
 
+A stack has no cross (the first click would remove the face boxes of every face in it), and the Delete key on a stack does nothing.
+
 On a selected tile, reject (and the Delete key, when no name box or other text field has the keyboard) acts on the whole
 selection; on an unselected tile, on that face alone. Over a selection it has two levels: while any selected face shows a
 name it only rejects those names and removes nothing, and once none does it removes the face boxes of all of them. However
@@ -646,7 +739,7 @@ reuses the pictures of its step instead of rendering every face again.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?, scope?, varied?}` (a person's faces and the unnamed faces that look like them; `scope: "visible"` limits them to the People view's photos; `varied: N` puts the N most varied confirmed faces first), `faces.unnamed {limit?, scope?, wait?}` (every unnamed face, or with `scope: "visible"` only those in the People view's photos, the most confident suggestions first, then the look-alikes together, then the faces not embedded yet; with suggested names; `wait: false` answers at once with the best order there is and `ordering: true`), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?, scope?, varied?}` (a person's faces and the unnamed faces that look like them; `scope: "visible"` limits them to the People view's photos; `varied: N` puts the N most varied confirmed faces first), `faces.unnamed {limit?, scope?, wait?}` (every unnamed face, or with `scope: "visible"` only those in the People view's photos, the most confident suggestions first, then the stacks (one entry each: `stack: {count, faces: [{photo, index, rect}]}`, its faces the most typical first, shown by the first; `total` still counts faces and `stacks` the stacks), then the look-alikes together, then the faces not embedded yet; with suggested names; `wait: false` answers at once with the best order there is and `ordering: true`), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 

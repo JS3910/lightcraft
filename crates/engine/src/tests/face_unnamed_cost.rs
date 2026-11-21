@@ -85,7 +85,7 @@ fn time(unnamed: usize, named: usize, clusters: usize) {
                 (None, usize::MAX, 0.0)
             };
             let noise = if stranger { 0.5 } else { noise };
-            let v = match (if stranger { strangers.get(i % clusters) } else { people.get(base) }) {
+            let v = match if stranger { strangers.get(i % clusters) } else { people.get(base) } {
                 Some(p) => unit(p.iter().map(|x| x + noise * rng.next() * 0.2).collect()),
                 None => unit((0..DIM).map(|_| rng.next()).collect()),
             };
@@ -111,13 +111,18 @@ fn time(unnamed: usize, named: usize, clusters: usize) {
     let (idle, _) = ask(&mut s, false);
     let suggested = r["faces"].as_array().map_or(0, |f| f.iter().filter(|f| !f["suggestion"].is_null()).count());
     let listed = ask(&mut s, true).1;
-    let stacked: u64 = listed["faces"].as_array().map_or(0, |f| f.iter().filter_map(|f| f["stack"]["count"].as_u64()).sum());
     let suggested = suggested.max(listed["faces"].as_array().map_or(0, |f| f.iter().filter(|f| !f["suggestion"].is_null()).count()));
     // a naming (of the first face listed)
-    let first_face = listed["faces"].as_array().and_then(|f| f.first()).map(|f| (f["photo"].as_u64().unwrap_or(0), f["index"].as_u64().unwrap_or(0)));
-    let (photo, index) = first_face.expect("some face is listed");
-    s.execute("faces.setName", &json!({"id": photo, "index": index, "name": "Person 0"})).unwrap();
+    // (confirmed as the person it is suggested: naming it as someone else would be a mistake in the named faces, which raises the
+    // stacking bar and so starts the stacks afresh, as the docs say)
+    let first_face = listed["faces"].as_array().and_then(|f| f.first());
+    let first_face = first_face.expect("some face is listed");
+    let (photo, index) = (first_face["photo"].as_u64().unwrap_or(0), first_face["index"].as_u64().unwrap_or(0));
+    let who = first_face["suggestion"]["name"].as_str().unwrap_or("Person 0").to_string();
+    s.execute("faces.setName", &json!({"id": photo, "index": index, "name": who})).unwrap();
+    let after_first = (s.faces.arrange.stack_new, s.faces.arrange.stack_compared);
     let (naming_call, naming) = settle(&mut s);
+    let after_naming = (s.faces.arrange.stack_new, s.faces.arrange.stack_compared);
     // More on the page of the first person (a person's page asks for the unnamed faces that look like them: out of scope here)
     let started = Instant::now();
     let page = s.execute("faces.person", &json!({"name": "Person 0"})).unwrap();
@@ -126,6 +131,7 @@ fn time(unnamed: usize, named: usize, clusters: usize) {
     // the scan finds more faces (2 % more)
     add(&mut s, &mut per_photo, unnamed / 50, &mut rng);
     let (refresh_call, refresh) = settle(&mut s);
+    let after_refresh = (s.faces.arrange.stack_new, s.faces.arrange.stack_compared);
     println!(
         "{unnamed} unnamed vs {named} named ({} people), {} threads, {suggested} of the {} listed suggested:",
         people.len(),
@@ -134,12 +140,8 @@ fn time(unnamed: usize, named: usize, clusters: usize) {
     );
     println!("    first arrangement:       {first:>9.2?} until complete, {first_call:>9.2?} on the calling thread without waiting");
     println!(
-        "    stacks: {} of {} faces in stacks; the last run looked at {} faces and made {} comparisons, at a bar of {:.3}",
-        listed["stacks"],
-        stacked,
-        s.faces.arrange.stack_new,
-        s.faces.arrange.stack_compared,
-        s.faces.arrange.bar
+        "    stacks: {} in the list; faces looked at / comparisons made by the stacking at the bar {:.3}: first {:?}, after the naming {:?}, after the scan {:?}",
+        listed["stacks"], s.faces.arrange.bar, after_first, after_naming, after_refresh
     );
     println!("    asked again unchanged:   {idle:>9.2?} on the calling thread");
     println!("    after one naming:        {naming:>9.2?} until complete, {naming_call:>9.2?} on the calling thread");
