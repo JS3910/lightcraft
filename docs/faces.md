@@ -681,7 +681,7 @@ suggestions the stacks without one are further down than the list is cut); `stac
 ### A person's page
 
 In **People**, a click on a person opens their page: **only cropped faces**, never whole photos. First the faces named
-with their name, then **More**: the unnamed faces that look like them, most alike first. Both use the same tile as the
+with their name, then **More**: the unnamed faces that look like them, most alike first, up to 1000. Both use the same tile as the
 Unnamed faces: a picture with a name strip under it that is always shown (their name on a confirmed face, their name and a
 question mark on a More face). A click on the strip opens the name box: on a More face, type another person's name and press
 Enter to give the face to them (it leaves this person's More), or press Enter on the untouched box to confirm it as this

@@ -144,10 +144,14 @@ const SMALLEST_EDGE: f32 = 56.0;
 /// The row under the confirmed tiles: Select all, Show all.
 const FOOT_H: f32 = 34.0;
 
-/// What the page asks `faces.person` for: the People view's photos, and as many varied faces first as three rows of the
-/// widest window hold (so a window change never needs the engine again).
+/// How many look-alikes the More section asks for: the most `faces.person` gives. The engine scores every unnamed face
+/// whatever the number, so a long list costs little more than a short one, and "↑ all above" reaches further down.
+const MORE: usize = 1000;
+
+/// What the page asks `faces.person` for: the People view's photos, as many look-alikes as the engine gives, and as many
+/// varied faces first as three rows of the widest window hold (so a window change never needs the engine again).
 pub fn request(name: &str) -> Value {
-    json!({"name": name, "scope": "visible", "varied": ROWS * super::people::columns(WIDEST, SMALLEST_EDGE)})
+    json!({"name": name, "scope": "visible", "more": MORE, "varied": ROWS * super::people::columns(WIDEST, SMALLEST_EDGE)})
 }
 
 /// How the Confirmed section is laid out during one visit to a person's page: whether it is open, how many tiles a row has,

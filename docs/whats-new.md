@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### More look-alikes on a person's page
+- **More** on a person's page lists up to 1000 faces that look like them, where it stopped at 120, so the up arrow can name many more
+  of them at once.
+
 ### The next face always moves in under the pointer
 - When a face leaves the Unnamed faces (ticked, named, its box removed, alone or in a selection), the face right after it always
   moves into its place, even from below the window, so the next face is under the pointer for the next click. Near the end of the
