@@ -70,7 +70,7 @@ fn reference(people: &[Person]) -> f32 {
     let mut best: Option<f32> = None;
     for (i, a) in people.iter().enumerate() {
         for b in people.iter().skip(i + 1) {
-            if let Some(c) = cross(a, b) {
+            if let Some(c) = closest_between(a, b) {
                 best = Some(best.map_or(c, |m| m.max(c)));
             }
         }

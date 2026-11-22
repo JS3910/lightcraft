@@ -45,7 +45,7 @@ const MAX_ALIKE: usize = 4096;
 pub(crate) const MAX_STACK: usize = 4500;
 
 /// What a person's faces reach against a face of another person: the highest cosine, `None` when no faces can be compared.
-fn cross(a: &Person, b: &Person) -> Option<f32> {
+fn closest_between(a: &Person, b: &Person) -> Option<f32> {
     let mut best: Option<f32> = None;
     for x in &a.faces {
         for y in &b.faces {
@@ -71,8 +71,6 @@ struct Row {
 #[derive(Default)]
 pub(crate) struct Calibration {
     rows: HashMap<String, Row>,
-    /// How many pairs of people the last [`Calibration::bar`] compared.
-    pub last_pairs: usize,
 }
 
 impl Calibration {
@@ -95,7 +93,6 @@ impl Calibration {
             .collect();
         let is_dirty: HashSet<usize> = dirty.iter().copied().collect();
         let old_best = |j: usize| people.get(j).and_then(|p| self.rows.get(&p.key)).filter(|_| !is_dirty.contains(&j)).and_then(|r| r.best);
-        let pairs = AtomicUsize::new(0);
         // each dirty person against every other, once per pair: (their own best, and what a clean person is brought to)
         let parts: Vec<Option<(usize, Option<(f32, usize)>, Vec<(usize, f32)>)>> = dirty
             .par_iter()
@@ -110,8 +107,7 @@ impl Calibration {
                     if j == i || (is_dirty.contains(&j) && j < i) {
                         continue;
                     }
-                    pairs.fetch_add(1, Ordering::Relaxed);
-                    let Some(c) = cross(me, other) else { continue };
+                    let Some(c) = closest_between(me, other) else { continue };
                     if best.is_none_or(|(b, _)| c > b) {
                         best = Some((c, j));
                     }
@@ -125,7 +121,6 @@ impl Calibration {
         if parts.iter().any(Option::is_none) || cancel.load(Ordering::Relaxed) {
             return None;
         }
-        self.last_pairs = pairs.load(Ordering::Relaxed);
         let mut rows: HashMap<String, Row> = HashMap::with_capacity(people.len());
         for (i, p) in people.iter().enumerate() {
             let kept = self.rows.get(&p.key).filter(|_| !is_dirty.contains(&i));
