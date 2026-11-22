@@ -466,3 +466,112 @@ fn clicking_a_face_of_an_open_stack_selects_the_whole_stack_as_clicking_the_stac
     ok(&mut h, "ui.clickWidget", json!({"id": member(p2, 0)}));
     assert_eq!(selected(&h), [(p0.0, 1)], "and clicking it again deselects all of it");
 }
+
+// ---- the tiles on screen keep their places while a stack forms, grows and is named (the real engine) ----
+
+/// The face tiles of the grid in reading order, with their rectangles.
+fn grid(h: &mut Headless) -> Vec<(String, [f64; 4])> {
+    let mut v = rects(h, "unnamed-face:");
+    v.sort_by(|a, b| (a.1[1], a.1[0]).partial_cmp(&(b.1[1], b.1[0])).unwrap_or(std::cmp::Ordering::Equal));
+    v
+}
+
+/// Ask the engine again (as the window does when the scan found something) and draw frames until the list is final and `done`.
+fn look_again(h: &mut Headless, what: &str, done: impl Fn(&Unnamed) -> bool) {
+    h.app.caches.unnamed_restart = true;
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        h.step();
+        let list = h.app.caches.unnamed.as_ref().map(|c| c.3.clone());
+        if list.as_ref().is_some_and(|l| l.complete && !l.ordering && done(l)) {
+            break;
+        }
+        assert!(std::time::Instant::now() < until, "{what}: the list never got there: {list:?}");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    h.step();
+    h.step();
+}
+
+fn stack_len(l: &Unnamed) -> usize {
+    l.faces.iter().map(|f| f.stack.len()).max().unwrap_or(0)
+}
+
+/// `ids` with the tiles of `gone` left out, and `at` (when it is in `ids`) called "STACK".
+fn without(ids: &[String], gone: &[String], at: &str) -> Vec<String> {
+    ids.iter().filter(|i| !gone.contains(i) || *i == at).map(|i| if i == at { "STACK".to_string() } else { i.clone() }).collect()
+}
+
+#[test]
+fn the_tiles_on_screen_keep_their_places_when_a_stack_forms_grows_and_is_named() {
+    use super::unnamed_ordering::{recognising, unit};
+    use super::unnamed_tiles::{region, set_regions};
+    let (mut h, [p0, p1, p2], _hold, dir) = recognising("places");
+    // nine unnamed faces that are alike nobody (and not each other), one that looks like Ann Lee
+    set_regions(&mut h, p0, vec![region(0.1, Some("Ann Lee")), region(0.5, None)]);
+    set_regions(&mut h, p1, (1..=5).map(|i| region(0.1 * i as f64, None)).collect());
+    set_regions(&mut h, p2, (1..=3).map(|i| region(0.1 * i as f64, None)).collect());
+    let put = |h: &mut Headless, id: PhotoId, x: f64, v: Vec<f32>| h.app.session.test_face_embedding(id, &region(x, None).rect, v);
+    for (n, p) in [p1, p2].into_iter().enumerate() {
+        // (dimensions below 16: the stamp of a face, which tells the run it changed, is made of the first 16 numbers)
+        for i in 1..=(5 - 2 * n) {
+            put(&mut h, p, 0.1 * i as f64, unit(&[(4 + 5 * n + i, 1.0)]));
+        }
+    }
+    ok(&mut h, "ui.set", json!({"view": "people"}));
+    look_again(&mut h, "first", |l| l.face_count() == 9 && stack_len(l) == 0);
+    let before = grid(&mut h);
+    assert_eq!(before.len(), 9, "every face is on screen: {before:?}");
+    let ids = |g: &[(String, [f64; 4])]| g.iter().map(|(i, _)| i.clone()).collect::<Vec<_>>();
+    let tile = |p: PhotoId, i: usize| picture(p, i);
+
+    // --- a stack forms: three faces of two photos become alike
+    let members = [(p1, 1usize), (p1, 3), (p2, 1)];
+    put(&mut h, p1, 0.2, unit(&[(13, 1.0), (14, 0.1)]));
+    put(&mut h, p1, 0.4, unit(&[(13, 1.0), (14, -0.1)]));
+    put(&mut h, p2, 0.2, unit(&[(13, 1.0)]));
+    look_again(&mut h, "forms", |l| stack_len(l) == 3);
+    let member_tiles: Vec<String> = members.iter().map(|(p, i)| tile(*p, *i)).collect();
+    let first = ids(&before).into_iter().find(|i| member_tiles.contains(i)).expect("a member was on screen");
+    let formed = grid(&mut h);
+    let head = widgets(&mut h, "unnamed-stack-count:").pop().expect("a count badge").replace("unnamed-stack-count:", "unnamed-face:");
+    assert_eq!(
+        formed.iter().map(|(i, _)| if *i == head { "STACK".to_string() } else { i.clone() }).collect::<Vec<_>>(),
+        without(&ids(&before), &member_tiles, &first),
+        "one tile where the first of them was, every other tile in its order"
+    );
+    let at = ids(&before).iter().position(|i| *i == first).unwrap();
+    assert_eq!(formed[..at], before[..at], "the tiles before it did not move");
+
+    // --- it grows: another face, the last on screen that is not in it, becomes one of them
+    let last = ids(&formed).into_iter().rev().find(|i| *i != head).expect("a tile after the stack");
+    let (photo, index) = {
+        let mut parts = last.rsplit(':');
+        let index: usize = parts.next().unwrap().parse().unwrap();
+        (PhotoId(parts.next().unwrap().parse().unwrap()), index)
+    };
+    let x = h.app.session.catalog.photo(photo).unwrap().meta.regions[index].rect.x0;
+    put(&mut h, photo, x, unit(&[(13, 1.0), (14, 0.05)]));
+    look_again(&mut h, "grows", |l| stack_len(l) == 4);
+    let grown = grid(&mut h);
+    let head = widgets(&mut h, "unnamed-stack-count:").pop().expect("a count badge").replace("unnamed-stack-count:", "unnamed-face:");
+    assert_eq!(
+        grown.iter().map(|(i, _)| if *i == head { "STACK".to_string() } else { i.clone() }).collect::<Vec<_>>(),
+        without(&ids(&formed).iter().map(|i| if *i == head { "STACK".into() } else { i.clone() }).collect::<Vec<_>>(), &[last.clone()], "STACK"),
+        "the stack kept its place and the tile of the face that joined it is gone"
+    );
+    assert_eq!(grown[..at], formed[..at], "the tiles before it did not move");
+
+    // --- it is named: the stack leaves and the tiles after it move up one place
+    let stack_at = ids(&grown).iter().position(|i| *i == head).unwrap();
+    ok(&mut h, "ui.clickWidget", json!({"id": head.replace("unnamed-face:", "unnamed-name:")}));
+    ok(&mut h, "ui.text", json!({"text": "Zed Q"}));
+    ok(&mut h, "ui.key", json!({"key": "enter"}));
+    done(&mut h);
+    let named = grid(&mut h);
+    let mut expected = ids(&grown);
+    expected.remove(stack_at);
+    assert_eq!(ids(&named), expected, "every other tile kept its order");
+    assert_eq!(named[..stack_at], grown[..stack_at], "the tiles before it did not move");
+    let _ = std::fs::remove_dir_all(&dir);
+}
