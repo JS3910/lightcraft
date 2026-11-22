@@ -121,7 +121,11 @@ impl Face {
 
     /// The face with the faces it was taken out of a stack with. They are part of its stamp (what the run kept of it is
     /// worked out again), unless there are none, so that a face that was never taken out keeps its stamp.
+    ///
+    /// Only the first `MAX_STACK` are read: that is as many as `faces.takeOut` ever writes, and a catalogue that says more is
+    /// corrupt or hostile (the list is sorted and put in a set here).
     pub fn with_apart(mut self, apart: &[Apart]) -> Face {
+        let apart = apart.get(..crate::faces_stack::MAX_STACK).unwrap_or(apart);
         if !apart.is_empty() {
             let mut sorted: Vec<(u64, [i32; 4])> = apart.iter().map(|a| (a.photo, a.rect)).collect();
             sorted.sort_unstable();

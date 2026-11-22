@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use lightcraft_meta::Apart;
+
 use super::*;
 
 /// A unit vector of 8 numbers from (place, value) pairs.
@@ -223,4 +225,15 @@ fn a_cancelled_call_leaves_what_was_kept_as_it_was() {
     let refs: Vec<&Face> = faces.iter().collect();
     assert!(stack(&mut state, &refs, 0.9, &AtomicBool::new(true), BRUTE_LIMIT).is_none());
     assert_eq!(state.stacks.len(), 1, "the stack that was kept is still kept");
+}
+
+#[test]
+fn a_catalogue_with_an_endless_list_of_faces_taken_out_is_read_up_to_the_cap() {
+    let too_many: Vec<Apart> = (0..MAX_STACK as i32 + 2000).map(|i| Apart { photo: 0, rect: [i, 0, 0, 0] }).collect();
+    let f = face(1, unit(&[(0, 1.0)])).with_apart(&too_many);
+    assert!(f.apart.len() <= MAX_STACK, "{} faces kept", f.apart.len());
+    // the ones kept are still honoured
+    let kept = face(2, unit(&[(0, 1.0)]));
+    let first = face(0, unit(&[(0, 1.0)])); // at photo 0, box 0: the first of the list
+    assert!(f.apart_from(&first) && !f.apart_from(&kept));
 }
