@@ -26,6 +26,21 @@ use rayon::prelude::*;
 /// stay with the face.
 pub(crate) type Key = (u64, [u64; 4], u32);
 
+/// A face box as the runs key it: the bits of its four numbers (the same box is the same bits).
+pub(crate) fn rect_bits(r: &lightcraft_geom::Rect) -> [u64; 4] {
+    [r.x0.to_bits(), r.y0.to_bits(), r.x1.to_bits(), r.y1.to_bits()]
+}
+
+/// The box that [`rect_bits`] made `bits` from.
+pub(crate) fn rect_from_bits(bits: [u64; 4]) -> lightcraft_geom::Rect {
+    lightcraft_geom::Rect { x0: f64::from_bits(bits[0]), y0: f64::from_bits(bits[1]), x1: f64::from_bits(bits[2]), y1: f64::from_bits(bits[3]) }
+}
+
+/// How the catalogue's `apart` lists name the face of `photo` with the box `bits`: by the box in ten-thousandths.
+pub(crate) fn apart_at(photo: u64, bits: [u64; 4]) -> Apart {
+    Apart { photo, rect: crate::faces_index::region_key(&rect_from_bits(bits)) }
+}
+
 /// How many of the best people are kept for each face. Two are enough to suggest; the rest make a person whose score
 /// falls (un-naming, a rename) replaceable without scoring the face against everybody again.
 pub(crate) const KEPT: usize = 4;
@@ -106,17 +121,10 @@ pub(crate) struct Face {
 }
 
 impl Face {
-    pub fn new(photo: u64, rect_bits: [u64; 4], ord: u32, embedding: Arc<[f32]>, rejected: &[String]) -> Face {
+    pub fn new(photo: u64, bits: [u64; 4], ord: u32, embedding: Arc<[f32]>, rejected: &[String]) -> Face {
         let rejected: Vec<String> = rejected.iter().map(|r| r.trim().to_lowercase()).collect();
-        let stamp = fingerprint(&(rect_bits, &rejected, head_bits(&embedding)));
-        let rect = lightcraft_geom::Rect {
-            x0: f64::from_bits(rect_bits[0]),
-            y0: f64::from_bits(rect_bits[1]),
-            x1: f64::from_bits(rect_bits[2]),
-            y1: f64::from_bits(rect_bits[3]),
-        };
-        let at = Apart { photo, rect: crate::faces_index::region_key(&rect) };
-        Face { photo, rect: rect_bits, ord, stamp, embedding, rejected, at, apart: Default::default() }
+        let stamp = fingerprint(&(bits, &rejected, head_bits(&embedding)));
+        Face { photo, rect: bits, ord, stamp, embedding, rejected, at: apart_at(photo, bits), apart: Default::default() }
     }
 
     /// The face with the faces it was taken out of a stack with. They are part of its stamp (what the run kept of it is

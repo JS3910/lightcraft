@@ -468,7 +468,7 @@ mod imp {
     use super::super::face_detect::{LABEL, MARK};
     use super::super::face_models::{finish_downloads, installed_models, read_settings};
     use super::Similar;
-    use crate::faces_arrange::{Face, Input, Item, Listed, Person, Settings, fingerprint, signature};
+    use crate::faces_arrange::{Face, Input, Item, Listed, Person, Settings, fingerprint, rect_bits, signature};
     use crate::faces_worker::{Done, EDGE, PREFETCH, Pace, Prepared, Worker, max_workers, process, target_workers};
     use crate::{Result, Session};
 
@@ -1033,10 +1033,6 @@ mod imp {
         let mut out: Vec<(PhotoId, usize, Rect)> = picks.iter().filter_map(|i| faces.get(*i).copied()).collect();
         out.extend(faces.iter().zip(&taken).filter(|(_, t)| !**t).map(|(f, _)| *f));
         out
-    }
-
-    fn rect_bits(r: &Rect) -> [u64; 4] {
-        [r.x0.to_bits(), r.y0.to_bits(), r.x1.to_bits(), r.y1.to_bits()]
     }
 
     /// Everyone named in the library with the embeddings of their faces, grouped once so that scoring a face does no

@@ -9,6 +9,7 @@ use lightcraft_meta::{Apart, RegionKind};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, bad, cmd};
+use crate::faces_arrange::{apart_at, rect_bits};
 use crate::faces_stack::MAX_STACK;
 use crate::{Result, Session};
 
@@ -34,17 +35,14 @@ fn targets(p: &Value) -> Result<Vec<(u64, usize)>> {
     Ok(out)
 }
 
-fn bits(r: &lightcraft_geom::Rect) -> [u64; 4] {
-    [r.x0.to_bits(), r.y0.to_bits(), r.x1.to_bits(), r.y1.to_bits()]
-}
-
 /// What the face at `index` of `photo` is to the arrangement: its photo, its box and which of the unnamed faces of the photo with
 /// that very box it is.
 fn key_of(s: &Session, photo: u64, index: usize) -> Option<crate::faces_arrange::Key> {
     let regions = &s.catalog.photo(PhotoId(photo))?.meta.regions;
     let region = regions.get(index).filter(|r| r.kind == RegionKind::Face && r.name.is_none())?;
-    let ord = regions.iter().take(index).filter(|r| r.kind == RegionKind::Face && r.name.is_none() && bits(&r.rect) == bits(&region.rect)).count();
-    Some((photo, bits(&region.rect), u32::try_from(ord).ok()?))
+    let own_box = rect_bits(&region.rect);
+    let ord = regions.iter().take(index).filter(|r| r.kind == RegionKind::Face && r.name.is_none() && rect_bits(&r.rect) == own_box).count();
+    Some((photo, own_box, u32::try_from(ord).ok()?))
 }
 
 /// `faces.takeOut {faces: [{photo, index}]}`: take each face out of the stack it is in (as the last run that put the Unnamed
@@ -58,19 +56,7 @@ fn take_out(s: &mut Session, p: &Value) -> Result<Value> {
         if !seen.insert((photo, index)) {
             continue;
         }
-        let apart: Vec<Apart> = members
-            .iter()
-            .filter(|m| **m != key)
-            .map(|(ph, rect, _)| Apart {
-                photo: *ph,
-                rect: crate::faces_index::region_key(&lightcraft_geom::Rect {
-                    x0: f64::from_bits(rect[0]),
-                    y0: f64::from_bits(rect[1]),
-                    x1: f64::from_bits(rect[2]),
-                    y1: f64::from_bits(rect[3]),
-                }),
-            })
-            .collect();
+        let apart: Vec<Apart> = members.iter().filter(|m| **m != key).map(|(ph, rect, _)| apart_at(*ph, *rect)).collect();
         by_photo.entry(photo).or_default().push((index, apart));
     }
     let (mut ops, mut taken) = (Vec::new(), 0usize);
