@@ -127,23 +127,30 @@ impl Region {
 
 /// Keep the catalogue-only marks of the regions a metadata re-read is about to replace (the names a face rejected, and the
 /// faces it was taken out of a stack with): each region of `new` that is the same box as one of `old` (intersection over
-/// union of at least a half) takes that region's marks, when it has none of its own. They live in the catalogue only, so a
-/// file never states them.
+/// union of at least a half) takes that region's marks. Each mark is carried on its own, and only to a region that has none of
+/// that kind itself: a box with a rejected name of its own still takes the faces it was taken out of a stack with. They live in the
+/// catalogue only, so a file never states them.
 pub fn carry_rejections(old: &[Region], new: &mut [Region]) {
     let mut taken = vec![false; old.len()];
-    for region in new.iter_mut().filter(|r| r.rejected.is_empty() && r.apart.is_empty()) {
+    for region in new.iter_mut().filter(|r| r.rejected.is_empty() || r.apart.is_empty()) {
+        // (an old box is worth taking only when it has a mark this one lacks)
+        let lacks = |o: &Region| (region.rejected.is_empty() && !o.rejected.is_empty()) || (region.apart.is_empty() && !o.apart.is_empty());
         let best = old
             .iter()
             .enumerate()
-            .filter(|(i, o)| (!o.rejected.is_empty() || !o.apart.is_empty()) && o.kind == region.kind && taken.get(*i) == Some(&false))
+            .filter(|(i, o)| lacks(o) && o.kind == region.kind && taken.get(*i) == Some(&false))
             .map(|(i, o)| (i, overlap(&o.rect, &region.rect)))
             .filter(|(_, v)| *v >= 0.5)
             .max_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((i, _)) = best
             && let Some(o) = old.get(i)
         {
-            region.rejected = o.rejected.clone();
-            region.apart = o.apart.clone();
+            if region.rejected.is_empty() {
+                region.rejected = o.rejected.clone();
+            }
+            if region.apart.is_empty() {
+                region.apart = o.apart.clone();
+            }
             if let Some(t) = taken.get_mut(i) {
                 *t = true;
             }
@@ -566,6 +573,24 @@ mod tests {
         assert_eq!(new[1].apart, [apart_from(7), apart_from(8)]);
         assert!(new[0].apart.is_empty());
         assert_eq!(new[0].rejected, ["Bob"], "rejections are still carried");
+    }
+
+    #[test]
+    fn each_mark_is_carried_on_its_own_to_a_region_that_has_the_other() {
+        let mut old_face = face_at(0.1, &["Bob"]);
+        old_face.apart = vec![apart_from(7)];
+        let old = [old_face];
+        // the new box has a rejected name of its own, but was never taken out of a stack: it still takes the faces
+        let mut new = [face_at(0.1, &["Ann"])];
+        carry_rejections(&old, &mut new);
+        assert_eq!(new[0].apart, [apart_from(7)]);
+        assert_eq!(new[0].rejected, ["Ann"], "what it had is not replaced");
+        // and the other way round
+        let mut new = [face_at(0.1, &[])];
+        new[0].apart = vec![apart_from(9)];
+        carry_rejections(&old, &mut new);
+        assert_eq!(new[0].rejected, ["Bob"]);
+        assert_eq!(new[0].apart, [apart_from(9)], "what it had is not replaced");
     }
 
     #[test]
