@@ -384,19 +384,29 @@ by the faces it holds); when a stack is named the tiles after it move up one pla
 A person who appears in hundreds of photos but matches nobody named yet would be hundreds of near-identical tiles in a row,
 and, past the first 1,500 faces without a suggestion, would never be put next to their look-alikes at all. So **faces that are
 virtually certain to be the same person are one tile** with a count on it (a **512** badge at the
-bottom left of the picture), shown by the face most typical of them (the one closest to the average of the faces). Stacks come
-after the faces with a suggestion, the biggest first, then the single faces in look-alike order, then the faces not embedded.
-A stack is a face tile: its name strip reads **?**; typing a name on it (or picking one) names every face in it, as one undo
-step (`faces.nameFaces` with its faces), and the stack leaves the grid. A stack **without a suggestion has no cross and no
+bottom left of the picture), shown by the face most typical of them (the one closest to the average of the faces). **A stack
+without a suggestion of at least 20 faces comes first of all**, the biggest first, ahead of the faces with a suggestion: a person
+in dozens of photos is the one most worth naming, and such a stack is always in the list (it makes the 3,000 entries before
+anything else does). The other stacks come after the faces with a suggestion, the biggest first, then the single faces in
+look-alike order, then the faces not embedded.
+A closed stack is a face tile: its name strip reads **?**; typing a name on it (or picking one) names every face in it, as one undo
+step (`faces.nameFaces` with its faces), and the stack leaves the grid. A closed stack **without a suggestion has no cross and no
 tick**, since a cross without a suggestion would remove the face boxes of many faces nobody looked at with one click; the Delete
-key on it does nothing. A screen reader hears **Stack of 512 faces**. **Selecting:** a stack is the faces it holds. A click on a stack's picture selects all its faces (a second click deselects them all, and Shift-click takes in the faces of every stack in the range); **Select all** takes every face of the list, those in stacks too. A stack is selected when all its faces are, and the same goes for a face of an open stack: a click on it selects or deselects the whole stack (to treat one face alone, take it out first). An action on a selection that holds a stack, such as typing a name, acts on all its faces in one undo step; the Delete key on such a selection never removes the boxes of a stack without a suggestion (it removes those of the single faces only, and rejects the names of faces that have one). **Opening a stack:** a click on its count opens it in
-place (a click on the count again closes it): its faces follow the stack's tile in the grid, the most typical first, on a tinted
-background that also lies under the stack's own tile. Each face of an open stack has a **cross that takes it out of the stack** (it
-has no tick and no up arrow, and its name strip does nothing: a stack is named as a whole). The face becomes a tile of its own in
-the grid, where its cross works as on any single face; the stack keeps its place, and a stack left with one face is no stack. The
-grid is one cell per tile and, after an open stack, one per face of it: opening or closing moves only the tiles after the stack
-(by the faces it adds or takes away), never one before it or the stack's own tile, and the tiles on screen are kept as described
-above, with an open stack counted as one tile. An open stack stays open until the view is left or the source or a filter changes.
+key on it removes nothing and says why (open the stack first). A screen reader hears **Stack of 512 faces**. **Selecting:** a stack is the faces it holds. A click on a stack's picture selects all its faces (a second click deselects them all, and Shift-click takes in the faces of every stack in the range); **Select all** takes every face of the list, those in stacks too. A stack is selected when all its faces are, and the same goes for a face of an open stack: a click on it selects or deselects the whole stack. An action on a selection that holds a stack, such as typing a name, acts on all its faces in one undo step; the Delete key on such a selection never removes the boxes of a closed stack without a suggestion (it removes those of the single faces and of open stacks, and rejects the names of faces that have one, and says why when it leaves a closed stack out). **Opening a stack:** a click on its count opens it in
+place (a click on the count again closes it). The stack's own tile is then its **first face**, with the same count (which closes the
+stack), and the other faces follow it in the grid, the most typical first, on a tinted background: a stack of N faces is N
+tiles, never N + 1. **Every face of an open stack, the first one too, is a tile like any single face, and behaves as if the
+pictures were not stacked at all:** its tick (when a suggestion is shown) names that face as the suggestion, its up arrow names
+the suggested faces through it, its cross rejects the suggestion shown for that face alone, or, when it shows none, removes that
+face's box (one undo step), its name strip opens the name box for that face, and Delete acts on the selected faces. There is
+nothing extra on these tiles, no take-out button: a face that was given a name or rejected the stack's name leaves the stack,
+which keeps its place, and a stack left with one face is no stack. Each face of an open stack shows the stack's suggestion (**Agne?**),
+and a **?** only once the suggestion was rejected in this visit; a stack without a suggestion shows the **?** it always did.
+Delete on a selected open stack removes all its face boxes in one undo step (the faces are on screen, as the selected single faces
+are); on a closed stack it removes nothing, and says so in a message (open the stack first). The grid is one cell per tile
+and, after the first face of an open stack, one per other face of it: opening or closing moves only the tiles after the
+stack's first face, never one before it or that tile, and the tiles on screen are kept as described above, with an open stack
+counted as one tile. An open stack stays open until the view is left or the source or a filter changes.
 Stacks are not stored:
 a stack is the result of stacking the unnamed faces as they are now, and becomes a person only by being named, as any face does.
 
@@ -413,19 +423,27 @@ The cross, and the Delete key on a selected stack, reject the suggestion for eve
 (one tile with all its faces) while every face of it is one whose suggestion was rejected in this visit; a face of it that is named
 or loses its box meanwhile just leaves the tile, which stays in place with the faces that are left (shown by the first of them), and
 a face the scan adds waits for the run. Afterwards the faces
-stack again for the name they are suggested next, or for none (which has no cross).
+stack again for the name they are suggested next, or for none (which has no cross while the stack is closed).
 
 - *Scope.* Stacks follow the People view's source and filters: only faces in those photos are stacked, and a count shows
   those faces; a stack left with one face in scope is that face alone.
 - *The bar.* Two faces are alike enough when the cosine of their embeddings, the measure the suggestions use (not the
   person's score, which is the mean of the two closest faces), reaches the bar. The bar is calibrated from the library's own
-  named faces: **above the highest similarity found between two faces named as different people, plus 0.05** (`BAR_MARGIN`),
-  and **never below 0.75** (`MIN_BAR`). The minimum is clearly stricter than the suggestion bars of the known models (0.40 and
-  0.55; 0.45 for others), because naming a stack names faces nobody looked at one by one. With nobody, or one person, named
-  there is nothing to tell apart, and the bar is the minimum. One mistake in the named faces (a face named as two people in
-  two photos) raises the bar, perhaps past 1, and then nothing stacks: when in doubt, don't stack. The calibration is kept
-  between runs per person (a person's highest similarity to anyone else, and who that was): a naming works out the rows of the
-  people whose named faces changed against everybody, and the others only against those.
+  named faces: **the 99.9th percentile of the similarities between faces named as different people, plus 0.05**
+  (`BAR_PERCENTILE`, `BAR_MARGIN`), **kept between a floor of 0.75** (`MIN_BAR`) **and a ceiling of 0.85** (`MAX_BAR`). The
+  floor is clearly stricter than the suggestion bars of the known models (0.40 and 0.55; 0.45 for others), because naming a
+  stack names faces nobody looked at one by one. With fewer than 1,000 pairs of faces of different people (`MIN_PAIRS`: nobody
+  or one person named, or only a few faces) a percentile says nothing and the bar is the floor. A percentile, not the highest
+  similarity: in a large library one lookalike or mislabelled pair (a face named as two people in two photos) is always
+  somewhere, and as the highest it drove the bar to 1 and more, so that four near-identical faces of one shoot stayed four
+  tiles. Now such a pair is under 0.1 % of the pairs and moves nothing, and no library puts the bar above 0.85 (faces at 0.86
+  stack whatever pair of different people reaches 0.99). Where the cosines are not alike enough the percentile is lower and
+  the bar is the floor. **The bar in use** is in the `faces.unnamed` reply as `stackBar` (null until a run has finished) and
+  in the tooltip of the subtitle under **Unnamed faces**, so that it can be reported and the constants tuned. The similarities
+  are counted in 2,000 bins from -1 to 1 (a bin is 0.001 wide; the percentile is the top of the bin it falls in). The counts
+  are kept between runs with the faces they were made of, per person: a naming takes away the pairs that involve a person
+  whose named faces changed (as they were) and counts them again (as they are), against everybody, so a change costs what it
+  changed; the cost of the first count is in the tables below.
 - *No chaining.* A face joins a stack only when it reaches the bar against **every** face already in it, so A like B and B
   like C with A not like C never end up together. (A face that reaches the bar against all faces of a stack also reaches it
   against their average, which is what finds the stacks worth comparing face by face.) A stack holds at most 4,500 faces, so
@@ -580,11 +598,28 @@ thread does nothing more than list the stacks the last run found (the calling-th
 - *A change* costs what it changed: a naming that changes no bar compares nothing again (the stacks and the faces already
   compared are kept), the scan finding 600 faces (300 without a suggestion) compares them with the faces that have no stack,
   0.2 to 0.3 s in the background at 30,000 unnamed faces. A change of the bar starts the stacking afresh (the cost of the first
-  arrangement): naming one face as someone else when it is the face of another named person is a change of the bar, as it raises
-  it.
-- *The calibration of the bar* compares the named faces of every person with those of every other once: 18 million
-  comparisons for 6,000 named faces of 600 people, which is inside the first arrangement's time above; a naming works out the
-  naming's person against the others only.
+  arrangement). The bar is the top of a 0.001 bin of a percentile, so it moves only when a naming changes the similarities
+  of different people enough to move the 99.9th percentile into another bin (and a library of fewer than 1,000 such pairs, or
+  with a percentile under 0.70, stays at the floor, 0.75, whatever is named).
+- *The calibration of the bar* counts the similarities of the named faces of every person to those of every other once, into a
+  histogram of 2,000 bins: 18 million comparisons of 512 numbers for 6,000 named faces of 600 people. A naming takes away the
+  pairs of the people whose faces changed (as they were) and counts them again (as they are), against everybody, and
+  changes nothing else, so it costs what it changed. Measured with `face_calibration_cost` (release builds, random
+  512-number faces of people of ten faces each, one run each, `RAYON_NUM_THREADS` 8 and 4; the time of one
+  `Calibration::bar`, which is the whole of the calibration's part of a run):
+
+  | Named faces (people) | First (8 threads / 4 threads) | After one naming | After a merge of two people | Unchanged |
+  |---|---|---|---|---|
+  | 3,000 (300) | 22 ms / 42 ms | 2.7 / 2.9 ms | 3.6 / 3.9 ms | 0.25 ms |
+  | 6,000 (600) | 81 ms / 159 ms | 5.4 / 6.2 ms | 7.6 ms | 0.55 ms |
+  | 12,000 (1,200) | 340 ms / 669 ms | 12.6 / 12.4 ms | 17 / 15 ms | 1.3 ms |
+
+  So the calibration is 3.5 % of the first arrangement at 30,000 unnamed faces against 6,000 named (81 ms of 2.3 s with 8
+  threads, 159 ms of 4.7 s with 4) and a few milliseconds after a change, inside the figures above: the harness numbers
+  with the new bar (`face_unnamed_stacks_cost`, 8 threads: 30,000 against 6,000 first arrangement 2.29 s, after one naming
+  98 ms, scan finds 2 % more 0.28 s; 4 threads: 4.70 s, 100 ms, 0.32 s) are the ones in the table above to within the noise
+  of a loaded machine. What is kept is one `Arc` per named face and 2,000 counters, and the work is checked against the
+  cancel flag once per person.
 
 Measured like the tables above, with a quarter of the unnamed faces made faces of people nobody has named (groups of 50 around
 one face, which stack) and the faces that suggest a named person made as alike as that person's own faces are (so that they stack
@@ -719,22 +754,12 @@ the view; a second click, or the first on a face with no suggestion, removes the
 is therefore gone in two clicks without leaving the gallery. The removal is catalog only (the sidecar is never rewritten),
 and the background scan does not detect the box again: a photo that lost its last face box is remembered as searched.
 
-A stack without a suggestion has no cross (the first click would remove the face boxes of every face in it), and the Delete key on it
-does nothing. A stack with a suggestion has the cross: it rejects the name for every face of it, and removes nothing.
-
-### Taking a face out of a stack
-
-`faces.takeOut {faces: [{photo, index}]}` takes faces out of the stacks they are in, as the last run that put the Unnamed faces in
-order found them (up to 5,000 faces, one undo step; it replies `{taken, photos}`). On each face's box the catalogue records the other
-faces of its stack (their photo and box, at most 4,500): the face **never stacks again with those faces**, and they never stack with
-it, in this run, in the next and after a restart. Like a rejected name this lives in the catalogue only: it is never written to a
-sidecar or a file, a metadata re-read keeps it on the same box (`carry_rejections`, which carries both), and a catalogue written
-before reads as nothing (an empty list is not written at all). A face that has been taken out has a new stamp, so the stacks it
-was in are looked at again by the next run, and until that run is done the face is a single tile and the others are a stack without
-it. Faces that are in no stack (single faces, boxes that do not exist) are skipped; the call is refused when
-none is in a stack. This holds for stacks with a suggested name too. A catalogue that lists more than 4,500 faces for one face
-box is read up to that many (it is corrupt: nothing writes more). The command is native only, like the run that works out the
-stacks: the web build has no recognition, so no stacks. Another face that was never taken out of that stack may still stack with it, as with any face that is alike.
+A closed stack without a suggestion has no cross (the first click would remove the face boxes of every face in it, none of them
+on screen), and the Delete key on it removes nothing and says why. A closed stack with a suggestion has the cross: it rejects the
+name for every face of it, and removes nothing. Open the stack and every face of it is a single tile: its cross rejects the
+suggestion shown, or removes the face's box when none is shown, for that face alone, and Delete on the selected open stack removes
+all its boxes in one undo step. There is no taking a face out of a stack: the cross says this picture is not this person, and a
+face that rejected a name is never in a stack suggesting it.
 
 On a selected tile, reject (and the Delete key, when no name box or other text field has the keyboard) acts on the whole
 selection; on an unselected tile, on that face alone. Over a selection it has two levels: while any selected face shows a
@@ -790,7 +815,7 @@ reuses the pictures of its step instead of rendering every face again.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?, scope?, varied?}` (a person's faces and the unnamed faces that look like them; `scope: "visible"` limits them to the People view's photos; `varied: N` puts the N most varied confirmed faces first), `faces.unnamed {limit?, scope?, wait?}` (every unnamed face, or with `scope: "visible"` only those in the People view's photos, the most confident suggestions first, then the stacks without a suggestion (one entry each: `stack: {count, faces: [[photo, index, x0, y0, x1, y1, viewX0, viewY0, viewX1, viewY1]]}`, its faces the most typical first, each as one short array (its box and the box to show it by), shown by the first; `total` still counts faces and `stacks` the stacks; a stack of faces that share a suggestion is one entry among the suggested faces, with that `suggestion`), then the look-alikes together, then the faces not embedded yet; with suggested names; `wait: false` answers at once with the best order there is and `ordering: true`), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.takeOut {faces: [{photo, index}]}` (take faces out of their stacks of unnamed faces, one undo step; they never stack with those faces again, in the catalogue only; replies `{taken, photos}`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?, scope?, varied?}` (a person's faces and the unnamed faces that look like them; `scope: "visible"` limits them to the People view's photos; `varied: N` puts the N most varied confirmed faces first), `faces.unnamed {limit?, scope?, wait?}` (every unnamed face, or with `scope: "visible"` only those in the People view's photos, first the stacks without a suggestion of at least 20 faces (always in the list), then the most confident suggestions, then the smaller stacks without a suggestion (one entry each: `stack: {count, faces: [[photo, index, x0, y0, x1, y1, viewX0, viewY0, viewX1, viewY1]]}`, its faces the most typical first, each as one short array (its box and the box to show it by), shown by the first; `total` still counts faces, `stacks` the stacks and `stackBar` the bar two faces had to reach to stack, null until a run has finished; a stack of faces that share a suggestion is one entry among the suggested faces, with that `suggestion`), then the look-alikes together, then the faces not embedded yet; with suggested names; `wait: false` answers at once with the best order there is and `ordering: true`), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 

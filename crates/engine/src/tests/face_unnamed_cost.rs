@@ -183,3 +183,61 @@ fn face_unnamed_stacks_cost() {
         time(unnamed, named, unnamed / 200);
     }
 }
+
+/// What the calibration of the stacking bar costs: counting how alike the faces of different people are, for `named` named faces of
+/// `named / 10` people; the first time, then after a naming (one person gains a face), then after a merge of two people (two people
+/// change). Each is the time of one `Calibration::bar`, on the threads rayon has.
+#[test]
+#[ignore = "timing harness: run it in a release build and read the printed times"]
+fn face_calibration_cost() {
+    use crate::faces_arrange::Person;
+    use crate::faces_stack::Calibration;
+    use std::sync::atomic::AtomicBool;
+    let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+    for named in [3_000usize, 6_000, 12_000] {
+        let people = named / 10;
+        let mut faces: Vec<Vec<std::sync::Arc<[f32]>>> = (0..people)
+            .map(|_| {
+                let centre = unit((0..DIM).map(|_| rng.next()).collect());
+                (0..10).map(|_| std::sync::Arc::from(unit(centre.iter().map(|x| x + 0.4 * rng.next() * 0.2).collect()))).collect()
+            })
+            .collect();
+        let build = |faces: &[Vec<std::sync::Arc<[f32]>>]| -> Vec<Person> {
+            faces
+                .iter()
+                .enumerate()
+                .map(|(i, fs)| {
+                    let mut p = Person::new(format!("person {i}"), format!("Person {i}"));
+                    for (k, e) in fs.iter().enumerate() {
+                        p.add((i * 1000 + k) as u64, e.clone());
+                    }
+                    p
+                })
+                .collect()
+        };
+        let quiet = AtomicBool::new(false);
+        let mut calibration = Calibration::default();
+        let started = Instant::now();
+        let bar = calibration.bar(&build(&faces), &quiet).expect("not cancelled");
+        let first = started.elapsed();
+        // a naming: one more face for one person
+        faces[3].push(std::sync::Arc::from(unit((0..DIM).map(|_| rng.next()).collect())));
+        let started = Instant::now();
+        calibration.bar(&build(&faces), &quiet);
+        let naming = started.elapsed();
+        // a merge: the faces of person 5 go to person 6
+        let moved = std::mem::take(&mut faces[5]);
+        faces[6].extend(moved);
+        let started = Instant::now();
+        calibration.bar(&build(&faces), &quiet);
+        let merge = started.elapsed();
+        // nothing changed
+        let started = Instant::now();
+        calibration.bar(&build(&faces), &quiet);
+        let same = started.elapsed();
+        println!(
+            "{named} named faces of {people} people, {} threads: first {first:>9.2?} (bar {bar:.3}), after one naming {naming:>9.2?}, after a merge {merge:>9.2?}, unchanged {same:>9.2?}",
+            rayon::current_num_threads()
+        );
+    }
+}

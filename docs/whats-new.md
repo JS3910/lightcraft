@@ -10,14 +10,19 @@
   a face that rejected the name.
 - Faces nothing is suggested for that are virtually certain to be the same person are one tile with a count on it. A person who
   appears in hundreds of photos but matches nobody named yet becomes one tile near the top of the faces without a suggestion
-  (stacks come first there, the biggest first), where before their faces were scattered or out of sight.
-- Typing a name on a stack names every face in it in one undo step, and the stack leaves the grid. A stack has no cross, so one
-  click never removes the face boxes of many faces you have not looked at.
-- Only faces that are more alike than any two faces you named as different people (plus a margin, and never less alike than a fixed
-  minimum) stack, and every face of a stack is that alike to every other, so a chain of look-alikes never joins two different people.
-- Click the count on a stack to open it in place: its faces follow it on a tinted background (click again to close it). Each face has
-  a cross that takes it out of the stack; it becomes a tile of its own and never stacks with those faces again, also after a restart.
-  This is kept in the catalogue only, never in a sidecar or a file.
+  (stacks come first there, the biggest first), where before their faces were scattered or out of sight. A stack of 20 faces or
+  more with no suggestion goes first of all, ahead of the suggested faces, and is always in the list.
+- Typing a name on a stack names every face in it in one undo step, and the stack leaves the grid. A closed stack with no
+  suggestion has no cross, so one click never removes the face boxes of many faces you have not looked at (Delete on it says why).
+- Only faces that are more alike than almost any two faces you named as different people stack (the bar is the 99.9th percentile
+  of how alike those were, plus a margin, between 0.75 and 0.85, and 0.75 while there are too few named people to tell), and every
+  face of a stack is that alike to every other, so a chain of look-alikes never joins two different people. One lookalike pair in a
+  large library no longer keeps near-identical faces from stacking. The bar in use is in the tooltip of the line under **Unnamed
+  faces** and in the `stackBar` of `faces.unnamed`.
+- Click the count on a stack to open it in place: the stack's tile becomes its first face and the other faces follow it on a tinted
+  background (click the count again to close it), so a stack of 5 faces is 5 tiles. Every face of an open stack, the first one too,
+  works as if the pictures were not stacked: its tick, cross and name strip, and Delete on the selected faces (which removes the boxes
+  of an open stack, one undo step). Each face shows the stack's suggestion, and a "?" once it was rejected.
 - A stack is the faces it holds when you select. Clicking it (or a face of it, when it is open) selects all its faces, Shift-click takes in the stacks in the range, and **Select all** includes them; typing a name, the tick and the cross on a selection that holds a stack act on all its faces in one undo step. The up arrow names every face of the suggested stacks before it and its tooltip counts faces, not tiles.
 - Stacks follow the People view's source and filters, are worked out in the background with the existing **Putting unnamed faces
   in order** row, and `faces.unnamed` reports each as one entry with its faces, count and representative face.
