@@ -17,7 +17,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use lightcraft_faces::matching;
-use lightcraft_meta::Apart;
 use rayon::prelude::*;
 
 /// A face as the runs know it: its photo, its own box (as bits) and which of the faces of that photo with the very same box
@@ -29,16 +28,6 @@ pub(crate) type Key = (u64, [u64; 4], u32);
 /// A face box as the runs key it: the bits of its four numbers (the same box is the same bits).
 pub(crate) fn rect_bits(r: &lightcraft_geom::Rect) -> [u64; 4] {
     [r.x0.to_bits(), r.y0.to_bits(), r.x1.to_bits(), r.y1.to_bits()]
-}
-
-/// The box that [`rect_bits`] made `bits` from.
-pub(crate) fn rect_from_bits(bits: [u64; 4]) -> lightcraft_geom::Rect {
-    lightcraft_geom::Rect { x0: f64::from_bits(bits[0]), y0: f64::from_bits(bits[1]), x1: f64::from_bits(bits[2]), y1: f64::from_bits(bits[3]) }
-}
-
-/// How the catalogue's `apart` lists name the face of `photo` with the box `bits`: by the box in ten-thousandths.
-pub(crate) fn apart_at(photo: u64, bits: [u64; 4]) -> Apart {
-    Apart { photo, rect: crate::faces_index::region_key(&rect_from_bits(bits)) }
 }
 
 /// How many of the best people are kept for each face. Two are enough to suggest; the rest make a person whose score
@@ -114,38 +103,13 @@ pub(crate) struct Face {
     pub embedding: Arc<[f32]>,
     /// The names it rejected, trimmed and lower-cased.
     rejected: Vec<String>,
-    /// Where the face is as the catalogue names a face in `apart` lists: its photo and its box in ten-thousandths.
-    pub at: Apart,
-    /// The faces it was taken out of a stack with: it never stacks with them (nor they with it).
-    pub apart: std::collections::HashSet<Apart>,
 }
 
 impl Face {
     pub fn new(photo: u64, bits: [u64; 4], ord: u32, embedding: Arc<[f32]>, rejected: &[String]) -> Face {
         let rejected: Vec<String> = rejected.iter().map(|r| r.trim().to_lowercase()).collect();
         let stamp = fingerprint(&(bits, &rejected, head_bits(&embedding)));
-        Face { photo, rect: bits, ord, stamp, embedding, rejected, at: apart_at(photo, bits), apart: Default::default() }
-    }
-
-    /// The face with the faces it was taken out of a stack with. They are part of its stamp (what the run kept of it is
-    /// worked out again), unless there are none, so that a face that was never taken out keeps its stamp.
-    ///
-    /// Only the first `MAX_STACK` are read: that is as many as `faces.takeOut` ever writes, and a catalogue that says more is
-    /// corrupt or hostile (the list is sorted and put in a set here).
-    pub fn with_apart(mut self, apart: &[Apart]) -> Face {
-        let apart = apart.get(..crate::faces_stack::MAX_STACK).unwrap_or(apart);
-        if !apart.is_empty() {
-            let mut sorted: Vec<(u64, [i32; 4])> = apart.iter().map(|a| (a.photo, a.rect)).collect();
-            sorted.sort_unstable();
-            self.stamp = fingerprint(&(self.stamp, sorted));
-            self.apart = apart.iter().copied().collect();
-        }
-        self
-    }
-
-    /// Whether the two faces may not share a stack: either was taken out of a stack with the other.
-    pub fn apart_from(&self, other: &Face) -> bool {
-        (!self.apart.is_empty() && self.apart.contains(&other.at)) || (!other.apart.is_empty() && other.apart.contains(&self.at))
+        Face { photo, rect: bits, ord, stamp, embedding, rejected }
     }
 
     pub fn key(&self) -> Key {
@@ -497,13 +461,11 @@ struct Last {
     chain: HashMap<Key, usize>,
     /// For each stacked face: where the last run put it.
     stack_of: HashMap<Key, StackSlot>,
-    /// The faces of each stack, the most typical first: what `stack_of` points into.
-    stacks: Vec<Vec<Key>>,
 }
 
 /// Where the last run put a stacked face.
 struct StackSlot {
-    /// Which stack it is in (an index into `Last::stacks`).
+    /// Which stack it is in (its number in the last run's order).
     stack: usize,
     /// The stamp the face was stacked at.
     stamp: u64,
@@ -521,8 +483,7 @@ impl Last {
             .enumerate()
             .flat_map(|(stack, m)| m.iter().enumerate().map(move |(place, (k, stamp))| (*k, StackSlot { stack, stamp: *stamp, place })))
             .collect();
-        let stacks = stacks.iter().map(|m| m.iter().map(|(k, _)| *k).collect()).collect();
-        Last { sig, suggestions, chain, stack_of, stacks }
+        Last { sig, suggestions, chain, stack_of }
     }
 }
 
@@ -653,13 +614,6 @@ impl Jobs {
             }
         }
         true
-    }
-
-    /// The faces of the stack `key` is in, as the last finished run found it (the most typical first); none when it is in no stack.
-    pub fn stack_members(&self, key: &Key) -> Option<Vec<Key>> {
-        let last = self.last.as_ref()?;
-        let slot = last.stack_of.get(key)?;
-        last.stacks.get(slot.stack).cloned()
     }
 
     /// Start a run on a thread of its own, with a row in the activity stack for as long as it runs. `all_threads`: use
@@ -1107,7 +1061,8 @@ mod tests {
 
     #[test]
     fn a_change_gives_what_scoring_everyone_again_gives_for_every_face() {
-        let dim = 5;
+        // (many dimensions: random faces are almost never alike enough to stack, and stacks are the business of other tests)
+        let dim = 40;
         for seed in 1..=300u64 {
             let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
             let mut w = World::default();
@@ -1278,24 +1233,6 @@ mod tests {
 
     fn same_as(got: &[Option<(String, f32)>], w: &World) {
         same(got, &w.reference(settings()), 3, 0);
-    }
-
-    /// What a take-out of 5,000 faces asks of the dispatch thread: the stack of each, looked up among 100,000 stacked faces.
-    #[test]
-    fn the_members_of_a_stack_are_looked_up_not_searched_for_among_every_stacked_face() {
-        let key = |n: usize| -> Key { (n as u64, [n as u64; 4], 0) };
-        let stacks: Vec<Vec<(Key, u64)>> = (0..20_000).map(|s| (0..5).map(|m| (key(s * 5 + m), 1)).collect()).collect();
-        let jobs = Jobs { last: Some(Last::new(1, HashMap::new(), &[], &stacks)), ..Default::default() };
-        let started = std::time::Instant::now();
-        for n in 0..5000 {
-            let members = jobs.stack_members(&key(n * 8)).expect("in a stack");
-            assert_eq!(members.len(), 5);
-            // (the most typical first, as the run listed them)
-            assert_eq!(members[0], key(n * 8 / 5 * 5));
-        }
-        assert!(jobs.stack_members(&key(1_000_000)).is_none(), "a face in no stack");
-        let took = started.elapsed();
-        assert!(took < std::time::Duration::from_millis(250), "5,000 faces took {took:?}");
     }
 
     #[test]

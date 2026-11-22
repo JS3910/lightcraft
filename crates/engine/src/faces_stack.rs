@@ -218,8 +218,6 @@ impl Work<'_> {
     fn sim(&self, a: usize, b: usize) -> f32 {
         self.compared.fetch_add(1, Ordering::Relaxed);
         match (self.faces.get(a), self.faces.get(b)) {
-            // (a face taken out of a stack with the other is never alike enough)
-            (Some(x), Some(y)) if x.apart_from(y) => -1.0,
             (Some(x), Some(y)) => matching::cosine(&x.embedding, &y.embedding).unwrap_or(-1.0),
             _ => -1.0,
         }

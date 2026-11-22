@@ -23,7 +23,6 @@ mod face_person_cost;
 pub(super) mod face_recognize;
 pub(super) mod face_rejections;
 mod face_stacks;
-mod face_take_out;
 #[cfg(not(target_arch = "wasm32"))]
 mod face_tiles;
 mod face_unnamed_cost;

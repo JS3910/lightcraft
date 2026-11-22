@@ -510,17 +510,3 @@ fn a_stack_lists_its_faces_compactly_each_with_the_box_to_show_it_by_as_a_single
     assert!(num(6) < num(2) && num(8) > num(4), "its view is the bigger box: {one}");
     let _ = std::fs::remove_dir_all(&d);
 }
-
-#[test]
-fn a_face_of_a_stack_with_a_suggestion_can_be_taken_out_and_the_help_says_so_and_that_the_web_build_has_no_stacks() {
-    let same = |extra: f32| -> Vec<(usize, f32)> { vec![NEAR_ANN[0], NEAR_ANN[1], (20, extra)] };
-    let (mut s, d, [_, b]) = suggested("stacks-sg-out", &[&same(0.02), &same(0.03)], &[]);
-    let r = settle(&mut s);
-    assert_eq!(entry_of(&r, (b.0, 0)).1.as_deref(), Some("Ann"), "a stack with a suggestion: {r}");
-    let reply = s.execute("faces.takeOut", &json!({"faces": [{"photo": b.0, "index": 1}]})).unwrap();
-    assert_eq!(reply["taken"], 1, "{reply}");
-    let help = crate::cmd::command_specs().iter().find(|c| c.id == "faces.takeOut").map(|c| c.params).unwrap_or_default();
-    assert!(!help.contains("a face with a suggestion"), "that is not skipped: {help}");
-    assert!(help.contains("suggested name") && help.contains("web"), "{help}");
-    let _ = std::fs::remove_dir_all(&d);
-}

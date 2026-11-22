@@ -1115,9 +1115,8 @@ mod imp {
                 ord
             };
             let stamp = s.faces.index.get(*photo, rect).map(|e| {
-                let region = s.catalog.photo(PhotoId(*photo)).and_then(|p| p.meta.regions.get(*index));
-                let rejected = region.map_or(&[][..], |r| &r.rejected[..]);
-                let face = Face::new(*photo, rect_bits(rect), ord, e.clone(), rejected).with_apart(region.map_or(&[][..], |r| &r.apart[..]));
+                let rejected = s.catalog.photo(PhotoId(*photo)).and_then(|p| p.meta.regions.get(*index)).map_or(&[][..], |r| &r.rejected[..]);
+                let face = Face::new(*photo, rect_bits(rect), ord, e.clone(), rejected);
                 let stamp = face.stamp;
                 faces.push(face);
                 stamp

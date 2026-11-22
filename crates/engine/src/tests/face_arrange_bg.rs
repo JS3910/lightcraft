@@ -478,7 +478,9 @@ fn after_every_random_change_the_order_is_what_scoring_everyone_again_gives() {
             set_regions(&mut s, *id, regions);
             for i in 0..6 {
                 let cluster = rng.below(6);
-                let v = unit64(&[(cluster, 1.0), (6 + (seed as usize + n + i) % 50, 0.3 + 0.1 * rng.below(5) as f32)]);
+                // (no two faces of a cluster are alike enough to stack, as stacks are the business of other tests: the second number
+                // is in a place of its own and as big as the first)
+                let v = unit64(&[(cluster, 1.0), (6 + (n * 6 + i) % 58, 0.7 + 0.1 * rng.below(5) as f32)]);
                 s.faces.index.insert(id.0, &region(0.1 * i as f64, None).rect, v);
             }
         }

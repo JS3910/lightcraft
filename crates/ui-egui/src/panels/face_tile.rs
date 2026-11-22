@@ -65,15 +65,6 @@ pub struct Hover<'a> {
     pub positional: bool,
     /// The reject button removes the face box (the tile has no name left to reject).
     pub removes: bool,
-    /// The cross takes the face out of the stack it is shown in (a face of an opened stack).
-    pub takes_out: bool,
-}
-
-impl Hover<'_> {
-    /// The buttons of a face of an open stack: only the cross, which takes the face out of the stack (no tick, no up arrow).
-    pub fn take_out() -> Self {
-        Hover { confirm: false, above: false, hide: true, person: "", score: 0.0, above_count: 0, positional: true, removes: false, takes_out: true }
-    }
 }
 
 /// What the tile draws.
@@ -511,9 +502,7 @@ fn explain_buttons(picture: &egui::Response, b: &Buttons, hover: &Hover) {
         let _ = r.clone().on_hover_text(tip);
     }
     if let Some((_, r)) = &b.hide {
-        let tip = if hover.takes_out {
-            crate::i18n::tr("Take this face out of the stack: it will not stack with these faces again").to_string()
-        } else if hover.removes {
+        let tip = if hover.removes {
             crate::i18n::tr("Remove this face box from the photo").to_string()
         } else if person.is_empty() {
             crate::i18n::tr("Not this person: never suggest this name for this face again").to_string()

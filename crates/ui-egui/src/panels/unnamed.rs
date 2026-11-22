@@ -223,27 +223,16 @@ fn toggle(app: &mut LightcraftApp, f: &UnnamedFace) {
     }
 }
 
-/// One face of the open stack `list.faces[entry]` (number `face` in it), in `r`: a face with a cross that takes it out of the stack.
+/// One face of the open stack `list.faces[entry]` (number `face` in it), in `r`.
 pub fn member_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, (entry, face): (usize, usize), list: &Unnamed, r: Rect, ppp: f32) {
     let Some(m) = list.faces.get(entry).and_then(|f| f.stack.get(face)) else { return };
     let key = (m.photo, m.index);
-    let spec = FaceTile {
-        key,
-        view: m.view,
-        suggestion: None,
-        named: false,
-        prefix: "unnamed-member",
-        hover: Some(Hover::take_out()),
-        count: 0,
-        open: false,
-    };
+    let spec = FaceTile { key, view: m.view, suggestion: None, named: false, prefix: "unnamed-member", hover: None, count: 0, open: false };
     // (a face of a stack is the stack for selecting: its tile is selected when the stack is, and a click selects or deselects all of it)
     let selected = list.faces.get(entry).is_some_and(|f| f.keys().into_iter().all(|k| face_tile::is_selected(app, &Gallery::Unnamed, k)));
     match face_tile::show(app, ui, r, &spec, selected, ppp) {
         TileEvent::Click { shift } => face_tile::click(app, &Gallery::Unnamed, &entries(list, &app.ui.rejected_unnamed), entry, shift),
-        TileEvent::Hide => {
-            let _ = app.run("faces.takeOut", json!({"faces": [{"photo": m.photo, "index": m.index}]}));
-        }
+
         TileEvent::Open => {
             let _ = app.run("library.select", json!({"ids": [m.photo], "active": m.photo}));
             let _ = app.run("view.detail", json!({}));
@@ -308,7 +297,7 @@ pub fn keep_places_held(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn
     let end = start.saturating_add(shown.on_screen).min(old.faces.len());
     let holder: std::collections::HashMap<BoxKey, usize> = new_keys.iter().enumerate().flat_map(|(i, ks)| ks.iter().map(move |k| (*k, i))).collect();
     // the entries in view, in their order, as far as the new list still has them. An entry that held several faces stays the
-    // entry that holds most of them (a face taken out of a stack becomes a tile of its own, and the stack keeps its place)
+    // entry that holds most of them (a face that leaves a stack, its name rejected or its box moved, becomes a tile of its own, and the stack keeps its place)
     let mut taken: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut kept: Vec<UnnamedFace> = Vec::new();
     for (n, ks) in old_keys.get(start..end).unwrap_or_default().iter().enumerate() {
@@ -330,7 +319,7 @@ pub fn keep_places_held(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn
                 }
             }
         }
-        // (an entry that held several faces stays the entry that holds most of them: a face taken out of a stack becomes a
+        // (an entry that held several faces stays the entry that holds most of them: a face that left it becomes a
         // tile of its own, and the stack keeps its place)
         let mut share: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
         for i in ks.iter().filter_map(|k| holder.get(k)).filter(|i| !taken.contains(*i)) {
@@ -568,7 +557,6 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
         score: 0.0,
         above_count: suggested_through(list, i, &app.ui.rejected_unnamed),
         positional: true,
-        takes_out: false,
     });
     let open = is_open(f, &app.ui.unnamed_open);
     let spec = FaceTile { key, view: f.view, suggestion, named: false, prefix: "unnamed", hover, count: if stack { f.count() } else { 0 }, open };
