@@ -161,10 +161,11 @@ fn clicking_the_count_opens_the_stack_after_its_tile_on_a_tinted_background_and_
     ok(&mut h, "ui.clickWidget", json!({"id": count_id(p1, 0)}));
     assert_eq!(
         reading(&mut h),
-        [picture(p1, 0), member(p1, 0), member(p1, 1), member(p2, 0), picture(p0, 1)],
-        "the faces follow the stack tile, then the rest of the grid"
+        [picture(p1, 0), member(p1, 1), member(p2, 0), picture(p0, 1)],
+        "the stack's tile is its first face, the others follow it, then the rest of the grid: three tiles for three faces"
     );
-    assert_eq!(widgets(&mut h, "unnamed-tint").len(), 4, "the stack's tile and each of its faces sit on the tint");
+    assert_eq!(widgets(&mut h, "unnamed-tint").len(), 3, "each face sits on the tint, the stack's tile is one of them");
+    assert_eq!(widgets(&mut h, "unnamed-stack-count:"), [count_id(p1, 0)], "the count stays on the first face, and closes the stack");
     assert_eq!(rect_of(&mut h, &picture(p1, 0)), stack_before, "the stack's own tile did not move");
     assert_ne!(rect_of(&mut h, &picture(p0, 1)), single_before, "the tile after it moved on, behind the faces");
     // every id on the screen is there once, the faces of the stack with ids of their own
@@ -507,4 +508,182 @@ fn the_tiles_on_screen_keep_their_places_when_a_stack_forms_grows_and_is_named()
     assert_eq!(ids(&named), expected, "every other tile kept its order");
     assert_eq!(named[..stack_at], grown[..stack_at], "the tiles before it did not move");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- an open stack's faces are single faces ----
+
+fn painted_count(h: &Headless, text: &str) -> usize {
+    h.painted_text().iter().filter(|t| t.as_str() == text).count()
+}
+
+fn open_the_stack(h: &mut Headless, head: (PhotoId, usize)) {
+    ok(h, "ui.clickWidget", json!({"id": count_id(head.0, head.1)}));
+}
+
+/// The id of the part `kind` (`face`, `name`, `face-hide`, `face-confirm`, `face-above`) of the face `(id, i)` of the open stack the
+/// faces of which are `(p1, 0)` (its first, the stack's own tile), `(p1, 1)` and `(p2, 0)`.
+fn part(kind: &str, id: PhotoId, i: usize, first: bool) -> String {
+    format!("unnamed{}-{kind}:{}:{i}", if first { "" } else { "-member" }, id.0)
+}
+
+#[test]
+fn every_face_of_an_open_stack_has_the_cross_and_a_suggested_one_the_tick_and_the_arrow_as_a_single_face_has() {
+    let (mut h, [_, p1, p2]) = people();
+    stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Ann Lee");
+    open_the_stack(&mut h, (p1, 0));
+    for (id, i, first) in [(p1, 0, true), (p1, 1, false), (p2, 0, false)] {
+        for kind in ["face-hide", "face-confirm", "face-above"] {
+            assert_eq!(widgets(&mut h, &part(kind, id, i, first)).len(), 1, "{kind} on face {id:?} {i}");
+        }
+    }
+    // a stack without a suggestion: the cross only, as on a single face with none
+    let (mut h, [_, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    open_the_stack(&mut h, (p1, 0));
+    for (id, i, first) in [(p1, 0, true), (p1, 1, false), (p2, 0, false)] {
+        assert_eq!(widgets(&mut h, &part("face-hide", id, i, first)).len(), 1, "the cross on face {id:?} {i}");
+        for kind in ["face-confirm", "face-above"] {
+            assert!(widgets(&mut h, &part(kind, id, i, first)).is_empty(), "{kind} on face {id:?} {i}");
+        }
+    }
+    let all = widgets(&mut h, "unnamed");
+    assert_eq!(all.len(), all.iter().collect::<std::collections::HashSet<_>>().len(), "every id once: {all:?}");
+}
+
+#[test]
+fn each_face_of_an_open_stack_shows_the_stacks_suggestion_and_a_question_mark_once_it_was_rejected() {
+    let (mut h, [_, p1, p2]) = people();
+    stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Ann Lee");
+    assert_eq!(painted_count(&h, "Ann Lee?"), 1, "closed: the stack's tile says it");
+    open_the_stack(&mut h, (p1, 0));
+    assert_eq!(painted_count(&h, "Ann Lee?"), 3, "open: each face says it, the first one too: {:?}", h.painted_text());
+    // reject it for the stack (its cross while it is closed), then open it again
+    open_the_stack(&mut h, (p1, 0));
+    ok(&mut h, "ui.clickWidget", json!({"id": part("face-hide", p1, 0, true)}));
+    done(&mut h);
+    open_the_stack(&mut h, (p1, 0));
+    assert_eq!(painted_count(&h, "Ann Lee?"), 0, "rejected in this visit: {:?}", h.painted_text());
+    assert_eq!(painted_count(&h, "?"), 4, "a question mark on each of the three faces and the single face: {:?}", h.painted_text());
+}
+
+#[test]
+fn the_cross_on_a_face_of_an_open_stack_does_what_it_does_on_a_single_face() {
+    // with a suggestion: it rejects the name for that face alone
+    let (mut h, [_, p1, p2]) = people();
+    stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Ann Lee");
+    open_the_stack(&mut h, (p1, 0));
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": part("face-hide", p1, 1, false)}));
+    let ann = vec!["Ann Lee".to_string()];
+    assert_eq!((rejected(&h, p1), rejected(&h, p2)), (vec![Vec::new(), ann], vec![Vec::new()]), "that face only");
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    // the first face's cross too, and it does not take the others with it
+    ok(&mut h, "ui.clickWidget", json!({"id": part("face-hide", p1, 0, true)}));
+    assert_eq!(rejected(&h, p2), [Vec::<String>::new()], "the face of the other photo is untouched");
+    assert_eq!(rejected(&h, p1)[0], ["Ann Lee"]);
+    // without a suggestion: it removes that face's box, in one undo step
+    let (mut h, [_, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    open_the_stack(&mut h, (p1, 0));
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": part("face-hide", p2, 0, false)}));
+    assert_eq!((h.app.session.catalog.photo(p1).unwrap().meta.regions.len(), h.app.session.catalog.photo(p2).unwrap().meta.regions.len()), (2, 0));
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one step");
+    // and the first face (the stack's own tile) the same
+    ok(&mut h, "ui.clickWidget", json!({"id": part("face-hide", p1, 0, true)}));
+    assert_eq!(h.app.session.catalog.photo(p1).unwrap().meta.regions.len(), 1, "only the first face's box went");
+    assert_eq!(h.app.session.undo.len(), undo + 2);
+}
+
+#[test]
+fn the_tick_on_a_face_of_an_open_stack_names_that_face_alone() {
+    let some = |s: &str| Some(s.to_string());
+    // (the list is injected, so each tick is on a stack of its own)
+    for (id, first) in [(1usize, false), (0, true)] {
+        let (mut h, [_, p1, p2]) = people();
+        stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Ann Lee");
+        open_the_stack(&mut h, (p1, 0));
+        let undo = h.app.session.undo.len();
+        ok(&mut h, "ui.clickWidget", json!({"id": part("face-confirm", p1, id, first)}));
+        let want = if first { vec![some("Ann Lee"), None] } else { vec![None, some("Ann Lee")] };
+        assert_eq!((names(&h, p1), names(&h, p2)), (want, vec![None]), "face {id} of the photo, alone");
+        assert_eq!(h.app.session.undo.len(), undo + 1);
+    }
+}
+
+#[test]
+fn delete_on_a_selected_open_stack_removes_all_its_boxes_in_one_undo_step_and_on_a_closed_one_says_why_it_does_nothing() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    // closed: nothing is removed, and the user is told why
+    ok(&mut h, "ui.clickWidget", json!({"id": picture(p1, 0)}));
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.key", json!({"key": "delete"}));
+    assert_eq!(h.app.session.undo.len(), undo, "nothing was done");
+    let toast = h.app.ui.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default();
+    assert!(toast.contains("open the stack"), "it says why: {toast:?}");
+    // open: the faces are on screen, so Delete removes every one of them
+    open_the_stack(&mut h, (p1, 0));
+    assert_eq!(selected(&h), [(p1.0, 0), (p1.0, 1), (p2.0, 0)], "still selected");
+    ok(&mut h, "ui.key", json!({"key": "delete"}));
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one step");
+    assert_eq!(
+        (
+            h.app.session.catalog.photo(p0).unwrap().meta.regions.len(),
+            h.app.session.catalog.photo(p1).unwrap().meta.regions.len(),
+            h.app.session.catalog.photo(p2).unwrap().meta.regions.len()
+        ),
+        (2, 0, 0)
+    );
+    ok(&mut h, "engine.execute", json!({"command": "edit.undo"}));
+    assert_eq!(
+        (h.app.session.catalog.photo(p1).unwrap().meta.regions.len(), h.app.session.catalog.photo(p2).unwrap().meta.regions.len()),
+        (2, 1),
+        "one undo brings them all back"
+    );
+}
+
+#[test]
+fn delete_on_a_selected_open_stack_with_a_suggestion_rejects_it_for_every_face_as_for_single_faces() {
+    let (mut h, [_, p1, p2]) = people();
+    stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Ann Lee");
+    open_the_stack(&mut h, (p1, 0));
+    ok(&mut h, "ui.clickWidget", json!({"id": part("face", p1, 1, false)}));
+    ok(&mut h, "ui.key", json!({"key": "delete"}));
+    let ann = vec!["Ann Lee".to_string()];
+    assert_eq!((rejected(&h, p1), rejected(&h, p2)), (vec![ann.clone(), ann.clone()], vec![ann]));
+    assert_eq!(h.app.session.catalog.photo(p1).unwrap().meta.regions.len(), 2, "no box was removed");
+}
+
+#[test]
+fn a_name_typed_on_the_strip_of_a_face_of_an_open_stack_names_that_face_alone() {
+    let (mut h, [_, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    open_the_stack(&mut h, (p1, 0));
+    ok(&mut h, "ui.clickWidget", json!({"id": part("name", p2, 0, false)}));
+    ok(&mut h, "ui.text", json!({"text": "Zed Q"}));
+    ok(&mut h, "ui.key", json!({"key": "enter"}));
+    let some = |s: &str| Some(s.to_string());
+    assert_eq!((names(&h, p1), names(&h, p2)), (vec![None, None], vec![some("Zed Q")]));
+}
+
+#[test]
+fn the_tooltip_of_the_subtitle_says_the_bar_the_stacks_were_made_at() {
+    let (mut h, [_, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    // no run has finished: no bar to say, so no tooltip on the subtitle
+    assert!(widgets(&mut h, "unnamed:subtitle").is_empty());
+    let mut list = (*crate::panels::unnamed::faces(&mut h.app, 0.0)).clone();
+    list.stack_bar = Some(0.83);
+    let (rev, indexed) = (h.app.session.catalog.revision, h.app.caches.faces_indexed);
+    h.app.caches.unnamed = Some((rev, indexed, f64::MAX, Arc::new(list)));
+    h.step();
+    h.step();
+    assert_eq!(widgets(&mut h, "unnamed:subtitle").len(), 1);
+    assert_eq!(h.request("ui.hoverWidget", json!({"id": "unnamed:subtitle"}), T)["ok"], true);
+    assert!(
+        h.step_until(T, |h| h.painted_text().iter().any(|t| t.contains("0.83") && t.contains("alike"))),
+        "the tooltip names the bar: {:?}",
+        h.painted_text()
+    );
 }

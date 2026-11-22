@@ -178,8 +178,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let grid_top = section_top + SECTION_H;
         // Tab moved the name box to a tile that may be off screen
         if let Some(key) = app.ui.unnamed_scroll.take()
-            && let Some(entry) = unnamed.faces.iter().position(|f| (f.photo, f.index) == key)
-            && let Some(i) = cells.iter().position(|c| *c == super::unnamed::Cell::Entry(entry))
+            && let Some(i) = super::unnamed::cell_of(&unnamed, &cells, key)
         {
             let min = area.min + vec2(PAD + (i % tile_cols) as f32 * (tile + GAP), grid_top + (i / tile_cols) as f32 * tile_row);
             ui.scroll_to_rect(Rect::from_min_size(min, vec2(tile, tile_row)), None);
@@ -211,13 +210,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     };
                     register(ui, id, band);
                 }
-                match member {
+                let moved_to = match member {
                     Some(at) => super::unnamed::member_tile(app, ui, (entry, at), &unnamed, r, ppp),
-                    None => {
-                        if let Some(to) = super::unnamed::tile(app, ui, &unnamed, entry, r, face, ppp) {
-                            app.ui.unnamed_scroll = Some(to);
-                        }
-                    }
+                    None => super::unnamed::tile(app, ui, &unnamed, r, face, ppp),
+                };
+                if let Some(to) = moved_to {
+                    app.ui.unnamed_scroll = Some(to);
                 }
             }
         }

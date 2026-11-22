@@ -294,13 +294,22 @@ pub enum Rejection {
 /// reject the names of every face it applies to (the selection when `face` is selected, else `face` alone) while any has
 /// one, else remove their face boxes. Either way one command, so one undo step.
 pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, gallery: &Gallery, order: &[Entry], face: FaceKey) -> Rejection {
-    // a stack with no suggestion has no cross: removing the boxes of many faces nobody looked at must never be one click (or a
-    // key). With a suggestion it rejects the name for every face in it.
-    // (a selection that holds such a stack leaves its faces out of what is removed)
+    // a closed stack with no suggestion has no cross: removing the boxes of many faces nobody looked at must never be one click (or
+    // a key). With a suggestion it rejects the name for every face in it. The faces of an open stack are single faces here.
+    // (a selection that holds such a stack leaves its faces out of what is removed, and the user is told why)
     let held: HashSet<FaceKey> = order.iter().filter(|e| !e.members.is_empty() && e.suggestion.is_none()).flat_map(Entry::keys).collect();
     let targets = apply_to(&selection(app, gallery), order, face);
     let plan = match plan(&targets, order) {
-        Plan::Remove(keys) => Plan::Remove(keys.into_iter().filter(|k| !held.contains(k)).collect()),
+        Plan::Remove(keys) => {
+            let (left_out, keys): (Vec<FaceKey>, Vec<FaceKey>) = keys.into_iter().partition(|k| held.contains(k));
+            if !left_out.is_empty() {
+                app.toast(
+                    ctx,
+                    crate::i18n::tr("A stack's face boxes are not removed while it is closed: open the stack (click its count), then remove the faces you can see."),
+                );
+            }
+            Plan::Remove(keys)
+        }
         reject => reject,
     };
     if plan == Plan::Remove(Vec::new()) {
