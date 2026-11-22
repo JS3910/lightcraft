@@ -29,4 +29,4 @@ On a machine that already has the checkout, skip the clone and the two `remote` 
 
 ## Changing the files
 
-Change them on this branch, commit and push, then copy them into each checkout again: the `fetch`, `worktree add`, `Copy-Item` and `worktree remove` lines above. A change made only in a checkout's copy stays on that machine.
+Change them on this branch, in a worktree as above. Stage them with `git add -f CLAUDE.local.md docs/agents`: the checkout's `.git/info/exclude` hides them from a plain `git add` here too. Commit and push, then copy them into each checkout again: the `fetch`, `worktree add`, `Copy-Item` and `worktree remove` lines above. A change made only in a checkout's copy stays on that machine.
