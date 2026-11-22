@@ -135,7 +135,7 @@ fn people_rules() {
         kind,
         name: name.map(str::to_string),
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     };
     let mut p = photo(1);
     let m = |p: &Photo, field: &str, op: &str, value: serde_json::Value| {
@@ -296,7 +296,7 @@ fn any_searchable_text_covers_new_fields() {
         kind: lightcraft_meta::RegionKind::Face,
         name: Some("Ana".into()),
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     }];
     p.copy_name = Some("Bluish".into());
     for word in ["oregon", "kite", "ana", "bluish"] {

@@ -565,7 +565,7 @@ fn face_regions_found_meanwhile_leave_the_scan_current() {
         kind: lightcraft_meta::RegionKind::Face,
         name: None,
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     });
     s.catalog.apply(lightcraft_catalog::Op::SetMeta { id: a, meta: Box::new(meta) }).unwrap();
     let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip"), "scanned": true})).unwrap();
@@ -778,6 +778,7 @@ fn synchronizing_keeps_the_names_a_face_rejected() {
         name: None,
         description: None,
         rejected: vec!["Ann".to_string()],
+        ..Default::default()
     });
     s.catalog.apply(lightcraft_catalog::Op::SetMeta { id: a, meta: Box::new(meta) }).unwrap();
     // another app saves the photo's sidecar with the face named, drawn on the same box

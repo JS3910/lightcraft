@@ -27,7 +27,7 @@ fn tagged() -> Session {
             kind: RegionKind::Face,
             name: Some("Ann".into()),
             description: None,
-            rejected: Vec::new(),
+            ..Default::default()
         }];
         s.catalog.apply(Op::AddPhoto { photo: Box::new(photo) }).unwrap();
     }

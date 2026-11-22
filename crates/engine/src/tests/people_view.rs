@@ -15,7 +15,7 @@ fn face(size: f64, name: Option<&str>) -> Region {
         kind: RegionKind::Face,
         name: name.map(str::to_string),
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     }
 }
 

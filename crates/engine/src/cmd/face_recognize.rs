@@ -569,7 +569,7 @@ mod imp {
                 kind: RegionKind::Face,
                 name: None,
                 description: Some(format!("{MARK}{LABEL}")),
-                rejected: Vec::new(),
+                ..Default::default()
             });
         }
         if s.apply_system(Op::SetMeta { id, meta: Box::new(meta) }).is_ok() {
@@ -1099,8 +1099,9 @@ mod imp {
                 ord
             };
             let stamp = s.faces.index.get(*photo, rect).map(|e| {
-                let rejected = s.catalog.photo(PhotoId(*photo)).and_then(|p| p.meta.regions.get(*index)).map_or(&[][..], |r| &r.rejected[..]);
-                let face = Face::new(*photo, rect_bits(rect), ord, e.clone(), rejected);
+                let region = s.catalog.photo(PhotoId(*photo)).and_then(|p| p.meta.regions.get(*index));
+                let rejected = region.map_or(&[][..], |r| &r.rejected[..]);
+                let face = Face::new(*photo, rect_bits(rect), ord, e.clone(), rejected).with_apart(region.map_or(&[][..], |r| &r.apart[..]));
                 let stamp = face.stamp;
                 faces.push(face);
                 stamp

@@ -15,6 +15,9 @@
   click never removes the face boxes of many faces you have not looked at.
 - Only faces that are more alike than any two faces you named as different people (plus a margin, and never less alike than a fixed
   minimum) stack, and every face of a stack is that alike to every other, so a chain of look-alikes never joins two different people.
+- Click the count on a stack to open it in place: its faces follow it on a tinted background (click again to close it). Each face has
+  a cross that takes it out of the stack; it becomes a tile of its own and never stacks with those faces again, also after a restart.
+  This is kept in the catalogue only, never in a sidecar or a file.
 - Stacks follow the People view's source and filters, are worked out in the background with the existing **Putting unnamed faces
   in order** row, and `faces.unnamed` reports each as one entry with its faces, count and representative face.
 

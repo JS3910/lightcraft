@@ -21,7 +21,7 @@ pub(crate) fn temp(name: &str) -> PathBuf {
 /// Seed CPU-only settings before installing models in a fresh test folder. These tests cover catalog and
 /// model logic; GPU kernels have separate tests. Calling the settings mutation command here would also
 /// detach the process-wide detector accelerator, interfering with other tests in the same process.
-fn keep_on_cpu(s: &mut Session) {
+pub(crate) fn keep_on_cpu(s: &mut Session) {
     let dir = s.face_models_dir.as_ref().unwrap();
     let settings = dir.join("settings.json");
     assert!(!settings.exists(), "only seed a fresh fixture's settings");
@@ -103,7 +103,7 @@ pub(crate) fn region(x: f64, name: Option<&str>) -> Region {
         kind: RegionKind::Face,
         name: name.map(str::to_string),
         description: None,
-        rejected: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -662,7 +662,7 @@ fn every_scanned_face_is_shown_by_the_same_kind_of_box() {
     let loose = lightcraft_geom::Rect { x0: 0.2, y0: 0.1, x1: 0.8, y1: 0.9 };
     let tight = lightcraft_geom::Rect { x0: 0.35, y0: 0.25, x1: 0.65, y1: 0.65 };
     let mut meta = s.catalog.photo(a).unwrap().meta.clone();
-    meta.regions = vec![Region { rect: loose, kind: RegionKind::Face, name: Some("Ann".into()), description: None, rejected: Vec::new() }];
+    meta.regions = vec![Region { rect: loose, kind: RegionKind::Face, name: Some("Ann".into()), description: None, ..Default::default() }];
     s.commit("setup", Op::SetMeta { id: a, meta: Box::new(meta) }).unwrap();
     // before the scan has looked at it, the face is shown by its own box
     assert_eq!(s.face_view(a, loose), loose);

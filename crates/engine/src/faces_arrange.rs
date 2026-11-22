@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use lightcraft_faces::matching;
+use lightcraft_meta::Apart;
 use rayon::prelude::*;
 
 /// A face as the runs know it: its photo, its own box (as bits) and which of the faces of that photo with the very same box
@@ -98,13 +99,41 @@ pub(crate) struct Face {
     pub embedding: Arc<[f32]>,
     /// The names it rejected, trimmed and lower-cased.
     rejected: Vec<String>,
+    /// Where the face is as the catalogue names a face in `apart` lists: its photo and its box in ten-thousandths.
+    pub at: Apart,
+    /// The faces it was taken out of a stack with: it never stacks with them (nor they with it).
+    pub apart: std::collections::HashSet<Apart>,
 }
 
 impl Face {
     pub fn new(photo: u64, rect_bits: [u64; 4], ord: u32, embedding: Arc<[f32]>, rejected: &[String]) -> Face {
         let rejected: Vec<String> = rejected.iter().map(|r| r.trim().to_lowercase()).collect();
         let stamp = fingerprint(&(rect_bits, &rejected, head_bits(&embedding)));
-        Face { photo, rect: rect_bits, ord, stamp, embedding, rejected }
+        let rect = lightcraft_geom::Rect {
+            x0: f64::from_bits(rect_bits[0]),
+            y0: f64::from_bits(rect_bits[1]),
+            x1: f64::from_bits(rect_bits[2]),
+            y1: f64::from_bits(rect_bits[3]),
+        };
+        let at = Apart { photo, rect: crate::faces_index::region_key(&rect) };
+        Face { photo, rect: rect_bits, ord, stamp, embedding, rejected, at, apart: Default::default() }
+    }
+
+    /// The face with the faces it was taken out of a stack with. They are part of its stamp (what the run kept of it is
+    /// worked out again), unless there are none, so that a face that was never taken out keeps its stamp.
+    pub fn with_apart(mut self, apart: &[Apart]) -> Face {
+        if !apart.is_empty() {
+            let mut sorted: Vec<(u64, [i32; 4])> = apart.iter().map(|a| (a.photo, a.rect)).collect();
+            sorted.sort_unstable();
+            self.stamp = fingerprint(&(self.stamp, sorted));
+            self.apart = apart.iter().copied().collect();
+        }
+        self
+    }
+
+    /// Whether the two faces may not share a stack: either was taken out of a stack with the other.
+    pub fn apart_from(&self, other: &Face) -> bool {
+        (!self.apart.is_empty() && self.apart.contains(&other.at)) || (!other.apart.is_empty() && other.apart.contains(&self.at))
     }
 
     pub fn key(&self) -> Key {
@@ -592,6 +621,15 @@ impl Jobs {
             }
         }
         true
+    }
+
+    /// The faces of the stack `key` is in, as the last finished run found it (the most typical first); none when it is in no stack.
+    pub fn stack_members(&self, key: &Key) -> Option<Vec<Key>> {
+        let last = self.last.as_ref()?;
+        let (stack, _, _) = last.stack_of.get(key)?;
+        let mut members: Vec<(usize, Key)> = last.stack_of.iter().filter(|(_, (s, _, _))| s == stack).map(|(k, (_, _, pos))| (*pos, *k)).collect();
+        members.sort_unstable();
+        Some(members.into_iter().map(|(_, k)| k).collect())
     }
 
     /// Start a run on a thread of its own, with a row in the activity stack for as long as it runs. `all_threads`: use

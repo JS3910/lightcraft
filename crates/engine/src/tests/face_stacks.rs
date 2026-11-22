@@ -18,7 +18,7 @@ use crate::Session;
 /// - a face like Ann and another like Ann (suggested her; not alike each other, so they do not stack),
 /// - three faces in a chain (A like B, B like C, A not like C), in `b`,
 /// - a lone face, and one not embedded.
-fn library(name: &str) -> (Session, std::path::PathBuf, [PhotoId; 3]) {
+pub(super) fn library(name: &str) -> (Session, std::path::PathBuf, [PhotoId; 3]) {
     let d = temp(name);
     let (mut s, _) = setup(&d, 64);
     s.execute("faces.index", &json!({"budgetMs": 0})).unwrap();
@@ -51,14 +51,14 @@ fn library(name: &str) -> (Session, std::path::PathBuf, [PhotoId; 3]) {
     (s, d, [a, b, c])
 }
 
-fn ask(s: &mut Session) -> Value {
+pub(super) fn ask(s: &mut Session) -> Value {
     s.execute("faces.unnamed", &json!({})).unwrap()
 }
 
-type Key = (u64, u64);
+pub(super) type Key = (u64, u64);
 
 /// The entries of the list: each as the faces it holds (the face alone, or the stack's faces, the most typical first).
-fn entries(r: &Value) -> Vec<Vec<Key>> {
+pub(super) fn entries(r: &Value) -> Vec<Vec<Key>> {
     let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
     r["faces"]
         .as_array()
@@ -71,11 +71,11 @@ fn entries(r: &Value) -> Vec<Vec<Key>> {
         .collect()
 }
 
-fn stacks(r: &Value) -> Vec<Vec<Key>> {
+pub(super) fn stacks(r: &Value) -> Vec<Vec<Key>> {
     entries(r).into_iter().filter(|e| e.len() > 1).collect()
 }
 
-fn settle(s: &mut Session) -> Value {
+pub(super) fn settle(s: &mut Session) -> Value {
     let r = ask(s);
     assert_eq!(r["complete"], true, "{r}");
     r
