@@ -685,7 +685,8 @@ impl Jobs {
     /// photo and region order) as they are put now: the positions in the order, which of them carry a suggestion, and
     /// whether any were put next to look-alikes.
     ///
-    /// Faces the last run scored at the same stamp keep their suggestion, the likeliest first. Then the stacks the last
+    /// First the stacks without a suggestion that hold at least [`BIG_STACK`] listed faces, the biggest first. Then the faces
+    /// the last run scored at the same stamp keep their suggestion, the likeliest first. Then the stacks the last
     /// run made, the biggest first, with the faces of each that are listed (a stack with one face listed is that face alone,
     /// after the look-alikes), then the others without a suggestion in look-alike order where the last run had them in it,
     /// then in photo order, then the faces not embedded.
@@ -731,7 +732,10 @@ impl Jobs {
                 [first, ..] => {
                     match suggestion_at(*first) {
                         Some(score) => slots.push(Slot { score, ..Slot::new(Group::Suggested, *first) }),
-                        None => slots.push(Slot { size_order: usize::MAX - places.len(), ..Slot::new(Group::Stack, *first) }),
+                        None => {
+                            let group = if places.len() >= BIG_STACK { Group::BigStack } else { Group::Stack };
+                            slots.push(Slot { size_order: usize::MAX - places.len(), ..Slot::new(group, *first) });
+                        }
                     }
                     stacks.insert(*first, places);
                 }
@@ -772,6 +776,9 @@ impl Jobs {
 /// The groups the faces are put in, in the order of the groups (the first goes first).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Group {
+    /// Stacks without a suggestion of at least [`BIG_STACK`] faces, the biggest first: a person in dozens of photos is the most
+    /// worth naming, and they go ahead of everything, so that they are in the list however many faces there are.
+    BigStack,
     /// Faces and stacks with a suggestion, the likeliest first.
     Suggested,
     /// Stacks without a suggestion, the biggest first.
@@ -783,6 +790,9 @@ enum Group {
     /// Faces that are not embedded.
     Unembedded,
 }
+
+/// How many faces a stack without a suggestion has to hold to come before everything else in the list.
+pub(crate) const BIG_STACK: usize = 20;
 
 /// The place of a [`Slot`] in the look-alike order of a face that is the only one of its stack in scope: after the others.
 const ALONE: usize = usize::MAX;

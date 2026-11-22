@@ -156,6 +156,50 @@ fn among_the_faces_without_a_suggestion_stacks_come_first_biggest_first_then_sin
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// [`library`] with photo `c` holding `n` faces of one person nobody named: a stack of `n` without a suggestion.
+fn with_a_stack_of(name: &str, n: usize) -> (Session, std::path::PathBuf, [PhotoId; 3]) {
+    let (mut s, d, ids) = library(name);
+    let at = |i: usize| 0.002 * (i + 1) as f64;
+    set_regions(&mut s, ids[2], (0..n).map(|i| region(at(i), None)).collect());
+    for i in 0..n {
+        s.faces.index.insert(ids[2].0, &region(at(i), None).rect, unit64(&[(60, 1.0), (61, 0.01 * i as f32)]));
+    }
+    (s, d, ids)
+}
+
+#[test]
+fn a_stack_of_twenty_faces_or_more_without_a_suggestion_comes_before_the_suggested_faces_a_smaller_one_after_them() {
+    let (mut s, d, [a, _, c]) = with_a_stack_of("stacks-big", 20);
+    let r = settle(&mut s);
+    let e = entries(&r);
+    assert_eq!(e[0].len(), 20, "the stack of twenty is first, ahead of the faces suggested Ann: {:?}", e.iter().map(Vec::len).collect::<Vec<_>>());
+    assert!(e[0].iter().all(|k| k.0 == c.0));
+    assert_eq!(&e[1..3], &[vec![(a.0, 4)], vec![(a.0, 5)]], "then the suggested faces: {e:?}");
+    assert!(r["faces"][0]["suggestion"].is_null() && r["faces"][1]["suggestion"]["name"] == "Ann", "{r}");
+    let _ = std::fs::remove_dir_all(&d);
+    // one face fewer is an ordinary stack, among the stacks after the suggested faces
+    let (mut s, d, [a, _, _]) = with_a_stack_of("stacks-nineteen", 19);
+    let e = entries(&settle(&mut s));
+    assert_eq!(&e[..2], &[vec![(a.0, 4)], vec![(a.0, 5)]], "{:?}", e.iter().map(Vec::len).collect::<Vec<_>>());
+    assert_eq!(e[2].len(), 19, "the biggest stack after them");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn the_big_stacks_come_first_biggest_first_and_are_in_the_list_however_short_it_is_cut() {
+    let (mut s, d, [_, b, _]) = with_a_stack_of("stacks-big-cut", 25);
+    // a second one, of 22 faces, in photo b
+    set_regions(&mut s, b, (0..22).map(|i| region(0.002 * (i + 1) as f64, None)).collect());
+    for i in 0..22 {
+        s.faces.index.insert(b.0, &region(0.002 * (i + 1) as f64, None).rect, unit64(&[(62, 1.0), (63, 0.01 * i as f32)]));
+    }
+    let r = s.execute("faces.unnamed", &json!({"limit": 2})).unwrap();
+    assert_eq!(r["complete"], true, "{r}");
+    let sizes: Vec<usize> = entries(&r).iter().map(Vec::len).collect();
+    assert_eq!(sizes, [25, 22], "both big stacks, the biggest first, with a limit of two: {r}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn a_chain_of_look_alikes_never_puts_its_ends_in_one_stack() {
     let (mut s, d, [_, b, _]) = library("stacks-chain");
