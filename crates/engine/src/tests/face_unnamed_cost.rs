@@ -64,6 +64,9 @@ fn time(unnamed: usize, named: usize, clusters: usize) {
     s.execute("faces.index", &json!({"budgetMs": 0})).unwrap();
     let mut ids: Vec<_> = s.catalog.photos().map(|p| p.id).collect();
     ids.sort();
+    // how much the faces that are suggested a named person differ from her: 0.17 makes them one person's faces, which stack with her name
+    // (`LC_COST_SUGGESTED_NOISE=0.5` makes them only alike enough to be suggested her, which stack with nobody: the cost without them)
+    let suggested_noise: f32 = std::env::var("LC_COST_SUGGESTED_NOISE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.17);
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let people: Vec<Vec<f32>> = (0..named / 10).map(|_| unit((0..DIM).map(|_| rng.next()).collect())).collect();
     // (the people nobody has named: the faces of a quarter of the unnamed ones, in `clusters` groups)
@@ -80,7 +83,9 @@ fn time(unnamed: usize, named: usize, clusters: usize) {
             let (name, base, noise) = if i < named {
                 (Some(format!("Person {}", i % people.len())), i % people.len(), 0.4)
             } else if i % 2 == 0 {
-                (None, i % people.len(), 0.5)
+                // (with stacks asked for, the faces of one named person that suggest her are as alike as one person's faces are, so that they form
+                // stacks that carry her name too; without, they are only alike enough to be suggested her)
+                (None, i % people.len(), if clusters > 0 { suggested_noise } else { 0.5 })
             } else {
                 (None, usize::MAX, 0.0)
             };
@@ -139,9 +144,19 @@ fn time(unnamed: usize, named: usize, clusters: usize) {
         listed["faces"].as_array().map_or(0, Vec::len)
     );
     println!("    first arrangement:       {first:>9.2?} until complete, {first_call:>9.2?} on the calling thread without waiting");
+    // the stacks of the list that carry a suggested name, and how many faces they hold (a stack of 50 faces is one entry)
+    let named_stacks: Vec<&Value> =
+        listed["faces"].as_array().into_iter().flatten().filter(|f| f["stack"].is_object() && !f["suggestion"].is_null()).collect();
+    let in_named_stacks: u64 = named_stacks.iter().filter_map(|f| f["stack"]["count"].as_u64()).sum();
     println!(
-        "    stacks: {} in the list; faces looked at / comparisons made by the stacking at the bar {:.3}: first {:?}, after the naming {:?}, after the scan {:?}",
-        listed["stacks"], s.faces.arrange.bar, after_first, after_naming, after_refresh
+        "    stacks: {} in the list, {} of the {} listed carry a suggested name ({in_named_stacks} faces); faces looked at / comparisons made by the stacking at the bar {:.3}: first {:?}, after the naming {:?}, after the scan {:?}",
+        listed["stacks"],
+        named_stacks.len(),
+        listed["faces"].as_array().map_or(0, Vec::len),
+        s.faces.arrange.bar,
+        after_first,
+        after_naming,
+        after_refresh
     );
     println!("    asked again unchanged:   {idle:>9.2?} on the calling thread");
     println!("    after one naming:        {naming:>9.2?} until complete, {naming_call:>9.2?} on the calling thread");

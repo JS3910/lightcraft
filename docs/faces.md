@@ -410,7 +410,9 @@ step (`faces.nameFaces`), and so does the arrow "all above" for every stack amon
 The cross, and the Delete key on a selected stack, reject the suggestion for every face of the stack in one undo step
 (`faces.reject` with the name, stored on each face exactly as rejecting a single face stores it), and the stack stays in place as a
 **?** stack until the view is left: when the run that works out the stacks again has not finished, the tile is kept as it was
-(one tile with all its faces) while every face of it is one whose suggestion was rejected in this visit. Afterwards the faces
+(one tile with all its faces) while every face of it is one whose suggestion was rejected in this visit; a face of it that is named
+or loses its box meanwhile just leaves the tile, which stays in place with the faces that are left (shown by the first of them), and
+a face the scan adds waits for the run. Afterwards the faces
 stack again for the name they are suggested next, or for none (which has no cross).
 
 - *Scope.* Stacks follow the People view's source and filters: only faces in those photos are stacked, and a count shows
@@ -569,7 +571,7 @@ Reading the tables:
 
 
 **What the stacks cost.** The stacking is part of the run above, after the scoring, and only on that thread; the window's
-thread does nothing more than list the stacks the last run found (the calling-thread columns are the same as without stacks).
+thread does nothing more than list the stacks the last run found (the calling-thread columns are what they are without stacks, unless many faces are in the stacks among the first 3,000 entries: see below).
 - *The first arrangement* compares the faces without a suggestion with each other: up to 4 million comparisons when every pair
   is compared, else through cells (about 11 million comparisons for 15,000 faces without a suggestion, 31 million for 30,000, of
   512 numbers each). It adds 0.1 to 0.2 s at 10,000 unnamed faces and 0.5 s (8 threads) to 1.5 s (4 threads) at 30,000, to the
@@ -585,33 +587,46 @@ thread does nothing more than list the stacks the last run found (the calling-th
   naming's person against the others only.
 
 Measured like the tables above, with a quarter of the unnamed faces made faces of people nobody has named (groups of 50 around
-one face, which stack; `face_unnamed_stacks_cost`, the same command with that name), and the others as before: the time until the order was complete in the
-background, in release builds, one run each on the same loaded machine (so the last digit means little). "Before" is the same
-harness without those faces, as it ran on this code (`face_unnamed_cost`; the faces without a suggestion are stacked there too, they are only
-never alike): the stacks themselves change the cost very little; what they add is comparing faces without a suggestion with each
-other at all.
+one face, which stack) and the faces that suggest a named person made as alike as that person's own faces are (so that they stack
+too, under her name): `face_unnamed_stacks_cost`, the same command with that name, `RAYON_NUM_THREADS` 8 and 4. The time until the order was
+complete in the background, in release builds, one run each on the same loaded machine (so the last digit means little). In
+brackets, the same harness with `LC_COST_SUGGESTED_NOISE=0.5`: the faces that suggest a person are alike enough to be suggested
+her but not to stack (a few still do), which is what the run costs without stacks with a suggested name. "Stacks in the list"
+counts every stack of the answer, then the ones among them that carry a suggested name and the faces in those.
 
 8 threads:
 
-| Unnamed faces | Named faces (people) | Stacks in the list | First arrangement (without stack groups) | After one naming | Scan finds 2 % more | `faces.unnamed` on the calling thread (first / unchanged / after a naming) |
+| Unnamed faces | Named faces (people) | Stacks in the list (with a name, their faces) | First arrangement | After one naming | Scan finds 2 % more | `faces.unnamed` on the calling thread (first / unchanged / after a naming) |
 |---|---|---|---|---|---|---|
-| 10,000 | 3,000 (300) | 85 | 0.42 s (0.42 s) | 35 ms | 0.10 s | 17 / 15 / 17 ms |
-| 30,000 | 6,000 (600) | 267 | 2.27 s (2.26 s) | 71 ms | 0.22 s | 29 / 32 / 36 ms |
-| 60,000 | 3,000 (300) | 842 | 3.17 s (3.05 s) | 0.12 s | 0.36 s | 53 / 56 / 57 ms |
+| 10,000 | 3,000 (300) | 235 (150, 5,000) | 0.45 s (0.43 s) | 82 ms (45 ms) | 0.14 s (0.12 s) | 15 / 36 / 37 ms (15 / 20 / 21 ms) |
+| 30,000 | 6,000 (600) | 567 (300, 15,000) | 2.27 s (2.17 s) | 0.19 s (84 ms) | 0.31 s (0.24 s) | 29 / 90 / 93 ms (31 / 39 / 37 ms) |
+| 60,000 | 3,000 (300) | 992 (150, 30,000) | 3.53 s (3.26 s) | 0.40 s (0.15 s) | 0.52 s (0.37 s) | 56 / 181 / 181 ms (56 / 68 / 72 ms) |
 
 4 threads:
 
-| Unnamed faces | Named faces (people) | Stacks in the list | First arrangement (without stack groups) | After one naming | Scan finds 2 % more | `faces.unnamed` on the calling thread (first / unchanged / after a naming) |
+| Unnamed faces | Named faces (people) | Stacks in the list (with a name, their faces) | First arrangement | After one naming | Scan finds 2 % more | `faces.unnamed` on the calling thread (first / unchanged / after a naming) |
 |---|---|---|---|---|---|---|
-| 10,000 | 3,000 (300) | 85 | 0.76 s (0.78 s) | 35 ms | 0.12 s | 17 / 15 / 17 ms |
-| 30,000 | 6,000 (600) | 267 | 4.82 s (5.29 s) | 69 ms | 0.28 s | 29 / 32 / 35 ms |
-| 60,000 | 3,000 (300) | 842 | 5.90 s (5.81 s) | 0.12 s | 0.43 s | 48 / 57 / 61 ms |
+| 10,000 | 3,000 (300) | 235 (150, 5,000) | 0.77 s (0.75 s) | 83 ms (42 ms) | 0.15 s (0.12 s) | 15 / 37 / 38 ms (15 / 19 / 20 ms) |
+| 30,000 | 6,000 (600) | 567 (300, 15,000) | 4.73 s (4.63 s) | 0.22 s (90 ms) | 0.37 s (0.28 s) | 31 / 92 / 94 ms (28 / 38 / 43 ms) |
+| 60,000 | 3,000 (300) | 992 (150, 30,000) | 6.03 s (5.98 s) | 0.39 s (0.14 s) | 0.62 s (0.43 s) | 51 / 180 / 176 ms (51 / 65 / 68 ms) |
 
-Stacking made the first arrangement longer than the figures of the tables above (which were measured before there were
-stacks): 1.7 s became 2.3 s for 30,000 unnamed faces against 6,000 named with 8 threads, and 3.8 s became 5.3 s with 4
-threads. A naming (74 ms before) and the scan finding faces (0.15 s before) cost what they cost then, plus 0 to 0.1 s. The stacks listed
-are the entries among the first 3,000 of the list (the faces with a suggestion come first, so with that many suggestions the stacks
-are further down than the list is cut); `stacks` in the answer counts all of them.
+What stacking the faces with a suggestion added:
+
+- *The first arrangement* 1 to 8 % (0.45 s against 0.43 s, 2.27 s against 2.17 s, 3.53 s against 3.26 s with 8 threads): the faces
+  suggested one person are stacked as a group of their own, which adds 3 to 8 % to the comparisons of the first arrangement (2.34
+  million against 2.26 million at 10,000 faces, 39.9 million against 36.9 million at 60,000).
+- *A naming* two to three times what it was (0.40 s against 0.15 s at 60,000 faces with 8 threads): a named face changes its
+  person's faces, so the stacks of the faces suggested that person are looked at again (32 to 199 faces and 1,500 to 59,000
+  comparisons, where a naming that changes no stack looks at none); it is still in the background and below half a second.
+- *The scan finding 2 % more faces* 0.02 to 0.19 s more, in the background.
+- *The calling thread* when there are many stacks with a name: 90 to 181 ms for 30,000 to 60,000 faces (it was 38 to 68 ms), because
+  the answer lists every face of every stack among the first 3,000 entries (30,000 faces in 150 stacks here), each with its box and the
+  box it is shown by (the view box added about 50 ms of the 181 ms at 60,000 faces). This is the case where the window is felt, as it
+  asks again after every result taken in, and where the next step would be to list only the faces of a stack that is open.
+  Without many stacks, or with the stacks among the first 3,000 entries holding fewer faces, it is what it was.
+
+The stacks listed are the entries among the first 3,000 of the list (the faces with a suggestion come first, so with that many
+suggestions the stacks without one are further down than the list is cut); `stacks` in the answer counts all of them.
 
 ### A person's page
 
@@ -717,7 +732,9 @@ sidecar or a file, a metadata re-read keeps it on the same box (`carry_rejection
 before reads as nothing (an empty list is not written at all). A face that has been taken out has a new stamp, so the stacks it
 was in are looked at again by the next run, and until that run is done the face is a single tile and the others are a stack without
 it. Faces that are in no stack (single faces, boxes that do not exist) are skipped; the call is refused when
-none is in a stack. This holds for stacks with a suggested name too. Another face that was never taken out of that stack may still stack with it, as with any face that is alike.
+none is in a stack. This holds for stacks with a suggested name too. A catalogue that lists more than 4,500 faces for one face
+box is read up to that many (it is corrupt: nothing writes more). The command is native only, like the run that works out the
+stacks: the web build has no recognition, so no stacks. Another face that was never taken out of that stack may still stack with it, as with any face that is alike.
 
 On a selected tile, reject (and the Delete key, when no name box or other text field has the keyboard) acts on the whole
 selection; on an unselected tile, on that face alone. Over a selection it has two levels: while any selected face shows a
