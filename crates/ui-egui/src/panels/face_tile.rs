@@ -69,6 +69,13 @@ pub struct Hover<'a> {
     pub takes_out: bool,
 }
 
+impl Hover<'_> {
+    /// The buttons of a face of an open stack: only the cross, which takes the face out of the stack (no tick, no up arrow).
+    pub fn take_out() -> Self {
+        Hover { confirm: false, above: false, hide: true, person: "", score: 0.0, above_count: 0, positional: true, removes: false, takes_out: true }
+    }
+}
+
 /// What the tile draws.
 pub struct FaceTile<'a> {
     pub key: FaceKey,
@@ -137,10 +144,7 @@ pub fn apply_to(selected: &HashSet<FaceKey>, order: &[Entry], face: FaceKey) -> 
             return list;
         }
     }
-    if let Some(e) = order.iter().find(|e| e.key == face && !e.members.is_empty()) {
-        return e.members.clone();
-    }
-    vec![face]
+    order.iter().find(|e| e.key == face).map_or_else(|| vec![face], Entry::keys)
 }
 
 /// The strip's text: the face's own name, or the suggestion and a question mark, or a lone question mark.
@@ -365,8 +369,7 @@ pub fn confirm_own(app: &mut LightcraftApp, gallery: &Gallery, order: &[Entry], 
 /// "All above" by position: confirm every suggestion from the first tile of `order` through tile `at`, each face as its
 /// own suggestion, in one undo step. Faces without a suggestion are skipped; the selection is not touched.
 pub fn confirm_through(app: &mut LightcraftApp, order: &[Entry], at: usize) {
-    let faces: Vec<FaceKey> =
-        order.get(..=at).unwrap_or(order).iter().flat_map(|e| if e.members.is_empty() { vec![e.key] } else { e.members.clone() }).collect();
+    let faces: Vec<FaceKey> = order.get(..=at).unwrap_or(order).iter().flat_map(Entry::keys).collect();
     name_each(app, &own_names(order, &faces), false);
 }
 

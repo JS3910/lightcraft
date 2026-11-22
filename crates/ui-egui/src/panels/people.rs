@@ -199,7 +199,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 // an open stack and its faces sit on a tint
                 let (entry, member) = match cell {
                     super::unnamed::Cell::Entry(e) => (e, None),
-                    super::unnamed::Cell::Member { entry, at } => (entry, Some(at)),
+                    super::unnamed::Cell::Member { entry, face } => (entry, Some(face)),
                 };
                 let Some(face) = unnamed.faces.get(entry) else { break };
                 if super::unnamed::is_open(face, &app.ui.unnamed_open) {

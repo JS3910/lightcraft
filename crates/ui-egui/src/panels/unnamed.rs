@@ -53,9 +53,14 @@ impl UnnamedFace {
         self.stack.len().max(1)
     }
 
+    /// Every face the entry holds, each with its own box and the box to show it by: the faces of the stack, or the face itself.
+    pub fn members(&self) -> Vec<StackFace> {
+        if self.is_stack() { self.stack.clone() } else { vec![StackFace { photo: self.photo, index: self.index, rect: self.rect, view: self.view }] }
+    }
+
     /// Every face the entry holds, as photo and region.
     pub fn keys(&self) -> Vec<FaceKey> {
-        if self.is_stack() { self.stack.iter().map(|f| (f.photo, f.index)).collect() } else { vec![(self.photo, self.index)] }
+        self.members().iter().map(|m| (m.photo, m.index)).collect()
     }
 }
 
@@ -169,7 +174,7 @@ fn order_sentence(list: &Unnamed) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cell {
     Entry(usize),
-    Member { entry: usize, at: usize },
+    Member { entry: usize, face: usize },
 }
 
 /// Whether the entry is a stack that was opened in place (it holds one of the faces `open` remembers).
@@ -183,7 +188,7 @@ pub fn cells(list: &Unnamed, open: &std::collections::HashSet<FaceKey>) -> Vec<C
     for (i, f) in list.faces.iter().enumerate() {
         out.push(Cell::Entry(i));
         if is_open(f, open) {
-            out.extend((0..f.stack.len()).map(|at| Cell::Member { entry: i, at }));
+            out.extend((0..f.stack.len()).map(|face| Cell::Member { entry: i, face }));
         }
     }
     out
@@ -216,22 +221,20 @@ fn toggle(app: &mut LightcraftApp, f: &UnnamedFace) {
     }
 }
 
-/// One face of the open stack `list.faces[entry]` (number `at` in it), in `r`: a face with a cross that takes it out of the stack.
-pub fn member_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, (entry, at): (usize, usize), list: &Unnamed, r: Rect, ppp: f32) {
-    let Some(m) = list.faces.get(entry).and_then(|f| f.stack.get(at)) else { return };
+/// One face of the open stack `list.faces[entry]` (number `face` in it), in `r`: a face with a cross that takes it out of the stack.
+pub fn member_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, (entry, face): (usize, usize), list: &Unnamed, r: Rect, ppp: f32) {
+    let Some(m) = list.faces.get(entry).and_then(|f| f.stack.get(face)) else { return };
     let key = (m.photo, m.index);
-    let hover = Some(Hover {
-        confirm: false,
-        above: false,
-        hide: true,
-        removes: false,
-        person: "",
-        score: 0.0,
-        above_count: 0,
-        positional: true,
-        takes_out: true,
-    });
-    let spec = FaceTile { key, view: m.view, suggestion: None, named: false, prefix: "unnamed-member", hover, count: 0, open: false };
+    let spec = FaceTile {
+        key,
+        view: m.view,
+        suggestion: None,
+        named: false,
+        prefix: "unnamed-member",
+        hover: Some(Hover::take_out()),
+        count: 0,
+        open: false,
+    };
     // (a face of a stack is the stack for selecting: its tile is selected when the stack is, and a click selects or deselects all of it)
     let selected = list.faces.get(entry).is_some_and(|f| f.keys().into_iter().all(|k| face_tile::is_selected(app, &Gallery::Unnamed, k)));
     match face_tile::show(app, ui, r, &spec, selected, ppp) {
@@ -286,22 +289,22 @@ pub fn keep_places_held(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn
     // A stack is told apart by the faces it holds: it is the stack in the new list that holds one of the faces of the one in
     // view (so a stack that grew, or whose most typical face changed, keeps its place, and several tiles that became one stack
     // leave one tile, in the place of the first of them).
-    type At = (u64, [u64; 4], usize);
-    let keys = |faces: &[UnnamedFace]| -> Vec<Vec<At>> {
+    type BoxKey = (u64, [u64; 4], usize);
+    let keys = |faces: &[UnnamedFace]| -> Vec<Vec<BoxKey>> {
         let mut seen: std::collections::HashMap<(u64, [u64; 4]), usize> = std::collections::HashMap::new();
-        let mut at = |photo: u64, r: &lightcraft_geom::Rect| -> At {
-            let at = (photo, [r.x0.to_bits(), r.y0.to_bits(), r.x1.to_bits(), r.y1.to_bits()]);
-            let n = seen.entry(at).or_insert(0);
+        let mut box_key = |photo: u64, r: &lightcraft_geom::Rect| -> BoxKey {
+            let key = (photo, [r.x0.to_bits(), r.y0.to_bits(), r.x1.to_bits(), r.y1.to_bits()]);
+            let n = seen.entry(key).or_insert(0);
             let ord = *n;
             *n += 1;
-            (at.0, at.1, ord)
+            (key.0, key.1, ord)
         };
-        faces.iter().map(|f| if f.is_stack() { f.stack.iter().map(|m| at(m.photo, &m.rect)).collect() } else { vec![at(f.photo, &f.rect)] }).collect()
+        faces.iter().map(|f| f.members().iter().map(|m| box_key(m.photo, &m.rect)).collect()).collect()
     };
     let (old_keys, new_keys) = (keys(&old.faces), keys(&new.faces));
     let start = shown.above.min(old.faces.len());
     let end = start.saturating_add(shown.on_screen).min(old.faces.len());
-    let holder: std::collections::HashMap<At, usize> = new_keys.iter().enumerate().flat_map(|(i, ks)| ks.iter().map(move |k| (*k, i))).collect();
+    let holder: std::collections::HashMap<BoxKey, usize> = new_keys.iter().enumerate().flat_map(|(i, ks)| ks.iter().map(move |k| (*k, i))).collect();
     // the entries in view, in their order, as far as the new list still has them. An entry that held several faces stays the
     // entry that holds most of them (a face taken out of a stack becomes a tile of its own, and the stack keeps its place)
     let mut taken: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -501,14 +504,13 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
 
 /// The list as the name box and the selection see it: the faces in the order shown, with their suggestions.
 pub fn entries(list: &Unnamed, rejected: &super::person::Rejected) -> Vec<Entry> {
-    list.faces
-        .iter()
-        .map(|f| Entry {
-            key: (f.photo, f.index),
-            suggestion: shown(f, rejected).map(str::to_string),
-            members: if f.is_stack() { f.keys() } else { Vec::new() },
-        })
-        .collect()
+    list.faces.iter().map(|f| entry(f, rejected)).collect()
+}
+
+/// One tile of the list as the name box and the selection see it: its face (a stack's first), the name on its strip, and for a
+/// stack the faces it holds.
+fn entry(f: &UnnamedFace, rejected: &super::person::Rejected) -> Entry {
+    Entry { key: (f.photo, f.index), suggestion: shown(f, rejected).map(str::to_string), members: if f.is_stack() { f.keys() } else { Vec::new() } }
 }
 
 /// The name on a face's strip: its suggestion, unless it was rejected during this visit (nothing new is offered straight
@@ -524,10 +526,8 @@ pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, list: &Unnamed, face
     if let face_tile::Rejection::Rejected(keys) = face_tile::reject(app, ctx, &Gallery::Unnamed, &order, face) {
         for (at, f) in list.faces.iter().enumerate().filter(|(_, f)| f.keys().iter().any(|k| keys.contains(k))) {
             // (every face of a stack is remembered: the stack's head may change while it stays in place)
-            let members: Vec<(FaceKey, lightcraft_geom::Rect)> =
-                if f.is_stack() { f.stack.iter().map(|m| ((m.photo, m.index), m.rect)).collect() } else { vec![((f.photo, f.index), f.view)] };
-            for ((photo, index), rect) in members {
-                app.ui.rejected_unnamed.remember(&super::person::Face { photo, index, rect, score: 0.0 }, at);
+            for m in f.members() {
+                app.ui.rejected_unnamed.remember(&super::person::Face { photo: m.photo, index: m.index, rect: m.view, score: 0.0 }, at);
             }
         }
     }
@@ -571,11 +571,7 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
     let open = is_open(f, &app.ui.unnamed_open);
     let spec = FaceTile { key, view: f.view, suggestion, named: false, prefix: "unnamed", hover, count: if stack { f.count() } else { 0 }, open };
     match face_tile::show(app, ui, r, &spec, selected, ppp) {
-        TileEvent::Name => face_tile::open(
-            app,
-            ui.ctx(),
-            &Entry { key, suggestion: suggestion.map(str::to_string), members: f.keys().into_iter().filter(|_| stack).collect() },
-        ),
+        TileEvent::Name => face_tile::open(app, ui.ctx(), &entry(f, &app.ui.rejected_unnamed)),
         TileEvent::Click { shift } => face_tile::click(app, &Gallery::Unnamed, &entries(list, &app.ui.rejected_unnamed), i, shift),
         // a double click opens the photo, as in the grid; its second click must not undo the first one's selection
         TileEvent::Open => {
@@ -878,7 +874,7 @@ mod tests {
 
     #[test]
     fn the_entries_on_screen_are_counted_from_the_cells_and_an_open_stack_is_one_entry() {
-        let c = [Cell::Entry(0), Cell::Entry(1), Cell::Member { entry: 1, at: 0 }, Cell::Member { entry: 1, at: 1 }, Cell::Entry(2)];
+        let c = [Cell::Entry(0), Cell::Entry(1), Cell::Member { entry: 1, face: 0 }, Cell::Member { entry: 1, face: 1 }, Cell::Entry(2)];
         // the screen starts at the stack's second face: the stack is in view, only the entry before it is above
         assert_eq!(shown_cells(&c, 3, 5), Shown { above: 1, on_screen: 2 });
         assert_eq!(shown_cells(&c, 0, 2), Shown { above: 0, on_screen: 2 });
@@ -893,7 +889,7 @@ mod tests {
         let open: std::collections::HashSet<FaceKey> = [(4, 0)].into_iter().collect();
         assert_eq!(
             cells(&l, &open),
-            [Cell::Entry(0), Cell::Entry(1), Cell::Member { entry: 1, at: 0 }, Cell::Member { entry: 1, at: 1 }, Cell::Entry(2)]
+            [Cell::Entry(0), Cell::Entry(1), Cell::Member { entry: 1, face: 0 }, Cell::Member { entry: 1, face: 1 }, Cell::Entry(2)]
         );
     }
 
