@@ -50,36 +50,67 @@ fn with_nobody_or_one_person_named_the_bar_is_the_fixed_minimum() {
     const { assert!(MIN_BAR >= 0.55 + 0.15) };
 }
 
-#[test]
-fn the_bar_is_above_the_highest_similarity_between_two_people_but_never_below_the_minimum() {
-    let mut c = Calibration::default();
-    let none = AtomicBool::new(false);
-    // Ann and Bob each have two faces; the closest of Ann's to Bob's are 0.9 alike
-    let ann = person("Ann", &[unit(&[(0, 1.0)]), at(0.2, 0, 3, 1.0)]);
-    let bob = person("Bob", &[at(0.9, 0, 1, 1.0), unit(&[(5, 1.0)])]);
-    let bar = c.bar(&[ann, bob], &none).expect("bar");
-    assert!((bar - 0.95).abs() < 1e-4, "the highest similarity (0.9) and the margin (0.05): {bar}");
-    // two people who are not alike leave the minimum
-    let ann = person("Ann", &[unit(&[(0, 1.0)])]);
-    let bob = person("Bob", &[at(0.5, 0, 1, 1.0)]);
-    assert_eq!(c.bar(&[ann, bob], &none), Some(0.75));
+/// Ann and Bob with 40 faces each (1,600 pairs): 1,521 of the pairs between them are `like` alike, one pair is 0.99 alike when
+/// `odd` is set, the others are not alike at all.
+fn two_crowds(like: f32, odd: bool) -> Vec<Person> {
+    let mut ann: Vec<Arc<[f32]>> = vec![unit(&[(2, 1.0)])];
+    ann.extend((1..40).map(|_| unit(&[(0, 1.0)])));
+    let mut bob: Vec<Arc<[f32]>> = vec![if odd { at(0.99, 2, 3, 1.0) } else { unit(&[(6, 1.0)]) }];
+    bob.extend((1..40).map(|_| at(like, 0, 1, 1.0)));
+    vec![person("Ann", &ann), person("Bob", &bob)]
 }
 
-/// The highest similarity between two people the long way.
-fn reference(people: &[Person]) -> f32 {
-    let mut best: Option<f32> = None;
+#[test]
+fn the_bar_is_the_999th_percentile_of_what_different_people_reach_plus_the_margin_within_a_floor_and_a_ceiling() {
+    let none = AtomicBool::new(false);
+    // 1,521 of 1,600 pairs are 0.78 alike: the bar is a little above that
+    let bar = Calibration::default().bar(&two_crowds(0.78, false), &none).expect("bar");
+    assert!((bar - 0.83).abs() < 0.005, "0.78 and the margin: {bar}");
+    // ... and one pair of 0.99 far above the rest changes nothing (the highest similarity would give the ceiling)
+    let odd = Calibration::default().bar(&two_crowds(0.78, true), &none).expect("bar");
+    assert!((odd - 0.83).abs() < 0.005, "one pair among 1,600 is not the 99.9th percentile: {odd}");
+    // the ceiling and the floor
+    assert_eq!(Calibration::default().bar(&two_crowds(0.95, false), &none), Some(MAX_BAR));
+    assert_eq!(Calibration::default().bar(&two_crowds(0.30, false), &none), Some(MIN_BAR));
+    assert_eq!((MIN_BAR, MAX_BAR), (0.75, 0.85));
+}
+
+#[test]
+fn with_too_few_pairs_of_different_people_the_bar_is_the_floor_however_alike_they_are() {
+    // Ann and Bob each have two faces (4 pairs), the closest of Ann's to Bob's are 0.9 alike
+    let ann = person("Ann", &[unit(&[(0, 1.0)]), at(0.2, 0, 3, 1.0)]);
+    let bob = person("Bob", &[at(0.9, 0, 1, 1.0), unit(&[(5, 1.0)])]);
+    assert_eq!(Calibration::default().bar(&[ann, bob], &AtomicBool::new(false)), Some(MIN_BAR));
+}
+
+#[test]
+fn faces_086_alike_stack_even_when_two_people_in_the_library_reach_099() {
+    let bar = Calibration::default().bar(&two_crowds(0.30, true), &AtomicBool::new(false)).expect("bar");
+    let faces = [face(1, unit(&[(4, 1.0)])), face(2, at(0.86, 4, 5, 1.0))];
+    let mut stacks = run(&mut StackState::default(), &faces, bar, BRUTE_LIMIT);
+    stacks.iter_mut().for_each(|s| s.sort_unstable());
+    assert_eq!(stacks, vec![vec![1, 2]], "bar {bar}");
+}
+
+/// How many pairs of faces of different people there are in each bin, the long way: a pair of faces of two people, one by one.
+fn reference(people: &[Person]) -> Vec<u64> {
+    let mut bins = vec![0u64; BINS];
     for (i, a) in people.iter().enumerate() {
         for b in people.iter().skip(i + 1) {
-            if let Some(c) = closest_between(a, b) {
-                best = Some(best.map_or(c, |m| m.max(c)));
+            for x in &a.faces {
+                for y in &b.faces {
+                    if let Some(bin) = matching::cosine(x, y).and_then(bin_of) {
+                        bins[bin] += 1;
+                    }
+                }
             }
         }
     }
-    bar_from(best)
+    bins
 }
 
 #[test]
-fn after_every_change_the_bar_is_what_comparing_everyone_gives() {
+fn after_every_change_the_counts_are_what_counting_everyone_again_gives() {
     let mut rng = 0x9E37_79B9_7F4A_7C15u64;
     let mut next = move |n: usize| {
         rng ^= rng >> 12;
@@ -112,7 +143,9 @@ fn after_every_change_the_bar_is_what_comparing_everyone_gives() {
             })
             .collect();
         let got = c.bar(&people, &AtomicBool::new(false)).expect("bar");
-        assert!((got - reference(&people)).abs() < 1e-5, "step {step}: {got} against {}", reference(&people));
+        let want = reference(&people);
+        assert_eq!(c.counts(), want, "step {step}");
+        assert_eq!(got, bar_from(&want), "step {step}");
     }
 }
 

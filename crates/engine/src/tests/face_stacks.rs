@@ -121,6 +121,17 @@ fn faces_that_are_virtually_certain_to_be_one_person_are_one_entry_with_their_co
 }
 
 #[test]
+fn the_answer_says_the_bar_the_stacks_were_made_at_and_none_before_a_run_has_finished() {
+    let (mut s, d, _) = library("stacks-bar-says");
+    let first = s.execute("faces.unnamed", &json!({"wait": false})).unwrap();
+    assert!(first["complete"] == false && first["stackBar"].is_null(), "no run has finished: {first}");
+    let r = settle(&mut s);
+    // (Ann and Bob are one pair of faces: too few to take a percentile of, so the floor)
+    assert_eq!(r["stackBar"], json!(0.75), "{r}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn among_the_faces_without_a_suggestion_stacks_come_first_biggest_first_then_single_faces_then_the_unembedded() {
     let (mut s, d, [a, b, c]) = library("stacks-order");
     let r = settle(&mut s);
@@ -158,29 +169,36 @@ fn a_chain_of_look_alikes_never_puts_its_ends_in_one_stack() {
 
 #[test]
 fn the_bar_comes_from_the_faces_named_as_different_people_and_never_falls_below_the_minimum() {
-    let (mut s, d, [a, _, c]) = library("stacks-bar");
-    // two more people, named by one face each, 0.93 alike: faces less alike than that (plus the margin) must not stack
-    set_regions(
-        &mut s,
-        c,
-        vec![region(0.1, None), region(0.2, None), region(0.3, Some("Cy")), region(0.4, Some("Di")), region(0.5, None), region(0.6, None)],
-    );
+    let (mut s, d, [_, _, c]) = library("stacks-bar");
+    // two more people, 40 faces each, every one of them 0.93 alike every one of the other's (1,600 pairs): faces less alike than
+    // that must not stack, up to the ceiling of the bar
+    let at = |i: usize| 0.002 * (i + 1) as f64;
+    let mut regions = vec![region(at(0), None), region(at(1), None)];
+    regions.extend((0..40).map(|i| region(at(2 + i), Some("Cy"))));
+    regions.extend((0..40).map(|i| region(at(42 + i), Some("Di"))));
+    regions.extend([region(at(82), None), region(at(83), None)]);
+    set_regions(&mut s, c, regions);
     let put = |s: &mut Session, id: PhotoId, x: f64, v: Vec<f32>| s.faces.index.insert(id.0, &region(x, None).rect, v);
-    put(&mut s, c, 0.3, unit64(&[(50, 1.0)]));
-    put(&mut s, c, 0.4, unit64(&[(50, 0.93), (51, 0.368)])); // 0.93 alike Cy
-    put(&mut s, c, 0.5, unit64(&[(52, 1.0)])); // a pair of unnamed faces 0.96 alike: above the minimum, under what Cy and Di reach
-    put(&mut s, c, 0.6, unit64(&[(52, 0.96), (53, 0.28)]));
+    put(&mut s, c, at(0), unit64(&[(12, 1.0), (13, 0.05)])); // the pair of unnamed faces it was
+    put(&mut s, c, at(1), unit64(&[(12, 1.0), (13, 0.06)]));
+    for i in 0..40 {
+        put(&mut s, c, at(2 + i), unit64(&[(50, 1.0)]));
+        put(&mut s, c, at(42 + i), unit64(&[(50, 0.93), (51, 0.368)])); // 0.93 alike Cy
+    }
+    put(&mut s, c, at(82), unit64(&[(52, 1.0)])); // a pair of unnamed faces 0.8 alike: above the minimum, under what Cy and Di reach
+    put(&mut s, c, at(83), unit64(&[(52, 0.8), (53, 0.6)]));
     let r = settle(&mut s);
-    assert!((s.faces.arrange.bar - 0.98).abs() < 1e-3, "the highest similarity between two people (0.93) and the margin: {}", s.faces.arrange.bar);
-    assert!(stacks(&r).iter().all(|st| !st.contains(&(c.0, 4))), "{:?}", stacks(&r));
-    // the pair in the photo before, alike at 0.9995, is a stack still
+    assert!((s.faces.arrange.bar - 0.85).abs() < 1e-6, "0.93 and the margin are over the ceiling: {}", s.faces.arrange.bar);
+    assert!((r["stackBar"].as_f64().unwrap_or(0.0) - 0.85).abs() < 1e-6, "{r}");
+    assert!(stacks(&r).iter().all(|st| !st.contains(&(c.0, 82))), "{:?}", stacks(&r));
+    // the pair alike at 0.9995 is a stack still
     assert!(stacks(&r).iter().any(|st| st.contains(&(c.0, 0)) && st.contains(&(c.0, 1))), "{:?}", stacks(&r));
-    // naming Cy as Di takes the two people away: the bar is the minimum again, and the 0.96 pair stacks
-    s.execute("faces.setName", &json!({"id": c.0, "index": 2, "name": "Di"})).unwrap();
+    // naming Cy's faces as Di takes the two people away: the bar is the minimum again, and the 0.8 pair stacks
+    let cys: Vec<Value> = (2..42).map(|i| json!({"photo": c.0, "index": i, "name": "Di"})).collect();
+    s.execute("faces.nameFaces", &json!({"faces": cys})).unwrap();
     let r = settle(&mut s);
     assert!((s.faces.arrange.bar - 0.75).abs() < 1e-6, "{}", s.faces.arrange.bar);
-    assert!(stacks(&r).iter().any(|st| st.contains(&(c.0, 4)) && st.contains(&(c.0, 5))), "{:?}", stacks(&r));
-    let _ = a;
+    assert!(stacks(&r).iter().any(|st| st.contains(&(c.0, 82)) && st.contains(&(c.0, 83))), "{:?}", stacks(&r));
     let _ = std::fs::remove_dir_all(&d);
 }
 

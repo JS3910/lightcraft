@@ -6,14 +6,16 @@
 //! Unnamed faces in order, so it is cancellable and reports in that run's activity row.
 //!
 //! **The bar** ([`Calibration`]) is what two faces must reach (cosine of their embeddings, the measure the suggestions use) to
-//! be alike enough to stack. It comes from the library's own named faces: above the highest similarity found between two faces
-//! named as different people, plus [`BAR_MARGIN`], and never below [`MIN_BAR`].
+//! be alike enough to stack. It comes from the library's own named faces: the 99.9th percentile ([`BAR_PERCENTILE`]) of the
+//! similarities between faces named as different people, plus [`BAR_MARGIN`], kept between [`MIN_BAR`] and [`MAX_BAR`] (and
+//! [`MIN_BAR`] while there are fewer than [`MIN_PAIRS`] such pairs).
 //!
 //! **No chaining.** A face joins a stack only when it reaches the bar against *every* face in it, so A like B and B like C
 //! with A not like C never end up together. Wherever the search for look-alikes misses a pair, the faces are left apart: the
 //! mistakes this makes are stacks that are smaller than they could be, never a face that does not belong.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use lightcraft_faces::matching;
@@ -26,9 +28,19 @@ use crate::faces_arrange::{Face, Key, Person};
 /// clearly stricter than any suggestion, as stacking names faces nobody looked at one by one.
 pub(crate) const MIN_BAR: f32 = 0.75;
 
-/// What is added to the highest similarity between two faces named as different people, so that faces just under what
-/// two different people reached never stack.
+/// The highest the bar ever is: one lookalike or mislabelled pair in a large library must not make stacking impossible.
+pub(crate) const MAX_BAR: f32 = 0.85;
+
+/// What is added to the percentile of the similarities between faces named as different people, so that faces just under what
+/// two different people reach never stack.
 pub(crate) const BAR_MARGIN: f32 = 0.05;
+
+/// Which share of the similarities between faces of different people the bar is above (the 99.9th percentile): a handful of
+/// lookalike or mislabelled pairs in a large library do not move it.
+pub(crate) const BAR_PERCENTILE: f64 = 0.999;
+
+/// Fewest pairs of faces of different people a percentile is taken of; with fewer the bar is [`MIN_BAR`].
+pub(crate) const MIN_PAIRS: u64 = 1000;
 
 /// Faces looked at between two looks at the cancel flag.
 const CHUNK: usize = 256;
@@ -44,119 +56,140 @@ const MAX_ALIKE: usize = 4096;
 /// Most faces a stack holds: naming a stack is one `faces.nameFaces` command (one undo step), which takes at most 5,000 faces.
 pub(crate) const MAX_STACK: usize = 4500;
 
-/// What a person's faces reach against a face of another person: the highest cosine, `None` when no faces can be compared.
-fn closest_between(a: &Person, b: &Person) -> Option<f32> {
-    let mut best: Option<f32> = None;
-    for x in &a.faces {
-        for y in &b.faces {
-            if let Some(c) = matching::cosine(x, y) {
-                best = Some(best.map_or(c, |b| b.max(c)));
+/// How many bins the similarities of different people are counted in, from -1 to 1 (a bin is 0.001 wide).
+const BINS: usize = 2000;
+
+/// Which of the [`BINS`] the cosine `c` is counted in (`None` when it is not a number).
+fn bin_of(c: f32) -> Option<usize> {
+    c.is_finite().then(|| (((c.clamp(-1.0, 1.0) + 1.0) / 2.0 * BINS as f32) as usize).min(BINS - 1))
+}
+
+/// The cosine at the top of bin `i`.
+fn bin_top(i: usize) -> f32 {
+    (-1.0 + 2.0 * (i + 1) as f32 / BINS as f32).min(1.0)
+}
+
+/// How many pairs of faces of two people fall in each bin, added to `into` (`sign` is +1 to count them, -1 to take them away
+/// again).
+fn count_between(into: &mut [i64], sign: i64, a: &[Arc<[f32]>], b: &[Arc<[f32]>]) {
+    for x in a {
+        for y in b {
+            if let Some(i) = matching::cosine(x, y).and_then(bin_of)
+                && let Some(n) = into.get_mut(i)
+            {
+                *n += sign;
             }
         }
     }
-    best
 }
 
-/// What is kept of one person: their fingerprint when the row was worked out, and the highest similarity of any of their
-/// faces to a face of another person, with that person.
-struct Row {
+/// What is kept of one person: their fingerprint when they were counted, and their faces then.
+struct Counted {
     fingerprint: u64,
-    best: Option<f32>,
-    partner: Option<String>,
+    faces: Vec<Arc<[f32]>>,
 }
 
-/// The highest similarity between two faces named as different people, kept so that a naming costs what it changed: only the
-/// rows of the people whose faces changed (and of the people whose best partner they were) are worked out again, against
-/// everybody; everybody else only against the changed people.
+/// How alike the faces of different people are, counted for the stacking bar: the similarity of every face of a person to every
+/// face of every other person, in a histogram of [`BINS`] bins. A naming costs what it changed: only the pairs that
+/// involve a person whose faces changed are taken away (as they were) and counted again (as they are).
 #[derive(Default)]
 pub(crate) struct Calibration {
-    rows: HashMap<String, Row>,
+    people: HashMap<String, Counted>,
+    bins: Vec<u64>,
 }
 
 impl Calibration {
-    /// The bar for `people`: [`MIN_BAR`] or the highest cross-person similarity plus [`BAR_MARGIN`], whichever is higher. `None`
-    /// when `cancel` was set (the rows are then as they were).
+    /// The bar for `people` (see [`bar_from`]). `None` when `cancel` was set (the counts are then as they were).
     pub fn bar(&mut self, people: &[Person], cancel: &AtomicBool) -> Option<f32> {
-        let prints: Vec<u64> = people.iter().map(Person::fingerprint).collect();
-        let index: HashMap<&str, usize> = people.iter().enumerate().map(|(i, p)| (p.key.as_str(), i)).collect();
-        let changed = |i: usize, p: &Person| self.rows.get(&p.key).map(|r| r.fingerprint) != prints.get(i).copied();
-        let changed_keys: HashSet<&str> = people.iter().enumerate().filter(|(i, p)| changed(*i, p)).map(|(_, p)| p.key.as_str()).collect();
-        // a row is worked out again when its person changed, or the person it was best against did (or went)
-        let dirty: Vec<usize> = people
-            .iter()
-            .enumerate()
-            .filter(|(i, p)| {
-                changed(*i, p)
-                    || self.rows.get(&p.key).and_then(|r| r.partner.as_deref()).is_some_and(|q| changed_keys.contains(q) || !index.contains_key(q))
-            })
-            .map(|(i, _)| i)
-            .collect();
-        let is_dirty: HashSet<usize> = dirty.iter().copied().collect();
-        let old_best = |j: usize| people.get(j).and_then(|p| self.rows.get(&p.key)).filter(|_| !is_dirty.contains(&j)).and_then(|r| r.best);
-        // each dirty person against every other, once per pair: (their own best, and what a clean person is brought to)
-        let parts: Vec<Option<(usize, Option<(f32, usize)>, Vec<(usize, f32)>)>> = dirty
-            .par_iter()
-            .map(|&i| {
+        let prints: HashMap<&str, u64> = people.iter().map(|p| (p.key.as_str(), p.fingerprint())).collect();
+        let same = |key: &str, print: u64| self.people.get(key).is_some_and(|c| c.fingerprint == print);
+        // the people whose pairs are no longer true: changed, or gone; and those whose pairs are not counted yet
+        let stale: Vec<(&str, &Counted)> =
+            self.people.iter().filter(|(k, _)| !prints.get(k.as_str()).is_some_and(|p| same(k, *p))).map(|(k, c)| (k.as_str(), c)).collect();
+        let fresh: Vec<&Person> = people.iter().filter(|p| !same(&p.key, p.fingerprint())).collect();
+        let stale_keys: HashSet<&str> = stale.iter().map(|(k, _)| *k).collect();
+        let fresh_keys: HashSet<&str> = fresh.iter().map(|p| p.key.as_str()).collect();
+        let stopped = AtomicBool::new(false);
+        let work = |old: bool| {
+            let zero = || vec![0i64; BINS];
+            let add = |mut a: Vec<i64>, b: Vec<i64>| {
+                a.iter_mut().zip(b).for_each(|(x, y)| *x += y);
+                a
+            };
+            // (a pair of two people who both changed is counted once, by the one with the lower key)
+            let each = |key: &str, faces: &[Arc<[f32]>], acc: &mut Vec<i64>| {
                 if cancel.load(Ordering::Relaxed) {
-                    return None;
+                    stopped.store(true, Ordering::Relaxed);
+                    return;
                 }
-                let me = people.get(i)?;
-                let mut best: Option<(f32, usize)> = None;
-                let mut lifts: Vec<(usize, f32)> = Vec::new();
-                for (j, other) in people.iter().enumerate() {
-                    if j == i || (is_dirty.contains(&j) && j < i) {
-                        continue;
+                if old {
+                    for (other, c) in &self.people {
+                        if other != key && !(stale_keys.contains(other.as_str()) && other.as_str() < key) {
+                            count_between(acc, -1, faces, &c.faces);
+                        }
                     }
-                    let Some(c) = closest_between(me, other) else { continue };
-                    if best.is_none_or(|(b, _)| c > b) {
-                        best = Some((c, j));
-                    }
-                    if old_best(j).is_none_or(|b| c > b) {
-                        lifts.push((j, c));
+                } else {
+                    for q in people {
+                        if q.key != key && !(fresh_keys.contains(q.key.as_str()) && q.key.as_str() < key) {
+                            count_between(acc, 1, faces, &q.faces);
+                        }
                     }
                 }
-                Some((i, best, lifts))
-            })
-            .collect();
-        if parts.iter().any(Option::is_none) || cancel.load(Ordering::Relaxed) {
+            };
+            if old {
+                stale
+                    .par_iter()
+                    .fold(zero, |mut acc, (k, c)| {
+                        each(k, &c.faces, &mut acc);
+                        acc
+                    })
+                    .reduce(zero, add)
+            } else {
+                fresh
+                    .par_iter()
+                    .fold(zero, |mut acc, p| {
+                        each(&p.key, &p.faces, &mut acc);
+                        acc
+                    })
+                    .reduce(zero, add)
+            }
+        };
+        let (gone, new) = (work(true), work(false));
+        if stopped.load(Ordering::Relaxed) || cancel.load(Ordering::Relaxed) {
             return None;
         }
-        let mut rows: HashMap<String, Row> = HashMap::with_capacity(people.len());
-        for (i, p) in people.iter().enumerate() {
-            let kept = self.rows.get(&p.key).filter(|_| !is_dirty.contains(&i));
-            let row = Row {
-                fingerprint: prints.get(i).copied().unwrap_or(0),
-                best: kept.and_then(|r| r.best),
-                partner: kept.and_then(|r| r.partner.clone()),
-            };
-            rows.insert(p.key.clone(), row);
+        if self.bins.len() != BINS {
+            self.bins = vec![0; BINS];
         }
-        for (i, best, lifts) in parts.into_iter().flatten() {
-            if let (Some(p), Some((c, j))) = (people.get(i), best) {
-                let partner = people.get(j).map(|q| q.key.clone());
-                if let Some(row) = rows.get_mut(&p.key)
-                    && row.best.is_none_or(|b| c > b)
-                {
-                    (row.best, row.partner) = (Some(c), partner);
-                }
-            }
-            for (j, c) in lifts {
-                if let Some(q) = people.get(j)
-                    && let Some(row) = rows.get_mut(&q.key)
-                    && row.best.is_none_or(|b| c > b)
-                {
-                    (row.best, row.partner) = (Some(c), people.get(i).map(|p| p.key.clone()));
-                }
-            }
+        for ((bin, a), b) in self.bins.iter_mut().zip(gone).zip(new) {
+            *bin = bin.saturating_add_signed(a + b);
         }
-        self.rows = rows;
-        Some(bar_from(self.rows.values().filter_map(|r| r.best).fold(None, |m: Option<f32>, c| Some(m.map_or(c, |m| m.max(c))))))
+        self.people = people.iter().map(|p| (p.key.clone(), Counted { fingerprint: p.fingerprint(), faces: p.faces.clone() })).collect();
+        Some(bar_from(&self.bins))
+    }
+
+    /// The counts, for the tests: how many pairs of faces of different people are in each bin.
+    #[cfg(test)]
+    pub fn counts(&self) -> &[u64] {
+        &self.bins
     }
 }
 
-/// The bar a highest cross-person similarity gives.
-pub(crate) fn bar_from(highest: Option<f32>) -> f32 {
-    highest.filter(|h| h.is_finite()).map_or(MIN_BAR, |h| MIN_BAR.max(h + BAR_MARGIN))
+/// The bar the similarities of different people give (`bins`: how many pairs fall in each [`BINS`] bin): [`BAR_PERCENTILE`] of
+/// them (the top of the bin it falls in) plus [`BAR_MARGIN`], kept between [`MIN_BAR`] and [`MAX_BAR`]. With fewer than
+/// [`MIN_PAIRS`] pairs a percentile says nothing, so it is [`MIN_BAR`].
+pub(crate) fn bar_from(bins: &[u64]) -> f32 {
+    let pairs: u64 = bins.iter().sum();
+    if pairs < MIN_PAIRS {
+        return MIN_BAR;
+    }
+    let want = (pairs as f64 * BAR_PERCENTILE).ceil() as u64;
+    let mut seen = 0u64;
+    let at = bins.iter().position(|n| {
+        seen += n;
+        seen >= want
+    });
+    at.map_or(MIN_BAR, |i| (bin_top(i) + BAR_MARGIN).clamp(MIN_BAR, MAX_BAR))
 }
 
 /// What a run keeps of the stacks for the next one.

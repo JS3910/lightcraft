@@ -802,6 +802,7 @@ impl Jobs {
             suggested: slots.first().is_some_and(|s| s.group == Group::Suggested),
             look_alike: slots.iter().filter(|s| s.group == Group::LookAlike && s.chain != ALONE).count() >= 2,
             stacks: slots.iter().filter(|s| stacks.contains_key(&s.place)).count(),
+            bar: last.map(|_| self.bar),
             order: slots
                 .into_iter()
                 .map(|s| match stacks.remove(&s.place) {
@@ -895,6 +896,8 @@ pub(crate) struct Arrangement {
     pub look_alike: bool,
     /// How many stacks there are in `order`.
     pub stacks: usize,
+    /// The bar the stacks were made at, when a run has finished.
+    pub bar: Option<f32>,
     pub suggestions: HashMap<(u64, usize), (String, f32)>,
 }
 
