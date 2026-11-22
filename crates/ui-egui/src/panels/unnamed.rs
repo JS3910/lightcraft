@@ -22,6 +22,8 @@ pub struct StackFace {
     pub photo: u64,
     pub index: usize,
     pub rect: lightcraft_geom::Rect,
+    /// The box to show it by (as for a single face: the detector's, when the scan embedded the face).
+    pub view: lightcraft_geom::Rect,
 }
 
 /// One entry of the list, one tile: an unnamed face (which photo and region, the box to show it by, and a suggested name), or a
@@ -109,7 +111,13 @@ fn stack_of(v: &Value) -> Vec<StackFace> {
         .map(|a| {
             a.iter()
                 .filter_map(|f| {
-                    Some(StackFace { photo: f["photo"].as_u64()?, index: usize::try_from(f["index"].as_u64()?).ok()?, rect: rect_of(&f["rect"])? })
+                    let rect = rect_of(&f["rect"])?;
+                    Some(StackFace {
+                        photo: f["photo"].as_u64()?,
+                        index: usize::try_from(f["index"].as_u64()?).ok()?,
+                        rect,
+                        view: rect_of(&f["view"]).unwrap_or(rect),
+                    })
                 })
                 .collect()
         })
@@ -223,7 +231,7 @@ pub fn member_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, (entry, at): (usi
         positional: true,
         takes_out: true,
     });
-    let spec = FaceTile { key, view: m.rect, suggestion: None, named: false, prefix: "unnamed-member", hover, count: 0, open: false };
+    let spec = FaceTile { key, view: m.view, suggestion: None, named: false, prefix: "unnamed-member", hover, count: 0, open: false };
     // (a face of a stack is the stack for selecting: its tile is selected when the stack is, and a click selects or deselects all of it)
     let selected = list.faces.get(entry).is_some_and(|f| f.keys().into_iter().all(|k| face_tile::is_selected(app, &Gallery::Unnamed, k)));
     match face_tile::show(app, ui, r, &spec, selected, ppp) {
@@ -798,7 +806,7 @@ mod tests {
     /// A stack of the faces `(photo, 0)` for the photos given, shown by the first.
     fn stack(photos: &[u64]) -> UnnamedFace {
         let mut head = face(photos[0], 0, None);
-        head.stack = photos.iter().map(|p| StackFace { photo: *p, index: 0, rect: head.rect }).collect();
+        head.stack = photos.iter().map(|p| StackFace { photo: *p, index: 0, rect: head.rect, view: head.view }).collect();
         head
     }
 
@@ -819,6 +827,20 @@ mod tests {
         assert_eq!(entries_of(&l), [vec![1, 2, 3], vec![4], vec![5]]);
         assert_eq!((l.faces[0].count(), l.faces[1].count(), l.face_count(), l.faces[0].is_stack(), l.faces[1].is_stack()), (3, 1, 5, true, false));
         assert_eq!(l.all_keys().collect::<Vec<_>>(), [(1, 0), (2, 1), (3, 0), (4, 0), (5, 0)], "the faces in stacks are in the list too");
+    }
+
+    #[test]
+    fn a_face_of_a_stack_is_shown_by_the_box_the_engine_gives_it_as_a_single_face_is() {
+        let rect = json!({"x0": 0.1, "y0": 0.1, "x1": 0.3, "y1": 0.4});
+        let view = json!({"x0": 0.05, "y0": 0.05, "x1": 0.35, "y1": 0.45});
+        let v = json!({"total": 2, "ready": true, "faces": [
+            {"photo": 1, "index": 0, "rect": rect, "view": view, "stack": {"count": 2, "faces": [
+                {"photo": 1, "index": 0, "rect": rect, "view": view}, {"photo": 2, "index": 1, "rect": rect}]}},
+        ]});
+        let l = parse(&v);
+        let (a, b) = (&l.faces[0].stack[0], &l.faces[0].stack[1]);
+        assert_eq!((a.view.x0, a.rect.x0), (0.05, 0.1), "the view is not the raw box");
+        assert_eq!(b.view, b.rect, "an engine that says no view leaves the box");
     }
 
     #[test]

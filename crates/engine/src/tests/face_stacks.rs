@@ -457,6 +457,22 @@ fn naming_a_stack_with_a_suggestion_is_one_undo_step_and_rejecting_its_suggestio
 }
 
 #[test]
+fn every_face_of_a_stack_carries_the_box_to_show_it_by_as_a_single_face_does() {
+    let (mut s, d, [a, _, _]) = library("stacks-view");
+    // the scan embedded a's face at 0.5 by a bigger box than its own
+    let own = region(0.5, None).rect;
+    let view = lightcraft_geom::Rect { x0: own.x0 - 0.05, y0: own.y0 - 0.05, x1: own.x1 + 0.05, y1: own.y1 + 0.05 };
+    s.faces.index.insert_with_view(a.0, &own, unit64(&[(10, 1.0), (11, 0.15)]), &view);
+    let r = settle(&mut s);
+    let trio = r["faces"].as_array().unwrap().iter().find(|f| f["stack"]["count"] == 3).unwrap();
+    let faces = trio["stack"]["faces"].as_array().unwrap();
+    let one = faces.iter().find(|f| f["photo"] == json!(a.0) && f["index"] == json!(2)).expect("the face in the stack");
+    assert!(one["view"]["x0"].as_f64().unwrap() < one["rect"]["x0"].as_f64().unwrap(), "the view is the bigger box: {one}");
+    assert!(faces.iter().all(|f| f["view"]["x0"].is_number()), "every face has one: {faces:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn a_face_of_a_stack_with_a_suggestion_can_be_taken_out_and_the_help_says_so_and_that_the_web_build_has_no_stacks() {
     let same = |extra: f32| -> Vec<(usize, f32)> { vec![NEAR_ANN[0], NEAR_ANN[1], (20, extra)] };
     let (mut s, d, [_, b]) = suggested("stacks-sg-out", &[&same(0.02), &same(0.03)], &[]);

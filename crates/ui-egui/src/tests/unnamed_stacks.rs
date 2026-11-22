@@ -32,7 +32,7 @@ fn stack_up(h: &mut Headless, members: &[(PhotoId, usize)]) {
     let at = |p: PhotoId, i: usize| list.faces.iter().find(|f| f.photo == p.0 && f.index == i).cloned().expect("a face of the list");
     let first = at(members[0].0, members[0].1);
     let mut head = first.clone();
-    head.stack = members.iter().map(|(p, i)| StackFace { photo: p.0, index: *i, rect: at(*p, *i).rect }).collect();
+    head.stack = members.iter().map(|(p, i)| StackFace { photo: p.0, index: *i, rect: at(*p, *i).rect, view: at(*p, *i).view }).collect();
     let mut faces: Vec<_> = list.faces.iter().filter(|f| !members.iter().any(|(p, i)| p.0 == f.photo && *i == f.index)).cloned().collect();
     faces.insert(0, head);
     let list = Unnamed { faces, ..list };
