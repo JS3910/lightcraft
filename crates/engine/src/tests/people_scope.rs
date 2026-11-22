@@ -163,7 +163,7 @@ fn a_changed_set_of_named_faces_or_a_rejection_changes_the_suggestions_after_the
         // (a face with no suggestion may be in a stack of look-alikes: then what is listed for it has none)
         let holds = |f: &&Value| {
             (f["photo"] == photo.0 && f["index"] == index)
-                || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| super::face_stacks::face_at(x) == (photo.0, index as u64)))
+                || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| super::face_stacks::face_at(x) == (photo.0, index)))
         };
         r["faces"].as_array().unwrap().iter().find(holds).unwrap()["suggestion"]["name"].clone()
     };
@@ -204,7 +204,7 @@ fn a_rename_that_only_changes_the_capitalization_changes_the_name_suggested() {
         // (a face with no suggestion may be in a stack of look-alikes: then what is listed for it has none)
         let holds = |f: &&Value| {
             (f["photo"] == photo.0 && f["index"] == index)
-                || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| super::face_stacks::face_at(x) == (photo.0, index as u64)))
+                || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| super::face_stacks::face_at(x) == (photo.0, index)))
         };
         r["faces"].as_array().unwrap().iter().find(holds).unwrap()["suggestion"]["name"].clone()
     };
