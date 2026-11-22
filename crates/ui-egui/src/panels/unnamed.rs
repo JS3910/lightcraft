@@ -379,16 +379,16 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
         }
     } else if !list.faces.is_empty() {
         let r = Rect::from_min_size(pos2(right - 130.0, at.y + 12.0), vec2(130.0, 22.0));
-        // (the faces in stacks are not selected with it: selecting a stack is its own thing)
-        let singles = || list.faces.iter().filter(|f| !f.is_stack()).map(|f| (f.photo, f.index));
-        let all = singles().next().is_some() && face_tile::selection(app, &Gallery::Unnamed).len() == singles().count();
+        // (a stack is its faces: they are all selected with it)
+        let all_faces = || list.all_keys();
+        let all = all_faces().next().is_some() && face_tile::selection(app, &Gallery::Unnamed).len() == all_faces().count();
         let b = ui.put(r, egui::Button::new(crate::i18n::tr(if all { "Select none" } else { "Select all" })));
         register(ui, "unnamed:selectAll", b.rect);
         if b.clicked() {
             if all {
                 face_tile::clear_selection(app);
             } else {
-                face_tile::select_all(app, &Gallery::Unnamed, singles());
+                face_tile::select_all(app, &Gallery::Unnamed, all_faces());
             }
         }
     }
@@ -436,11 +436,18 @@ pub(crate) fn reject_selected(app: &mut LightcraftApp, ctx: &egui::Context) -> b
     true
 }
 
+/// How many faces the up arrow of tile `i` names: those with a suggestion shown, from the first tile through `i`, the faces of
+/// a stack counted one by one ("?" tiles and stacks are skipped).
+pub fn suggested_through(list: &Unnamed, i: usize, rejected: &super::person::Rejected) -> usize {
+    list.faces.iter().take(i + 1).filter(|c| shown(c, rejected).is_some()).map(UnnamedFace::count).sum()
+}
+
 /// One face tile, number `i` of `list`, in `r` (the picture and the name strip). Returns the face a Tab moved the name box
 /// to, so the view can scroll to it.
 pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize, r: Rect, f: &UnnamedFace, ppp: f32) -> Option<FaceKey> {
     let key = (f.photo, f.index);
-    let selected = face_tile::is_selected(app, &Gallery::Unnamed, key);
+    // (a stack is selected when all its faces are)
+    let selected = f.keys().into_iter().all(|k| face_tile::is_selected(app, &Gallery::Unnamed, k));
     let suggestion = shown(f, &app.ui.rejected_unnamed);
     // a face with a suggestion can be confirmed; reject is on every tile (and removes the box when there is nothing to reject)
     let stack = f.is_stack();
@@ -452,7 +459,7 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
         removes: suggestion.is_none(),
         person: suggestion.unwrap_or_default(),
         score: 0.0,
-        above_count: list.faces.iter().take(i + 1).filter(|c| shown(c, &app.ui.rejected_unnamed).is_some()).map(UnnamedFace::count).sum(),
+        above_count: suggested_through(list, i, &app.ui.rejected_unnamed),
         positional: true,
     });
     let spec = FaceTile { key, view: f.view, suggestion, named: false, prefix: "unnamed", hover, count: if stack { f.count() } else { 0 } };
@@ -462,8 +469,6 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
             ui.ctx(),
             &Entry { key, suggestion: suggestion.map(str::to_string), members: f.keys().into_iter().filter(|_| stack).collect() },
         ),
-        // (selecting a stack is not done yet: a click on one selects nothing)
-        TileEvent::Click { .. } if stack => {}
         TileEvent::Click { shift } => face_tile::click(app, &Gallery::Unnamed, &entries(list, &app.ui.rejected_unnamed), i, shift),
         // a double click opens the photo, as in the grid; its second click must not undo the first one's selection
         TileEvent::Open => {

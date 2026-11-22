@@ -232,3 +232,100 @@ fn the_arrow_on_a_tile_after_a_stack_names_every_face_of_the_stack_too() {
     assert_eq!(names(&h, p0), [some("Ann Lee"), some("Cy Dee")]);
     assert_eq!(h.app.session.undo.len(), undo + 1, "one step");
 }
+
+fn selected(h: &Headless) -> Vec<(u64, usize)> {
+    let mut s: Vec<_> = h.app.ui.unnamed_selected.iter().copied().collect();
+    s.sort_unstable();
+    s
+}
+
+#[test]
+fn clicking_a_stack_selects_all_its_faces_and_clicking_it_again_deselects_them() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    ok(&mut h, "ui.clickWidget", json!({"id": picture(p1, 0)}));
+    assert_eq!(selected(&h), [(p1.0, 0), (p1.0, 1), (p2.0, 0)]);
+    // (another tile in between: two clicks in a row on one tile are a double click, which opens the photo)
+    ok(&mut h, "ui.clickWidget", json!({"id": picture(p0, 1)}));
+    ok(&mut h, "ui.clickWidget", json!({"id": picture(p1, 0)}));
+    assert_eq!(selected(&h), [(p0.0, 1)], "the stack was deselected as a whole");
+}
+
+#[test]
+fn shift_clicking_selects_the_faces_of_every_stack_in_the_range() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    // the list is the stack, then (p0, 1): a click on the last tile, then a shift-click on the stack
+    ok(&mut h, "ui.clickWidget", json!({"id": picture(p0, 1)}));
+    let list = crate::panels::unnamed::faces(&mut h.app, 0.0);
+    let order = crate::panels::unnamed::entries(&list, &h.app.ui.rejected_unnamed);
+    crate::panels::face_tile::click(&mut h.app, &crate::panels::face_tile::Gallery::Unnamed, &order, 0, true);
+    assert_eq!(selected(&h), [(p0.0, 1), (p1.0, 0), (p1.0, 1), (p2.0, 0)]);
+}
+
+#[test]
+fn select_all_includes_the_stacks_and_select_none_clears_them() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    ok(&mut h, "ui.clickWidget", json!({"id": "unnamed:selectAll"}));
+    assert_eq!(selected(&h), [(p0.0, 1), (p1.0, 0), (p1.0, 1), (p2.0, 0)]);
+    ok(&mut h, "ui.clickWidget", json!({"id": "unnamed:selectAll"}));
+    assert!(selected(&h).is_empty(), "the button said Select none");
+}
+
+#[test]
+fn a_name_typed_on_a_face_selected_with_a_stack_names_the_stack_too_in_one_step() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    ok(&mut h, "ui.clickWidget", json!({"id": "unnamed:selectAll"}));
+    let undo = h.app.session.undo.len();
+    ok(&mut h, "ui.clickWidget", json!({"id": strip(p0, 1)}));
+    ok(&mut h, "ui.text", json!({"text": "Everyone"}));
+    ok(&mut h, "ui.key", json!({"key": "enter"}));
+    let some = |s: &str| Some(s.to_string());
+    assert_eq!((names(&h, p1), names(&h, p2)), (vec![some("Everyone"), some("Everyone")], vec![some("Everyone")]));
+    assert_eq!(names(&h, p0), [some("Ann Lee"), some("Everyone")]);
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one step");
+}
+
+#[test]
+fn the_delete_key_on_a_selection_with_a_stack_without_a_suggestion_removes_only_the_single_faces() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    ok(&mut h, "ui.clickWidget", json!({"id": "unnamed:selectAll"}));
+    ok(&mut h, "ui.key", json!({"key": "delete"}));
+    assert_eq!(h.app.session.catalog.photo(p0).unwrap().meta.regions.len(), 1, "the single face's box is gone");
+    assert_eq!((h.app.session.catalog.photo(p1).unwrap().meta.regions.len(), h.app.session.catalog.photo(p2).unwrap().meta.regions.len()), (2, 1));
+}
+
+#[test]
+fn the_arrow_skips_a_stack_with_no_suggestion_and_the_faces_it_names_are_counted_not_the_tiles() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    let mut list = (*crate::panels::unnamed::faces(&mut h.app, 0.0)).clone();
+    for f in list.faces.iter_mut().filter(|f| !f.is_stack()) {
+        f.suggestion = Some("Cy Dee".into());
+    }
+    assert_eq!(crate::panels::unnamed::suggested_through(&list, 1, &h.app.ui.rejected_unnamed), 1, "the stack is a '?': skipped");
+    let (rev, indexed) = (h.app.session.catalog.revision, h.app.caches.faces_indexed);
+    h.app.caches.unnamed = Some((rev, indexed, f64::MAX, Arc::new(list)));
+    h.step();
+    h.step();
+    ok(&mut h, "ui.clickWidget", json!({"id": format!("unnamed-face-above:{}:1", p0.0)}));
+    assert_eq!((names(&h, p1), names(&h, p2)), (vec![None, None], vec![None]));
+    assert_eq!(names(&h, p0)[1], Some("Cy Dee".to_string()));
+}
+
+#[test]
+fn the_arrows_count_is_faces_not_tiles() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Bob Ray");
+    let mut list = (*crate::panels::unnamed::faces(&mut h.app, 0.0)).clone();
+    for f in list.faces.iter_mut().filter(|f| !f.is_stack()) {
+        f.suggestion = Some("Cy Dee".into());
+    }
+    let rejected = &h.app.ui.rejected_unnamed;
+    assert_eq!(crate::panels::unnamed::suggested_through(&list, 0, rejected), 3, "the stack alone is three faces");
+    assert_eq!(crate::panels::unnamed::suggested_through(&list, 1, rejected), 4);
+    let _ = p0;
+}

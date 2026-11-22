@@ -113,18 +113,26 @@ pub struct Entry {
     pub members: Vec<FaceKey>,
 }
 
+impl Entry {
+    /// Every face the entry holds: those of the stack, or its own.
+    pub fn keys(&self) -> Vec<FaceKey> {
+        if self.members.is_empty() { vec![self.key] } else { self.members.clone() }
+    }
+}
+
 /// The faces an action on `face` applies to: all selected faces (in list order) when `face` is selected, else `face` alone.
 ///
-/// A stack is its faces: an action on a stack applies to every face in it.
+/// A stack is its faces: selecting one selects every face in it, and an action on a stack, selected or not, applies to every
+/// face in it.
 pub fn apply_to(selected: &HashSet<FaceKey>, order: &[Entry], face: FaceKey) -> Vec<FaceKey> {
-    if let Some(e) = order.iter().find(|e| e.key == face && !e.members.is_empty()) {
-        return e.members.clone();
-    }
     if selected.contains(&face) {
-        let list: Vec<FaceKey> = order.iter().map(|e| e.key).filter(|k| selected.contains(k)).collect();
+        let list: Vec<FaceKey> = order.iter().flat_map(Entry::keys).filter(|k| selected.contains(k)).collect();
         if !list.is_empty() {
             return list;
         }
+    }
+    if let Some(e) = order.iter().find(|e| e.key == face && !e.members.is_empty()) {
+        return e.members.clone();
     }
     vec![face]
 }
@@ -206,12 +214,18 @@ pub fn click(app: &mut LightcraftApp, gallery: &Gallery, order: &[Entry], i: usi
     match app.ui.unnamed_anchor.filter(|_| shift) {
         Some(a) => {
             for e in order.get(a.min(i)..=a.max(i)).unwrap_or_default() {
-                app.ui.unnamed_selected.insert(e.key);
+                app.ui.unnamed_selected.extend(e.keys());
             }
         }
         None => {
-            if !app.ui.unnamed_selected.remove(&f.key) {
-                app.ui.unnamed_selected.insert(f.key);
+            // (a stack is its faces: it is selected when all of them are, and a click toggles them together)
+            let keys = f.keys();
+            if keys.iter().all(|k| app.ui.unnamed_selected.contains(k)) {
+                for k in &keys {
+                    app.ui.unnamed_selected.remove(k);
+                }
+            } else {
+                app.ui.unnamed_selected.extend(keys);
             }
             app.ui.unnamed_anchor = Some(i);
         }
@@ -280,11 +294,17 @@ pub enum Rejection {
 pub fn reject(app: &mut LightcraftApp, ctx: &egui::Context, gallery: &Gallery, order: &[Entry], face: FaceKey) -> Rejection {
     // a stack with no suggestion has no cross: removing the boxes of many faces nobody looked at must never be one click (or a
     // key). With a suggestion it rejects the name for every face in it.
-    if order.iter().any(|e| e.key == face && !e.members.is_empty() && e.suggestion.is_none()) {
+    // (a selection that holds such a stack leaves its faces out of what is removed)
+    let held: HashSet<FaceKey> = order.iter().filter(|e| !e.members.is_empty() && e.suggestion.is_none()).flat_map(Entry::keys).collect();
+    let targets = apply_to(&selection(app, gallery), order, face);
+    let plan = match plan(&targets, order) {
+        Plan::Remove(keys) => Plan::Remove(keys.into_iter().filter(|k| !held.contains(k)).collect()),
+        reject => reject,
+    };
+    if plan == Plan::Remove(Vec::new()) {
         return Rejection::Nothing;
     }
-    let targets = apply_to(&selection(app, gallery), order, face);
-    match plan(&targets, order) {
+    match plan {
         Plan::Reject(names) => {
             let faces: Vec<Value> = names.iter().map(|((photo, index), n)| json!({"photo": photo, "index": index, "name": n})).collect();
             // a confirmed face also loses the name it was rejected as
@@ -697,6 +717,16 @@ mod tests {
         let selected: HashSet<FaceKey> = [(1, 0)].into_iter().collect();
         assert_eq!(apply_to(&selected, &o, (1, 1)), vec![(1, 1), (7, 0), (8, 2)]);
         assert_eq!(apply_to(&selected, &o, (1, 0)), vec![(1, 0)], "a face is not affected");
+    }
+
+    #[test]
+    fn a_selection_that_holds_a_stack_acts_on_all_the_faces_of_the_stack() {
+        let mut o = order(3);
+        o[1].members = vec![(1, 1), (7, 0), (8, 2)];
+        let selected: HashSet<FaceKey> = [(1, 0), (1, 1), (7, 0), (8, 2)].into_iter().collect();
+        let all = vec![(1, 0), (1, 1), (7, 0), (8, 2)];
+        assert_eq!(apply_to(&selected, &o, (1, 0)), all, "from a single face");
+        assert_eq!(apply_to(&selected, &o, (1, 1)), all, "from the stack");
     }
 
     #[test]
