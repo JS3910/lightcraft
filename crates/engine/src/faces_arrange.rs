@@ -489,6 +489,20 @@ struct Last {
     chain: HashMap<Key, usize>,
     /// For each stacked face (at the stamp it was stacked at): which stack it is in, and its place in it (the most typical first).
     stack_of: HashMap<Key, (usize, u64, usize)>,
+    /// The faces of each stack, the most typical first: what `stack_of` points into.
+    stacks: Vec<Vec<Key>>,
+}
+
+impl Last {
+    /// What a finished run worked out: its suggestions, its look-alike order and its stacks (each as the faces in it with the stamp
+    /// they were stacked at, the most typical first).
+    fn new(sig: u64, suggestions: HashMap<Key, (u64, String, f32)>, chain: &[Key], stacks: &[Vec<(Key, u64)>]) -> Last {
+        let chain = chain.iter().enumerate().map(|(i, k)| (*k, i)).collect();
+        let stack_of =
+            stacks.iter().enumerate().flat_map(|(s, m)| m.iter().enumerate().map(move |(pos, (k, stamp))| (*k, (s, *stamp, pos)))).collect();
+        let stacks = stacks.iter().map(|m| m.iter().map(|(k, _)| *k).collect()).collect();
+        Last { sig, suggestions, chain, stack_of, stacks }
+    }
 }
 
 /// A run on its thread: what it is for, how to stop it, and where its result comes.
@@ -603,16 +617,9 @@ impl Jobs {
             Ok(Done { state, output: Some(output) }) => {
                 self.state = Some(state);
                 self.stopped = None;
-                let chain = output.chain.iter().enumerate().map(|(i, k)| (*k, i)).collect();
                 (self.last_scored, self.chain_reused) = (output.scored, output.chain_reused);
                 (self.stack_new, self.stack_compared, self.bar) = (output.stack_new, output.stack_compared, output.bar);
-                let stack_of = output
-                    .stacks
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(s, m)| m.iter().enumerate().map(move |(pos, (k, stamp))| (*k, (s, *stamp, pos))))
-                    .collect();
-                self.last = Some(Last { sig, suggestions: output.suggestions, chain, stack_of });
+                self.last = Some(Last::new(sig, output.suggestions, &output.chain, &output.stacks));
             }
             Ok(Done { state, output: None }) => {
                 self.state = Some(state);
@@ -631,9 +638,7 @@ impl Jobs {
     pub fn stack_members(&self, key: &Key) -> Option<Vec<Key>> {
         let last = self.last.as_ref()?;
         let (stack, _, _) = last.stack_of.get(key)?;
-        let mut members: Vec<(usize, Key)> = last.stack_of.iter().filter(|(_, (s, _, _))| s == stack).map(|(k, (_, _, pos))| (*pos, *k)).collect();
-        members.sort_unstable();
-        Some(members.into_iter().map(|(_, k)| k).collect())
+        last.stacks.get(*stack).cloned()
     }
 
     /// Start a run on a thread of its own, with a row in the activity stack for as long as it runs. `all_threads`: use
@@ -1178,6 +1183,24 @@ mod tests {
 
     fn same_as(got: &[Option<(String, f32)>], w: &World) {
         same(got, &w.reference(settings()), 3, 0);
+    }
+
+    /// What a take-out of 5,000 faces asks of the dispatch thread: the stack of each, looked up among 100,000 stacked faces.
+    #[test]
+    fn the_members_of_a_stack_are_looked_up_not_searched_for_among_every_stacked_face() {
+        let key = |n: usize| -> Key { (n as u64, [n as u64; 4], 0) };
+        let stacks: Vec<Vec<(Key, u64)>> = (0..20_000).map(|s| (0..5).map(|m| (key(s * 5 + m), 1)).collect()).collect();
+        let jobs = Jobs { last: Some(Last::new(1, HashMap::new(), &[], &stacks)), ..Default::default() };
+        let started = std::time::Instant::now();
+        for n in 0..5000 {
+            let members = jobs.stack_members(&key(n * 8)).expect("in a stack");
+            assert_eq!(members.len(), 5);
+            // (the most typical first, as the run listed them)
+            assert_eq!(members[0], key(n * 8 / 5 * 5));
+        }
+        assert!(jobs.stack_members(&key(1_000_000)).is_none(), "a face in no stack");
+        let took = started.elapsed();
+        assert!(took < std::time::Duration::from_millis(250), "5,000 faces took {took:?}");
     }
 
     #[test]
