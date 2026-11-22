@@ -224,7 +224,10 @@ pub fn member_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, (entry, at): (usi
         takes_out: true,
     });
     let spec = FaceTile { key, view: m.rect, suggestion: None, named: false, prefix: "unnamed-member", hover, count: 0, open: false };
-    match face_tile::show(app, ui, r, &spec, false, ppp) {
+    // (a face of a stack is the stack for selecting: its tile is selected when the stack is, and a click selects or deselects all of it)
+    let selected = list.faces.get(entry).is_some_and(|f| f.keys().into_iter().all(|k| face_tile::is_selected(app, &Gallery::Unnamed, k)));
+    match face_tile::show(app, ui, r, &spec, selected, ppp) {
+        TileEvent::Click { shift } => face_tile::click(app, &Gallery::Unnamed, &entries(list, &app.ui.rejected_unnamed), entry, shift),
         TileEvent::Hide => {
             let _ = app.run("faces.takeOut", json!({"faces": [{"photo": m.photo, "index": m.index}]}));
         }

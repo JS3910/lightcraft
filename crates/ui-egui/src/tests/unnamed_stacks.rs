@@ -327,8 +327,7 @@ fn the_cross_on_a_stack_rejects_the_suggestion_for_every_face_in_one_step_and_th
 fn the_delete_key_on_a_stack_with_a_suggestion_does_what_its_cross_does() {
     let (mut h, [_, p1, p2]) = people();
     stack_up_suggested(&mut h, &[(p1, 0), (p1, 1), (p2, 0)], "Ann Lee");
-    h.app.ui.face_gallery = Some(crate::panels::face_tile::Gallery::Unnamed);
-    h.app.ui.unnamed_selected = [(p1.0, 0)].into_iter().collect();
+    ok(&mut h, "ui.clickWidget", json!({"id": picture(p1, 0)}));
     let undo = h.app.session.undo.len();
     ok(&mut h, "ui.key", json!({"key": "delete"}));
     let ann = vec!["Ann Lee".to_string()];
@@ -453,4 +452,17 @@ fn the_arrows_count_is_faces_not_tiles() {
     assert_eq!(crate::panels::unnamed::suggested_through(&list, 0, rejected), 3, "the stack alone is three faces");
     assert_eq!(crate::panels::unnamed::suggested_through(&list, 1, rejected), 4);
     let _ = p0;
+}
+
+#[test]
+fn clicking_a_face_of_an_open_stack_selects_the_whole_stack_as_clicking_the_stack_does() {
+    let (mut h, [p0, p1, p2]) = people();
+    stack_up(&mut h, &[(p1, 0), (p1, 1), (p2, 0)]);
+    ok(&mut h, "ui.clickWidget", json!({"id": count_id(p1, 0)}));
+    ok(&mut h, "ui.clickWidget", json!({"id": member(p1, 1)}));
+    assert_eq!(selected(&h), [(p1.0, 0), (p1.0, 1), (p2.0, 0)], "one face of the stack is all of it");
+    // (another tile in between: two clicks in a row on one tile are a double click, which opens the photo)
+    ok(&mut h, "ui.clickWidget", json!({"id": picture(p0, 1)}));
+    ok(&mut h, "ui.clickWidget", json!({"id": member(p2, 0)}));
+    assert_eq!(selected(&h), [(p0.0, 1)], "and clicking it again deselects all of it");
 }
