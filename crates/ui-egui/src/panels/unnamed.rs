@@ -1001,6 +1001,30 @@ mod tests {
     }
 
     #[test]
+    fn each_face_of_an_open_stack_carries_the_stacks_suggestion_unless_it_was_rejected_for_that_face_in_this_visit() {
+        let mut head = stack(&[3, 4, 5]);
+        head.suggestion = Some("Jane".into());
+        let l = Unnamed { faces: vec![face(1, 0, None), head], total: 4, ..list(&[]) };
+        let open: std::collections::HashSet<FaceKey> = [(3, 0), (4, 0), (5, 0)].into_iter().collect();
+        let mut rejected = super::super::person::Rejected::default();
+        let named = |o: &Vec<Entry>| o.iter().map(|e| (e.key.0, e.suggestion.clone())).collect::<Vec<_>>();
+        let jane = |s: &str| Some(s.to_string());
+        // closed: one entry for the stack, holding its faces
+        let closed = entries(&l, &rejected);
+        assert_eq!((closed.len(), closed[1].members.len()), (2, 3));
+        // open: an entry for each face, each with the suggestion, and the stack's own tile is the first of them
+        let o = entries_open(&l, &rejected, &open);
+        assert_eq!(named(&o), [(1, None), (3, jane("Jane")), (4, jane("Jane")), (5, jane("Jane"))]);
+        assert!(o.iter().all(|e| e.members.is_empty()), "each is a single face");
+        // the suggestion rejected for one face: that face says "?", the others still say it
+        rejected.remember(&super::super::person::Face { photo: 4, index: 0, rect: l.faces[1].view, score: 0.0 }, 1);
+        let o = entries_open(&l, &rejected, &open);
+        assert_eq!(named(&o), [(1, None), (3, jane("Jane")), (4, None), (5, jane("Jane"))]);
+        // and the arrow through the last face counts the faces that still say it
+        assert_eq!(suggested_in(&o, 3), 2);
+    }
+
+    #[test]
     fn a_stack_that_was_named_closes_its_gap() {
         let old = Unnamed { faces: vec![face(1, 0, None), stack(&[3, 4]), face(2, 0, None)], total: 4, ..list(&[]) };
         let new = Unnamed { faces: vec![face(1, 0, None), face(2, 0, None)], total: 2, ..list(&[]) };
