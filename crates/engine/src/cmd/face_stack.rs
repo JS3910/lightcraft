@@ -104,7 +104,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Take Faces Out of Their Stacks",
         [],
         None,
-        "{faces: [{photo, index}]} → {taken, photos} — take up to 5000 faces out of the stacks of the Unnamed faces they are in (as the last run that put the faces in order found them; `faces.unnamed` lists a stack's faces), as one undoable step. Each face becomes a tile of its own and never stacks again with the faces it was stacked with, also after a restart: this is kept on the face's box in the catalogue only (never in a sidecar or a file), carried over a metadata re-read like rejected names, and is nothing in a catalogue written before. A stack left with one face is no stack. Faces that are in no stack (a single face, a face with a suggestion, one that does not exist) are skipped and the call is refused when none is in a stack",
+        "{faces: [{photo, index}]} → {taken, photos} — take up to 5000 faces out of the stacks of the Unnamed faces they are in (as the last run that put the faces in order found them; `faces.unnamed` lists a stack's faces), as one undoable step (stacks with a suggested name too). Each face becomes a tile of its own and never stacks again with the faces it was stacked with, also after a restart: this is kept on the face's box in the catalogue only (never in a sidecar or a file), carried over a metadata re-read like rejected names, and is nothing in a catalogue written before. Native builds only: the web build has no recognition and so no stacks. A stack left with one face is no stack. Faces that are in no stack (a single face, one the last run did not stack, one that does not exist) are skipped and the call is refused when none is in a stack",
         super::always,
         take_out
     )]
