@@ -557,7 +557,11 @@ fn the_tiles_on_screen_keep_their_places_when_a_stack_forms_grows_and_is_named()
     let head = widgets(&mut h, "unnamed-stack-count:").pop().expect("a count badge").replace("unnamed-stack-count:", "unnamed-face:");
     assert_eq!(
         grown.iter().map(|(i, _)| if *i == head { "STACK".to_string() } else { i.clone() }).collect::<Vec<_>>(),
-        without(&ids(&formed).iter().map(|i| if *i == head { "STACK".into() } else { i.clone() }).collect::<Vec<_>>(), &[last.clone()], "STACK"),
+        without(
+            &ids(&formed).iter().map(|i| if *i == head { "STACK".into() } else { i.clone() }).collect::<Vec<_>>(),
+            std::slice::from_ref(&last),
+            "STACK"
+        ),
         "the stack kept its place and the tile of the face that joined it is gone"
     );
     assert_eq!(grown[..at], formed[..at], "the tiles before it did not move");
