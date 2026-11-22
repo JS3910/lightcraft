@@ -18,6 +18,7 @@
 - Click the count on a stack to open it in place: its faces follow it on a tinted background (click again to close it). Each face has
   a cross that takes it out of the stack; it becomes a tile of its own and never stacks with those faces again, also after a restart.
   This is kept in the catalogue only, never in a sidecar or a file.
+- A stack is the faces it holds when you select. Clicking it (or a face of it, when it is open) selects all its faces, Shift-click takes in the stacks in the range, and **Select all** includes them; typing a name, the tick and the cross on a selection that holds a stack act on all its faces in one undo step. The up arrow names every face of the suggested stacks before it and its tooltip counts faces, not tiles.
 - Stacks follow the People view's source and filters, are worked out in the background with the existing **Putting unnamed faces
   in order** row, and `faces.unnamed` reports each as one entry with its faces, count and representative face.
 
