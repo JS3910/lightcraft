@@ -460,7 +460,7 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
     // what the bar for stacking is now, so that it can be reported and the constants tuned
     if let Some(bar) = list.stack_bar {
         register(ui, "unnamed:subtitle", sub_at);
-        let tip = ui.interact(sub_at, egui::Id::new("unnamed:subtitle"), egui::Sense::hover());
+        let tip = ui.interact(sub_at, egui::Id::unique("unnamed:subtitle"), egui::Sense::hover());
         tip.on_hover_text(bar_tip(bar));
     }
     if list.stopped && list.ready {

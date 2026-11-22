@@ -778,7 +778,6 @@ fn synchronizing_keeps_the_names_a_face_rejected() {
         name: None,
         description: None,
         rejected: vec!["Ann".to_string()],
-        ..Default::default()
     });
     s.catalog.apply(lightcraft_catalog::Op::SetMeta { id: a, meta: Box::new(meta) }).unwrap();
     // another app saves the photo's sidecar with the face named, drawn on the same box
