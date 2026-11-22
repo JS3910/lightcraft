@@ -555,7 +555,7 @@ fn unnamed_faces_come_with_look_alikes_together_and_the_name_the_named_ones_sugg
     let r = s.execute("faces.unnamed", &json!({})).unwrap();
     assert_eq!((r["total"].clone(), r["ordered"].clone(), r["ready"].clone()), (json!(5), json!(true), json!(true)), "{r}");
     let faces = r["faces"].as_array().unwrap();
-    let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
+    let at = super::face_stacks::face_at;
     let order: Vec<(u64, u64)> = faces.iter().map(at).collect();
     // look-alikes are neighbours: the two like Bob are adjacent, and the three like Ann are adjacent; the unembedded one is last
     let pos = |x: (u64, u64)| order.iter().position(|o| *o == x).unwrap();
@@ -613,7 +613,7 @@ fn unnamed_faces_put_the_suggested_ones_first_by_score_then_look_alikes_then_the
     put(&mut s, c, 0.2, unit64(&[(1, 0.97), (3, 0.2)])); // like Bob, as much as a's: the two are one stack, shown by the earlier photo's
     let r = s.execute("faces.unnamed", &json!({})).unwrap();
     let faces = r["faces"].as_array().unwrap();
-    let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
+    let at = super::face_stacks::face_at;
     let order: Vec<(u64, u64)> = faces.iter().map(at).collect();
     // suggested faces first, the most confident first, with Ann's and Bob's mixed; the two faces like Bob, as much as each other
     // and alike, are one stack, shown by the earlier photo's (the tie)
@@ -949,6 +949,6 @@ fn evaluating_the_visible_photos_covers_the_hidden_photos_of_a_collapsed_stack()
 pub(crate) fn entry_listing(r: &Value, photo: u64, index: u64) -> Option<&Value> {
     r["faces"].as_array()?.iter().find(|f| {
         (f["photo"] == photo && f["index"] == index)
-            || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| x["photo"] == photo && x["index"] == index))
+            || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| super::face_stacks::face_at(x) == (photo, index)))
     })
 }

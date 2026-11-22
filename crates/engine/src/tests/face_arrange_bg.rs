@@ -540,7 +540,8 @@ fn after_every_random_change_the_order_is_what_scoring_everyone_again_gives() {
                         Some(m) => m
                             .iter()
                             .map(|x| {
-                                ((x["photo"].as_u64().unwrap(), x["index"].as_u64().unwrap() as usize), own.1.clone().map(|(n, _)| (n, f32::NAN)))
+                                let (p, i) = super::face_stacks::face_at(x);
+                                ((p, i as usize), own.1.clone().map(|(n, _)| (n, f32::NAN)))
                             })
                             .collect(),
                         None => vec![own],

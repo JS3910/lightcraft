@@ -116,13 +116,15 @@ fn stack_of(v: &Value) -> Vec<StackFace> {
         .map(|a| {
             a.iter()
                 .filter_map(|f| {
-                    let rect = rect_of(&f["rect"])?;
-                    Some(StackFace {
-                        photo: f["photo"].as_u64()?,
-                        index: usize::try_from(f["index"].as_u64()?).ok()?,
-                        rect,
-                        view: rect_of(&f["view"]).unwrap_or(rect),
-                    })
+                    // `[photo, index, x0, y0, x1, y1, view x0, y0, x1, y1]` (the view box is the box when the engine says none)
+                    let n = f.as_array()?;
+                    let num = |i: usize| n.get(i).and_then(Value::as_f64);
+                    let rect = lightcraft_geom::Rect { x0: num(2)?, y0: num(3)?, x1: num(4)?, y1: num(5)? };
+                    let view = match (num(6), num(7), num(8), num(9)) {
+                        (Some(x0), Some(y0), Some(x1), Some(y1)) => lightcraft_geom::Rect { x0, y0, x1, y1 },
+                        _ => rect,
+                    };
+                    Some(StackFace { photo: n.first()?.as_u64()?, index: usize::try_from(n.get(1)?.as_u64()?).ok()?, rect, view })
                 })
                 .collect()
         })
@@ -821,8 +823,8 @@ mod tests {
         let rect = json!({"x0": 0.1, "y0": 0.1, "x1": 0.3, "y1": 0.4});
         let v = json!({"total": 5, "ready": true, "faces": [
             {"photo": 1, "index": 0, "rect": rect, "stack": {"count": 3, "faces": [
-                {"photo": 1, "index": 0, "rect": rect}, {"photo": 2, "index": 1, "rect": rect}, {"photo": 3, "index": 0, "rect": rect}]}},
-            {"photo": 4, "index": 0, "rect": rect, "stack": {"count": 1, "faces": [{"photo": 4, "index": 0, "rect": rect}]}},
+                [1, 0, 0.1, 0.1, 0.3, 0.4], [2, 1, 0.1, 0.1, 0.3, 0.4], [3, 0, 0.1, 0.1, 0.3, 0.4]]}},
+            {"photo": 4, "index": 0, "rect": rect, "stack": {"count": 1, "faces": [[4, 0, 0.1, 0.1, 0.3, 0.4]]}},
             {"photo": 5, "index": 0, "rect": rect},
         ]});
         let l = parse(&v);
@@ -834,15 +836,18 @@ mod tests {
     #[test]
     fn a_face_of_a_stack_is_shown_by_the_box_the_engine_gives_it_as_a_single_face_is() {
         let rect = json!({"x0": 0.1, "y0": 0.1, "x1": 0.3, "y1": 0.4});
-        let view = json!({"x0": 0.05, "y0": 0.05, "x1": 0.35, "y1": 0.45});
-        let v = json!({"total": 2, "ready": true, "faces": [
-            {"photo": 1, "index": 0, "rect": rect, "view": view, "stack": {"count": 2, "faces": [
-                {"photo": 1, "index": 0, "rect": rect, "view": view}, {"photo": 2, "index": 1, "rect": rect}]}},
+        // (`[photo, index, box, view box]`; the view box is left out of the last, which then shows by its box)
+        let v = json!({"total": 3, "ready": true, "faces": [
+            {"photo": 1, "index": 0, "rect": rect, "stack": {"count": 3, "faces": [
+                [1, 0, 0.1, 0.1, 0.3, 0.4, 0.05, 0.05, 0.35, 0.45], [2, 1, 0.2, 0.2, 0.4, 0.5, 0.15, 0.15, 0.45, 0.55],
+                [3, 0, 0.1, 0.1, 0.3, 0.4], [3, "x"], {"photo": 9, "index": 0, "rect": rect}]}},
         ]});
         let l = parse(&v);
-        let (a, b) = (&l.faces[0].stack[0], &l.faces[0].stack[1]);
-        assert_eq!((a.view.x0, a.rect.x0), (0.05, 0.1), "the view is not the raw box");
-        assert_eq!(b.view, b.rect, "an engine that says no view leaves the box");
+        assert_eq!(entries_of(&l), [vec![1, 2, 3]], "a face that cannot be read is left out");
+        let s = &l.faces[0].stack;
+        assert_eq!((s[0].view.x0, s[0].rect.x0), (0.05, 0.1), "the view is not the raw box");
+        assert_eq!((s[1].view.x0, s[1].rect.x0), (0.15, 0.2));
+        assert_eq!(s[2].view, s[2].rect, "an engine that says no view leaves the box");
     }
 
     #[test]

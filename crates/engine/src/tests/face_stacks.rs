@@ -57,9 +57,18 @@ pub(super) fn ask(s: &mut Session) -> Value {
 
 pub(super) type Key = (u64, u64);
 
+/// The photo and region of a face of a `faces.unnamed` answer: an entry (or a face of an open stack) with `photo` and `index`, or a face
+/// of a closed stack, `[photo, index, x0, y0, x1, y1]`.
+pub(crate) fn face_at(f: &Value) -> Key {
+    match f.as_array() {
+        Some(a) => (a[0].as_u64().unwrap(), a[1].as_u64().unwrap()),
+        None => (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap()),
+    }
+}
+
 /// The entries of the list: each as the faces it holds (the face alone, or the stack's faces, the most typical first).
 pub(super) fn entries(r: &Value) -> Vec<Vec<Key>> {
-    let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
+    let at = face_at;
     r["faces"]
         .as_array()
         .unwrap()
@@ -344,7 +353,7 @@ fn suggested(name: &str, faces: &[&[(usize, f32)]], reject_ann: &[usize]) -> (Se
 
 /// The entry of the list that holds `key`, with the suggestion it carries.
 fn entry_of(r: &Value, key: Key) -> (Vec<Key>, Option<String>) {
-    let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
+    let at = face_at;
     let f = r["faces"]
         .as_array()
         .unwrap()
@@ -456,19 +465,31 @@ fn naming_a_stack_with_a_suggestion_is_one_undo_step_and_rejecting_its_suggestio
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// A stack lists its faces as `[photo, index, x0, y0, x1, y1, view x0, y0, x1, y1]`, not as objects with two boxes each: with 30,000
+/// faces in the stacks listed, the objects were most of what the window's thread waited for. And every face carries the box to show
+/// it by, as a single face does, so that it looks the same in a stack and out of it.
 #[test]
-fn every_face_of_a_stack_carries_the_box_to_show_it_by_as_a_single_face_does() {
+fn a_stack_lists_its_faces_compactly_each_with_the_box_to_show_it_by_as_a_single_face_has() {
     let (mut s, d, [a, _, _]) = library("stacks-view");
     // the scan embedded a's face at 0.5 by a bigger box than its own
     let own = region(0.5, None).rect;
     let view = lightcraft_geom::Rect { x0: own.x0 - 0.05, y0: own.y0 - 0.05, x1: own.x1 + 0.05, y1: own.y1 + 0.05 };
     s.faces.index.insert_with_view(a.0, &own, unit64(&[(10, 1.0), (11, 0.15)]), &view);
     let r = settle(&mut s);
-    let trio = r["faces"].as_array().unwrap().iter().find(|f| f["stack"]["count"] == 3).unwrap();
-    let faces = trio["stack"]["faces"].as_array().unwrap();
-    let one = faces.iter().find(|f| f["photo"] == json!(a.0) && f["index"] == json!(2)).expect("the face in the stack");
-    assert!(one["view"]["x0"].as_f64().unwrap() < one["rect"]["x0"].as_f64().unwrap(), "the view is the bigger box: {one}");
-    assert!(faces.iter().all(|f| f["view"]["x0"].is_number()), "every face has one: {faces:?}");
+    let stacks: Vec<&Value> = r["faces"].as_array().unwrap().iter().filter(|f| f["stack"].is_object()).collect();
+    assert_eq!(stacks.len(), 3);
+    for st in &stacks {
+        let faces = st["stack"]["faces"].as_array().unwrap();
+        assert_eq!(st["stack"]["count"], faces.len());
+        for f in faces {
+            let n = f.as_array().unwrap_or_else(|| panic!("a face of a stack is an array: {f}"));
+            assert!(n.len() == 10 && n.iter().all(Value::is_number), "{f}");
+        }
+    }
+    let trio = stacks.iter().find(|f| f["stack"]["count"] == 3).unwrap();
+    let one = trio["stack"]["faces"].as_array().unwrap().iter().find(|f| face_at(f) == (a.0, 2)).expect("the face in the stack");
+    let num = |i: usize| one[i].as_f64().unwrap();
+    assert!(num(6) < num(2) && num(8) > num(4), "its view is the bigger box: {one}");
     let _ = std::fs::remove_dir_all(&d);
 }
 

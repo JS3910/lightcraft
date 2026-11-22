@@ -35,7 +35,7 @@ fn library(tag: &str) -> (Session, [PhotoId; 3], u64, std::path::PathBuf) {
 
 fn faces(r: &Value, key: &str) -> Vec<(u64, u64)> {
     // (every face, those inside a stack too)
-    let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
+    let at = super::face_stacks::face_at;
     let mut v: Vec<(u64, u64)> = r[key]
         .as_array()
         .unwrap()
@@ -163,7 +163,7 @@ fn a_changed_set_of_named_faces_or_a_rejection_changes_the_suggestions_after_the
         // (a face with no suggestion may be in a stack of look-alikes: then what is listed for it has none)
         let holds = |f: &&Value| {
             (f["photo"] == photo.0 && f["index"] == index)
-                || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| x["photo"] == photo.0 && x["index"] == index))
+                || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| super::face_stacks::face_at(x) == (photo.0, index as u64)))
         };
         r["faces"].as_array().unwrap().iter().find(holds).unwrap()["suggestion"]["name"].clone()
     };
@@ -204,7 +204,7 @@ fn a_rename_that_only_changes_the_capitalization_changes_the_name_suggested() {
         // (a face with no suggestion may be in a stack of look-alikes: then what is listed for it has none)
         let holds = |f: &&Value| {
             (f["photo"] == photo.0 && f["index"] == index)
-                || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| x["photo"] == photo.0 && x["index"] == index))
+                || f["stack"]["faces"].as_array().is_some_and(|m| m.iter().any(|x| super::face_stacks::face_at(x) == (photo.0, index as u64)))
         };
         r["faces"].as_array().unwrap().iter().find(holds).unwrap()["suggestion"]["name"].clone()
     };

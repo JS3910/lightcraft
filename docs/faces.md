@@ -571,7 +571,7 @@ Reading the tables:
 
 
 **What the stacks cost.** The stacking is part of the run above, after the scoring, and only on that thread; the window's
-thread does nothing more than list the stacks the last run found (the calling-thread columns are what they are without stacks, unless many faces are in the stacks among the first 3,000 entries: see below).
+thread does nothing more than list the stacks the last run found (the calling-thread columns are what they are without stacks, give or take 10 ms: see below).
 - *The first arrangement* compares the faces without a suggestion with each other: up to 4 million comparisons when every pair
   is compared, else through cells (about 11 million comparisons for 15,000 faces without a suggestion, 31 million for 30,000, of
   512 numbers each). It adds 0.1 to 0.2 s at 10,000 unnamed faces and 0.5 s (8 threads) to 1.5 s (4 threads) at 30,000, to the
@@ -598,32 +598,32 @@ counts every stack of the answer, then the ones among them that carry a suggeste
 
 | Unnamed faces | Named faces (people) | Stacks in the list (with a name, their faces) | First arrangement | After one naming | Scan finds 2 % more | `faces.unnamed` on the calling thread (first / unchanged / after a naming) |
 |---|---|---|---|---|---|---|
-| 10,000 | 3,000 (300) | 235 (150, 5,000) | 0.45 s (0.43 s) | 82 ms (45 ms) | 0.14 s (0.12 s) | 15 / 36 / 37 ms (15 / 20 / 21 ms) |
-| 30,000 | 6,000 (600) | 567 (300, 15,000) | 2.27 s (2.17 s) | 0.19 s (84 ms) | 0.31 s (0.24 s) | 29 / 90 / 93 ms (31 / 39 / 37 ms) |
-| 60,000 | 3,000 (300) | 992 (150, 30,000) | 3.53 s (3.26 s) | 0.40 s (0.15 s) | 0.52 s (0.37 s) | 56 / 181 / 181 ms (56 / 68 / 72 ms) |
+| 10,000 | 3,000 (300) | 235 (150, 5,000) | 0.44 s (0.43 s) | 42 ms (45 ms) | 0.11 s (0.12 s) | 19 / 20 / 20 ms (15 / 20 / 21 ms) |
+| 30,000 | 6,000 (600) | 567 (300, 15,000) | 2.17 s (2.17 s) | 0.10 s (84 ms) | 0.25 s (0.24 s) | 30 / 45 / 48 ms (31 / 39 / 37 ms) |
+| 60,000 | 3,000 (300) | 992 (150, 30,000) | 3.55 s (3.26 s) | 0.17 s (0.15 s) | 0.43 s (0.37 s) | 56 / 79 / 87 ms (56 / 68 / 72 ms) |
 
 4 threads:
 
 | Unnamed faces | Named faces (people) | Stacks in the list (with a name, their faces) | First arrangement | After one naming | Scan finds 2 % more | `faces.unnamed` on the calling thread (first / unchanged / after a naming) |
 |---|---|---|---|---|---|---|
-| 10,000 | 3,000 (300) | 235 (150, 5,000) | 0.77 s (0.75 s) | 83 ms (42 ms) | 0.15 s (0.12 s) | 15 / 37 / 38 ms (15 / 19 / 20 ms) |
-| 30,000 | 6,000 (600) | 567 (300, 15,000) | 4.73 s (4.63 s) | 0.22 s (90 ms) | 0.37 s (0.28 s) | 31 / 92 / 94 ms (28 / 38 / 43 ms) |
-| 60,000 | 3,000 (300) | 992 (150, 30,000) | 6.03 s (5.98 s) | 0.39 s (0.14 s) | 0.62 s (0.43 s) | 51 / 180 / 176 ms (51 / 65 / 68 ms) |
+| 10,000 | 3,000 (300) | 235 (150, 5,000) | 0.80 s (0.75 s) | 43 ms (42 ms) | 0.13 s (0.12 s) | 16 / 22 / 19 ms (15 / 19 / 20 ms) |
+| 30,000 | 6,000 (600) | 567 (300, 15,000) | 4.89 s (4.63 s) | 0.10 s (90 ms) | 0.32 s (0.28 s) | 30 / 49 / 45 ms (28 / 38 / 43 ms) |
+| 60,000 | 3,000 (300) | 992 (150, 30,000) | 6.26 s (5.98 s) | 0.18 s (0.14 s) | 0.50 s (0.43 s) | 51 / 79 / 88 ms (51 / 65 / 68 ms) |
 
 What stacking the faces with a suggestion added:
 
-- *The first arrangement* 1 to 8 % (0.45 s against 0.43 s, 2.27 s against 2.17 s, 3.53 s against 3.26 s with 8 threads): the faces
+- *The first arrangement* 0 to 8 % (0.44 s against 0.43 s, 2.17 s against 2.17 s, 3.55 s against 3.26 s with 8 threads): the faces
   suggested one person are stacked as a group of their own, which adds 3 to 8 % to the comparisons of the first arrangement (2.34
   million against 2.26 million at 10,000 faces, 39.9 million against 36.9 million at 60,000).
-- *A naming* two to three times what it was (0.40 s against 0.15 s at 60,000 faces with 8 threads): a named face changes its
-  person's faces, so the stacks of the faces suggested that person are looked at again (32 to 199 faces and 1,500 to 59,000
-  comparisons, where a naming that changes no stack looks at none); it is still in the background and below half a second.
-- *The scan finding 2 % more faces* 0.02 to 0.19 s more, in the background.
-- *The calling thread* when there are many stacks with a name: 90 to 181 ms for 30,000 to 60,000 faces (it was 38 to 68 ms), because
-  the answer lists every face of every stack among the first 3,000 entries (30,000 faces in 150 stacks here), each with its box and the
-  box it is shown by (the view box added about 50 ms of the 181 ms at 60,000 faces). This is the case where the window is felt, as it
-  asks again after every result taken in, and where the next step would be to list only the faces of a stack that is open.
-  Without many stacks, or with the stacks among the first 3,000 entries holding fewer faces, it is what it was.
+- *A naming* up to 0.03 s more (0.17 s against 0.15 s at 60,000 faces with 8 threads): a named face changes its person's faces, so
+  the stacks of the faces suggested that person are looked at again (32 to 199 faces and 1,500 to 59,000 comparisons, where a naming
+  that changes no stack looks at none); it is in the background.
+- *The scan finding 2 % more faces* 0.01 to 0.07 s more, in the background.
+- *The calling thread* is what it is without stacks with a name, give or take 10 ms (45 / 48 ms against 39 / 37 ms at 30,000 faces,
+  79 / 87 ms against 68 / 72 ms at 60,000). Listing the faces of a stack as objects with two boxes each (30,000 faces in 150 stacks
+  here) had made it 90 to 181 ms: a stack now lists each face as one short array, `[photo, index, box, view box]`, with the same
+  box to show it by as a single face has (the view box costs 5 to 10 ms of the 87 ms at 60,000 faces). The test
+  `a_stack_lists_its_faces_compactly_...` fails if the objects come back.
 
 The stacks listed are the entries among the first 3,000 of the list (the faces with a suggestion come first, so with that many
 suggestions the stacks without one are further down than the list is cut); `stacks` in the answer counts all of them.
@@ -790,7 +790,7 @@ reuses the pictures of its step instead of rendering every face again.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?, scope?, varied?}` (a person's faces and the unnamed faces that look like them; `scope: "visible"` limits them to the People view's photos; `varied: N` puts the N most varied confirmed faces first), `faces.unnamed {limit?, scope?, wait?}` (every unnamed face, or with `scope: "visible"` only those in the People view's photos, the most confident suggestions first, then the stacks without a suggestion (one entry each: `stack: {count, faces: [{photo, index, rect}]}`, its faces the most typical first, shown by the first; `total` still counts faces and `stacks` the stacks; a stack of faces that share a suggestion is one entry among the suggested faces, with that `suggestion`), then the look-alikes together, then the faces not embedded yet; with suggested names; `wait: false` answers at once with the best order there is and `ordering: true`), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.takeOut {faces: [{photo, index}]}` (take faces out of their stacks of unnamed faces, one undo step; they never stack with those faces again, in the catalogue only; replies `{taken, photos}`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.rank {id?, index}` (every named person ranked by likeness to one face, read-only, never embeds), `faces.people {scope?}` (the Named People cards and `hidden`, the faces they leave out; `scope: "visible"` limits them to the People view's photos, as for `faces.evaluate`'s `scope: "visible"`; `view.people` reports how many cards it shows), `faces.person {name, more?, scope?, varied?}` (a person's faces and the unnamed faces that look like them; `scope: "visible"` limits them to the People view's photos; `varied: N` puts the N most varied confirmed faces first), `faces.unnamed {limit?, scope?, wait?}` (every unnamed face, or with `scope: "visible"` only those in the People view's photos, the most confident suggestions first, then the stacks without a suggestion (one entry each: `stack: {count, faces: [[photo, index, x0, y0, x1, y1, viewX0, viewY0, viewX1, viewY1]]}`, its faces the most typical first, each as one short array (its box and the box to show it by), shown by the first; `total` still counts faces and `stacks` the stacks; a stack of faces that share a suggestion is one entry among the suggested faces, with that `suggestion`), then the look-alikes together, then the faces not embedded yet; with suggested names; `wait: false` answers at once with the best order there is and `ordering: true`), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index, name?}], name?}` (name many at once, a name each or one for all, one undo step), `faces.reject {faces: [{photo, index, name?}], name?, clearName?}` (reject a name for many faces, a name each or one for all, one undo step; `clearName` also clears the name of a face that is called the rejected name; replies `{rejected, cleared, skipped, photos}`, a face called the rejected name being left alone (counted in `skipped`) unless `clearName` is true; `faces.rank` marks each name a face rejected with `rejected: true`), `faces.takeOut {faces: [{photo, index}]}` (take faces out of their stacks of unnamed faces, one undo step; they never stack with those faces again, in the catalogue only; replies `{taken, photos}`), `faces.removeBoxes {faces: [{photo, index}]}` (remove the face boxes of many faces, across photos and several on one photo, one undo step; replies `{removed, photos}`; boxes that are missing or are not faces are skipped), `faces.renamePerson {from, to, merge?}` (rename every in-library face of one person, or merge two when `merge` is true, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 
