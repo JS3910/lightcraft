@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### The next face always moves in under the pointer
+- When a face leaves the Unnamed faces (ticked, named, its box removed, alone or in a selection), the face right after it always
+  moves into its place, even from below the window, so the next face is under the pointer for the next click. Near the end of the
+  list the view no longer jumps a row when the last row empties, and naming someone new no longer pushes the faces down when their
+  card starts a new row above. Undo puts the face back in the place it left.
+
 ### Faces of the same person are one tile in the Unnamed faces
 - Faces that are suggested the same name and are virtually certain to be the same person stack too: the tile reads the name with a
   question mark (for example "Agne?") and a count, among the suggested faces by its score. The tick (or the up arrow) names every

@@ -684,6 +684,12 @@ pub struct Caches {
     /// How the unnamed faces list lies on the screen (the tiles above the window and those partly in it), as last drawn:
     /// what a new list keeps in place ([`panels::unnamed::keep_places`]).
     pub unnamed_shown: Option<panels::unnamed::Shown>,
+    /// The faces that left the places they had in view, and the face after each: what an undo puts back in its place
+    /// ([`panels::unnamed::keep_places`]). Forgotten when the list is sorted afresh.
+    pub unnamed_left: Vec<panels::unnamed::Left>,
+    /// How the People view lay out last frame: what keeps the faces still on the screen when a row of person cards comes or
+    /// goes above them (`panels::people`).
+    pub people_layout: Option<panels::people::Layout>,
     /// The question the grid asked (`Session::view_question`) and the generation of the photos it answered with, when the
     /// People view last looked (and the catalog revision then): a different question starts the faces afresh, only a different answer drops the faces of
     /// photos that left (`panels::people::follow_view`).

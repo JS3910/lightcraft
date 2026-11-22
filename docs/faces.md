@@ -370,7 +370,14 @@ every ten seconds at most, and the suggestions change as faces are named; so the
 of that. When a new list arrives, the faces whose tiles are at least partly in view keep their places and their order, the
 same number of faces as before stays above them, and every other place, above and below, is filled from the new order, leaving
 out the faces kept in view. A face that leaves (named, or its box removed) just disappears and the tiles after it each move up
-one place, without re-sorting, so confirming from the bottom of the screen upward never moves a tile you are about to click. A
+one place, without re-sorting, so confirming from the bottom of the screen upward never moves a tile you are about to click.
+**The next face moves into the place under the pointer.** Whatever way a face leaves (its suggestion ticked, a name typed, its box
+removed, a stack named, a face leaving an open stack, a selection named or deleted), the face right after it in the list shown
+takes its place on the screen, even when that face was below the window; only what comes after the places in view is sorted again.
+The view holds still meanwhile: near the end of the list a row that empties leaves room below the last tile instead of pulling the
+view down (the room goes as you scroll up), and a new row of person cards above the faces (a name nobody had) scrolls the view by
+its height. Only the last face of the list leaves an empty place. **Undo** puts the screen back as it was before: the face returns
+to the place it left, the faces after it move one place on, and the view holds the same way. A
 face whose suggested name was rejected stays a **?** in place. A face the scan finds takes its sorted place out of sight, never
 inside the faces in view. Scrolling does not re-sort; what scrolls into view has already been put in its place. The subtitle
 under **Unnamed faces** names only the order the list really is in: the likeliest names first when any face has a suggestion,

@@ -612,3 +612,136 @@ fn in_a_narrow_window_the_header_keeps_the_source_the_chip_and_the_count_apart()
     // the count is painted at the right edge: the chip leaves room for it
     assert!(chip[2] < 420.0 - 8.0, "the chip {chip:?} stays inside the panel");
 }
+
+/// Where the tile of the face `(photo, index)` is drawn, if it is.
+fn drawn_at(h: &mut Headless, face: (u64, usize)) -> Option<[f64; 4]> {
+    let id = format!("unnamed-face:{}:{}", face.0, face.1);
+    widgets(h, &id).into_iter().find(|(w, _)| *w == id).map(|(_, r)| r)
+}
+
+/// Whether a tile drawn at `a` is in the place `b` (the scroll offset may land a fraction of a pixel off).
+fn same_place(a: Option<[f64; 4]>, b: [f64; 4]) -> bool {
+    a.is_some_and(|a| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1.0))
+}
+
+/// How many tiles a row of the drawn ones holds (those level with the first).
+fn per_row(h: &mut Headless, prefix: &str) -> usize {
+    let rows: std::collections::BTreeMap<i64, usize> = widgets(h, prefix).iter().fold(Default::default(), |mut m, (_, r)| {
+        *m.entry(r[1].round() as i64).or_default() += 1;
+        m
+    });
+    // a full row: the most tiles any row holds (the last may be short)
+    rows.values().copied().max().unwrap_or(0)
+}
+
+#[test]
+fn the_face_after_the_ones_that_leave_comes_up_from_below_the_window_in_the_order_shown() {
+    let (mut h, _) = scrolled();
+    // the engine's order is now the opposite of the list shown: what comes up must be the next face shown, not the engine's
+    reverse_shown_order(&mut h);
+    let list = shown_list(&h);
+    let shown = h.app.caches.unnamed_shown.unwrap();
+    let end = shown.above + shown.on_screen;
+    assert!(list.len() > end + 2, "faces below the window: {shown:?} of {}", list.len());
+    let mid = shown.above + shown.on_screen / 2;
+    let seen = boxes(&h, &list);
+    let gone = [list[mid], list[mid + 1]];
+    run(
+        &mut h,
+        "faces.nameFaces",
+        json!({"faces": [{"photo": gone[0].0, "index": gone[0].1}, {"photo": gone[1].0, "index": gone[1].1}], "name": "Cy"}),
+    );
+    let now = shown_list(&h);
+    let now_boxes = boxes(&h, &now);
+    // (the places above the window are filled from the engine's order, as before)
+    assert_eq!(now_boxes[shown.above..mid], seen[shown.above..mid], "nothing in view before them moved");
+    // every place in view from the first that was freed shows the face that followed in the list shown, the two that were
+    // below the window too
+    assert_eq!(now_boxes[mid..end], seen[mid + 2..end + 2], "the faces after them, each two places up");
+}
+
+#[test]
+fn at_the_end_of_the_list_the_face_after_the_one_that_leaves_is_drawn_where_it_was_though_the_last_row_empties() {
+    let (mut h, [_, p1, _]) = scrolled();
+    scroll(&mut h, 100_000.0);
+    let cols = per_row(&mut h, "unnamed-face:");
+    assert!(cols > 2, "{cols} tiles a row");
+    // take faces out at the top until the last row holds one tile, so the next face to leave empties it
+    while shown_list(&h).len() % cols != 1 {
+        let first = shown_list(&h)[0];
+        run(&mut h, "faces.removeBoxes", json!({"faces": [{"photo": first.0, "index": first.1}]}));
+    }
+    scroll(&mut h, 100_000.0);
+    let drawn = tiles(&mut h);
+    assert!(drawn.len() > cols + 2, "scrolled to the end: {drawn:?}");
+    // the last face of the row before the last
+    let at = drawn.len() - 2;
+    let (gone, next) = (drawn[at - 1], drawn[at]);
+    assert_eq!(gone.0, p1.0);
+    let place = drawn_at(&mut h, gone).unwrap();
+    let next_box = boxes(&h, &[next]);
+    run(&mut h, "faces.setName", json!({"id": gone.0, "index": gone.1, "name": "Cy"}));
+    let now = tiles(&mut h);
+    let moved = now.iter().copied().find(|f| boxes(&h, &[*f]) == next_box).expect("the next face is drawn");
+    let now_at = drawn_at(&mut h, moved);
+    assert!(same_place(now_at, place), "the next face is where the one that left was: {now_at:?}, not {place:?}");
+}
+
+#[test]
+fn a_new_row_of_person_cards_leaves_the_next_face_where_the_named_one_was() {
+    let (mut h, [_, p1, p2]) = scrolled();
+    // enough people that their cards fill whole rows: one more starts a new row
+    let names = |n: usize| -> Vec<lightcraft_meta::Region> {
+        let mut v: Vec<_> = (0..n).map(|i| super::person_tiles::region(0.001 * i as f64, Some(&format!("Person {i:02}")))).collect();
+        v.push(super::person_tiles::region(0.9, None));
+        v
+    };
+    super::person_tiles::set_regions(&mut h, p2, names(30));
+    h.step();
+    h.step();
+    scroll(&mut h, -4000.0);
+    let cols = per_row(&mut h, "person:");
+    assert!(cols > 1 && cols < 31, "{cols} cards a row");
+    // Ann Lee and these fill exactly two rows
+    super::person_tiles::set_regions(&mut h, p2, names(2 * cols - 1));
+    h.step();
+    h.step();
+    scroll(&mut h, 600.0);
+    let drawn = tiles(&mut h);
+    assert!(drawn.len() > 4, "faces on screen: {drawn:?}");
+    let at = drawn.len() / 2;
+    let (gone, next) = (drawn[at], drawn[at + 1]);
+    assert_eq!(gone.0, p1.0);
+    let place = drawn_at(&mut h, gone).unwrap();
+    let next_box = boxes(&h, &[next]);
+    // a name nobody has: a new card, which starts a new row of cards above the faces
+    run(&mut h, "faces.setName", json!({"id": gone.0, "index": gone.1, "name": "Zed New"}));
+    let people: std::collections::BTreeSet<String> =
+        h.app.session.catalog.photos().flat_map(|p| p.meta.regions.iter().filter_map(|r| r.name.clone()).collect::<Vec<_>>()).collect();
+    assert_eq!(people.len() % cols, 1, "the new card started a row: {people:?}");
+    let now = tiles(&mut h);
+    let moved = now.iter().copied().find(|f| boxes(&h, &[*f]) == next_box).expect("the next face is drawn");
+    let now_at = drawn_at(&mut h, moved);
+    assert!(same_place(now_at, place), "the next face is where the named one was: {now_at:?}, not {place:?}");
+}
+
+#[test]
+fn undoing_a_face_that_left_puts_the_screen_back_as_it_was() {
+    let (mut h, _) = scrolled();
+    // the engine sorts the face elsewhere: undo must still put it back where it was
+    reverse_shown_order(&mut h);
+    let before = tiles(&mut h);
+    let seen = boxes(&h, &before);
+    let rects: Vec<_> = before.iter().map(|f| drawn_at(&mut h, *f)).collect();
+    let gone = before[before.len() / 2];
+    run(&mut h, "faces.removeBoxes", json!({"faces": [{"photo": gone.0, "index": gone.1}]}));
+    let left = tiles(&mut h);
+    assert_ne!(boxes(&h, &left), seen, "the face left");
+    run(&mut h, "edit.undo", json!({}));
+    let back = tiles(&mut h);
+    assert_eq!(boxes(&h, &back), seen, "the same faces in the same places");
+    for (f, was) in back.iter().zip(&rects) {
+        let now_at = drawn_at(&mut h, *f);
+        assert!(was.is_some_and(|was| same_place(now_at, was)), "drawn where it was: {f:?} at {now_at:?}, not {was:?}");
+    }
+}

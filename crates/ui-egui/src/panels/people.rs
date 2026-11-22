@@ -45,6 +45,24 @@ pub fn tile_edge(thumb: f32) -> f32 {
     between(thumb, 56.0, 180.0)
 }
 
+/// How the People view lay out in a frame: what the next frame needs to keep the faces still when the person cards above them
+/// take another row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Layout {
+    /// Person cards a row.
+    cols: usize,
+    /// The height of the person cards, above the faces.
+    cards: f32,
+    /// The part of the view that was in the window, from the top of the cards.
+    top: f32,
+    bottom: f32,
+}
+
+/// The height of `people` person cards, `cols` a row (a line of text when there are none).
+fn cards_height(people: usize, cols: usize, row_h: f32) -> f32 {
+    if people == 0 { 40.0 } else { PAD + people.div_ceil(cols.max(1)) as f32 * row_h }
+}
+
 /// How many `edge`-wide cells (with the gap between them) fit across `width`.
 pub(super) fn columns(width: f32, edge: f32) -> usize {
     (((width - PAD * 2.0 + GAP) / (edge + GAP)).floor() as usize).max(1)
@@ -135,18 +153,35 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let ppp = ui.ctx().pixels_per_point();
     let active = app.session.filter.person.clone();
     let (edge, tile) = (card_edge(thumb), tile_edge(thumb));
-    egui::ScrollArea::vertical().auto_shrink(false).show_viewport(ui, |ui, viewport| {
+    let row_h = edge + NAME_H + GAP;
+    // While the Unnamed faces keep their places (not sorted afresh), the faces stay still on the screen: the face that moves into
+    // a place freed is drawn where the face that left was, under the pointer that clicked.
+    let holding = app.caches.unnamed_shown.is_some();
+    let mut area = egui::ScrollArea::vertical().auto_shrink(false);
+    // a row of person cards that came or went above the faces (a name nobody had) moves the view by its height, while the faces
+    // were in view
+    if let Some(was) = app.caches.people_layout.filter(|_| holding) {
+        let moved = cards_height(people.len(), was.cols, row_h) - was.cards;
+        if moved != 0.0 && was.cards + 6.0 + SECTION_H < was.bottom {
+            area = area.vertical_scroll_offset((was.top + moved).max(0.0));
+        }
+    }
+    area.show_viewport(ui, |ui, viewport| {
         let width = ui.available_width();
         let cols = columns(width, edge);
-        let row_h = edge + NAME_H + GAP;
         let rows = people.len().div_ceil(cols);
-        let named_h = if people.is_empty() { 40.0 } else { PAD + rows as f32 * row_h };
+        let named_h = cards_height(people.len(), cols, row_h);
+        app.caches.people_layout = Some(Layout { cols, cards: named_h, top: viewport.top(), bottom: viewport.bottom() });
         let (tile_cols, tile_row) = (columns(width, tile), tile + super::face_tile::STRIP_H + GAP);
         // one cell per entry, and after a stack that was opened one per face of it
         let cells = super::unnamed::cells(&unnamed, &app.ui.unnamed_open);
         let tile_rows = cells.len().div_ceil(tile_cols);
         let section_top = named_h + 6.0;
-        let (area, _) = ui.allocate_exact_size(vec2(width, section_top + SECTION_H + tile_rows as f32 * tile_row + PAD), Sense::hover());
+        let height = section_top + SECTION_H + tile_rows as f32 * tile_row + PAD;
+        // (a row that empties at the end of the list leaves room below the last tile, never pulls the view down: the room goes as
+        // the view is scrolled up)
+        let height = if holding { height.max(viewport.bottom()) } else { height };
+        let (area, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
         let visible = |top: f32, rows: usize, row_h: f32| {
             let first = ((viewport.top() - top) / row_h).floor().max(0.0) as usize;
             let last = (((viewport.bottom() - top) / row_h).ceil().max(0.0) as usize).min(rows);
@@ -246,6 +281,7 @@ pub(crate) fn follow_view(app: &mut LightcraftApp) {
             app.ui.unnamed_open.clear();
             app.caches.unnamed = None;
             app.caches.unnamed_shown = None;
+            app.caches.unnamed_left.clear();
             app.caches.person_page = None;
         } else if seen != generation {
             // (a new catalog revision asks the lists again by itself: only photos that changed without one need this)
@@ -273,6 +309,7 @@ pub(crate) fn sort_unnamed_afresh(app: &mut LightcraftApp) {
     app.ui.unnamed_open.clear();
     app.caches.unnamed = None;
     app.caches.unnamed_shown = None;
+    app.caches.unnamed_left.clear();
 }
 
 /// An edit took photos out of the People view: their faces leave the selection, the faces rejected in place and an open name

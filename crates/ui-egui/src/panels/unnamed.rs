@@ -262,22 +262,48 @@ pub struct Shown {
     pub on_screen: usize,
 }
 
+/// A face's own box in its photo: what tells a face apart across lists (see [`keep_places_with`]).
+type Spot = (u64, [u64; 4]);
+
+fn spot(photo: u64, r: &lightcraft_geom::Rect) -> Spot {
+    (photo, [r.x0.to_bits(), r.y0.to_bits(), r.x1.to_bits(), r.y1.to_bits()])
+}
+
+/// An entry that left its place in view (named, its box removed), and the entry that came after it then: an undo that brings
+/// it back puts it back in that place, before that entry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Left {
+    faces: Vec<Spot>,
+    next: Option<Spot>,
+}
+
+/// How many entries that left are remembered for an undo.
+const LEFT_KEPT: usize = 200;
+
 /// A new list `new` (the engine's order) as it is put on the screen over `old`, the list shown now, of which `shown` lies
 /// on the screen:
 /// - the faces at least partly in view keep their places and their order (with what the new list says of them);
+/// - when faces in view leave, the faces that followed them in `old` move up into the places freed, those below the window too:
+///   the face after the one that left always takes its place, so the next tile is under the pointer that clicked;
 /// - the same number of faces as before stays above them;
 /// - every other place, above and below, is filled from the new order, leaving out the faces kept in view.
 ///
 /// So a face that left (named, or its box removed) just disappears and the tiles after it move up one place, a face the scan
 /// found takes its sorted place out of sight, and what is out of sight is sorted again as confidences change.
 pub fn keep_places(old: &Unnamed, new: Unnamed, shown: Shown) -> Unnamed {
-    keep_places_held(old, new, shown, &|_| false)
+    keep_places_with(old, new, shown, &|_| false, &mut Vec::new())
 }
 
 /// [`keep_places`], and a stack in view that `held` says is to stay is kept as it is even when the new list lists its faces one
 /// by one (what the engine answers between a change to every face of a stack, a rejected suggestion, and the run that stacks
 /// them again), provided it lists all of them and no stack of its own.
 pub fn keep_places_held(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn(&UnnamedFace) -> bool) -> Unnamed {
+    keep_places_with(old, new, shown, held, &mut Vec::new())
+}
+
+/// [`keep_places_held`], remembering in `left` the entries that leave their places in view, and putting an entry that comes back
+/// (an undo) in the place it left when the entry that came after it then is kept in view: the screen looks as it did before.
+pub fn keep_places_with(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn(&UnnamedFace) -> bool, left: &mut Vec<Left>) -> Unnamed {
     // A face is told apart by its photo and its own box, not by its region index: removing a box (or undoing that) renumbers
     // the later regions of the photo, and a tile must stay with its face, not with a slot. Not by the box it is shown by
     // either: that changes when the scan embeds the face, which is just when the list is asked for again. (Two faces of
@@ -306,8 +332,22 @@ pub fn keep_places_held(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn
     // entry that holds most of them (a face that leaves a stack, its name rejected or its box moved, becomes a tile of its own, and the stack keeps its place)
     let mut taken: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut kept: Vec<UnnamedFace> = Vec::new();
-    for (n, ks) in old_keys.get(start..end).unwrap_or_default().iter().enumerate() {
+    let first_spot = |f: &UnnamedFace| f.members().first().map(|m| spot(m.photo, &m.rect));
+    // (past the window, only as many as fill the places that faces in view left: the face after one that left takes its place)
+    for (n, ks) in old_keys.get(start..).unwrap_or_default().iter().enumerate() {
+        if start + n >= end && kept.len() >= end - start {
+            break;
+        }
         let was = old.faces.get(start + n);
+        if ks.iter().all(|k| !holder.contains_key(k))
+            && let Some(was) = was
+        {
+            left.push(Left {
+                faces: was.members().iter().map(|m| spot(m.photo, &m.rect)).collect(),
+                next: old.faces.get(start + n + 1).and_then(first_spot),
+            });
+            continue;
+        }
         if let Some(was) = was.filter(|w| w.is_stack() && held(w)) {
             // the faces of the stack the new list still has (one that was named, or lost its box, is gone), each as a tile of its own
             let alive: Vec<(usize, usize)> =
@@ -336,6 +376,42 @@ pub fn keep_places_held(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn
             kept.extend(new.faces.get(i).cloned());
         }
     }
+    // an entry that comes back (an undo) goes back in the place it left, before the entry that came after it then, when that is
+    // kept in view (the last that left first, so that several that left together come back in their order)
+    let spots = |f: &UnnamedFace| -> Vec<Spot> { f.members().iter().map(|m| spot(m.photo, &m.rect)).collect() };
+    // (the entries of the new list that are not in the old one, by each of their faces: what may have come back)
+    let mut newcomers: std::collections::HashMap<Spot, usize> = std::collections::HashMap::new();
+    if !left.is_empty() {
+        let before: std::collections::HashSet<Spot> = old.faces.iter().flat_map(spots).collect();
+        for (j, f) in new.faces.iter().enumerate() {
+            let s = spots(f);
+            if !s.iter().any(|k| before.contains(k)) {
+                newcomers.extend(s.into_iter().map(|k| (k, j)));
+            }
+        }
+    }
+    for i in (0..left.len()).rev() {
+        let Some(l) = left.get(i).cloned() else { continue };
+        let back = l
+            .faces
+            .first()
+            .and_then(|k| newcomers.get(k))
+            .copied()
+            .filter(|j| !taken.contains(j) && new.faces.get(*j).is_some_and(|f| spots(f).iter().all(|k| l.faces.contains(k))));
+        let Some(j) = back else { continue };
+        left.remove(i);
+        let at = match l.next {
+            Some(next) => kept.iter().position(|f| spots(f).contains(&next)),
+            None => Some(kept.len()),
+        };
+        if let (Some(at), Some(f)) = (at, new.faces.get(j)) {
+            kept.insert(at, f.clone());
+            taken.insert(j);
+        }
+    }
+    if left.len() > LEFT_KEPT {
+        left.drain(..left.len() - LEFT_KEPT);
+    }
     let mut rest: Vec<UnnamedFace> = new.faces.iter().enumerate().filter(|(i, _)| !taken.contains(i)).map(|(_, f)| f.clone()).collect();
     let below = rest.split_off(start.min(rest.len()));
     let mut faces = rest;
@@ -352,14 +428,15 @@ pub fn keep_places_held(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn
 ///   status: the tiles would jump when the order came in.
 #[cfg(test)]
 fn place(old: Option<&Unnamed>, shown: Option<Shown>, asked: Unnamed) -> Unnamed {
-    place_held(old, shown, asked, &|_| false)
+    place_held(old, shown, asked, &|_| false, &mut Vec::new())
 }
 
-/// [`place`], keeping the stacks `held` names as they are ([`keep_places_held`]).
-fn place_held(old: Option<&Unnamed>, shown: Option<Shown>, mut asked: Unnamed, held: &dyn Fn(&UnnamedFace) -> bool) -> Unnamed {
+/// [`place`], keeping the stacks `held` names as they are and remembering in `left` the entries that leave their places
+/// ([`keep_places_with`]).
+fn place_held(old: Option<&Unnamed>, shown: Option<Shown>, mut asked: Unnamed, held: &dyn Fn(&UnnamedFace) -> bool, left: &mut Vec<Left>) -> Unnamed {
     match old.filter(|old| !waiting(old) && !old.faces.is_empty()) {
         Some(old) => match shown {
-            Some(shown) => keep_places_held(old, asked, shown, held),
+            Some(shown) => keep_places_with(old, asked, shown, held, left),
             None => asked,
         },
         None if !asked.complete => {
@@ -409,7 +486,9 @@ pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
     // its faces again has finished
     let rejected = app.ui.rejected_unnamed.clone();
     let held = |f: &UnnamedFace| f.keys().iter().all(|k| rejected.contains(*k));
-    let list = Arc::new(place_held(old, app.caches.unnamed_shown, asked, &held));
+    let mut left = std::mem::take(&mut app.caches.unnamed_left);
+    let list = Arc::new(place_held(old, app.caches.unnamed_shown, asked, &held, &mut left));
+    app.caches.unnamed_left = left;
     app.caches.unnamed_arranged = arranged;
     // what was selected, rejected in place or being named and has since been named (or removed, or left the view with its
     // photo) is no longer so
@@ -848,12 +927,26 @@ mod tests {
         // 4 was named (it is gone from the engine's list); 3 4 5 were in view
         let now = keep_places(&old, list(&[1, 2, 3, 5, 6, 7, 8]), Shown { above: 2, on_screen: 3 });
         assert_eq!(order(&now), [1, 2, 3, 5, 6, 7, 8], "the tiles after it moved up one place");
-        // the same with the order changed out of sight: what is in view and after it still just moves up
+        // the same with the order changed out of sight: the face after it in the list shown (below the window) still comes up into
+        // the place freed, and only the rest takes the new order
         let now = keep_places(&old, list(&[1, 2, 3, 5, 8, 7, 6]), Shown { above: 2, on_screen: 3 });
-        assert_eq!(order(&now), [1, 2, 3, 5, 8, 7, 6]);
+        assert_eq!(order(&now), [1, 2, 3, 5, 6, 8, 7]);
         // another face in view leaves: nothing above it or in view before it moves
         let now = keep_places(&old, list(&[1, 2, 3, 4, 6, 7, 8]), Shown { above: 2, on_screen: 4 });
         assert_eq!(order(&now), [1, 2, 3, 4, 6, 7, 8]);
+    }
+
+    #[test]
+    fn faces_that_left_and_come_back_take_the_places_they_left() {
+        let old = list(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut left = Vec::new();
+        // 4 and 5 leave together while 3 4 5 are in view; 6 and 7 come up from below
+        let now = keep_places_with(&old, list(&[1, 2, 3, 6, 7, 8]), Shown { above: 2, on_screen: 3 }, &|_| false, &mut left);
+        assert_eq!(order(&now), [1, 2, 3, 6, 7, 8]);
+        // an undo brings them back, and the engine sorts them last: they go back where they were, in their order
+        let back = keep_places_with(&now, list(&[1, 2, 3, 6, 7, 8, 4, 5]), Shown { above: 2, on_screen: 3 }, &|_| false, &mut left);
+        assert_eq!(order(&back), [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert!(left.is_empty(), "nothing left to bring back: {left:?}");
     }
 
     #[test]
