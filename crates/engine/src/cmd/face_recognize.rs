@@ -281,10 +281,11 @@ enum Entry {
     Stack(Vec<UnnamedBox>),
 }
 
-/// `faces.unnamed {limit?: 3000, scope?, wait?: true, restart?: false}`: the faces nobody has named, to be named a group at a time. With recognition
+/// `faces.unnamed {limit?: 3000, scope?, wait?: true, restart?: false, stacksFirst?: false}`: the faces nobody has named, to be named a group at a time. With recognition
 /// running, the faces the named faces recognise come first, the most confident first, each carrying the name they suggest;
 /// then the faces that suggest nothing, look-alikes next to each other; then the faces not embedded yet, in photo order. A stack
-/// without a suggestion of at least 20 faces comes before everything, the biggest first.
+/// without a suggestion of at least 20 faces comes before everything, the biggest first. With `stacksFirst` every stack comes
+/// before any single face, the biggest first, then by the score of its suggestion (those without one after those with one).
 /// With `scope: "visible"` only the faces in the People view's photos are listed (and counted); what they are suggested
 /// still compares against every named face in the library. Scoring runs on a thread of its own; by default the call waits
 /// for the complete order, with `wait: false` it answers at once with the best order there is (`ordering` says more is coming;
@@ -310,7 +311,12 @@ fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad("faces.unnamed", "`wait` must be true or false")),
     };
     let restart = p.get("restart").and_then(Value::as_bool).unwrap_or(false);
-    let arranged = imp::arrange_unnamed(s, &mut all, wait, restart, limit)?;
+    let stacks_first = match p.get("stacksFirst") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad("faces.unnamed", "`stacksFirst` must be true or false")),
+    };
+    let arranged = imp::arrange_unnamed(s, &mut all, wait, restart, limit, stacks_first)?;
     let mut entries = arranged.entries.unwrap_or_else(|| std::mem::take(&mut all).into_iter().map(Entry::Face).collect());
     entries.truncate(limit);
     let face = |UnnamedBox { photo, index, rect }: &UnnamedBox| {
@@ -346,6 +352,7 @@ fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
         "stacks": arranged.stacks,
         "stackBar": arranged.bar,
         "faces": faces,
+        "stacksFirst": stacks_first,
         "ordered": arranged.suggested || arranged.look_alike,
         "lookAlike": arranged.look_alike,
         "ready": arranged.ready,
@@ -1085,7 +1092,16 @@ mod imp {
     /// since), the faces not scored yet go with those that have none. With `wait` the run for these very faces is started
     /// if there is none and waited for, so the answer is complete; without it the run is started and the answer says
     /// (`ordering`) that it is not done, and `faces.pump` takes the result in.
-    pub fn arrange_unnamed(s: &mut Session, all: &mut Vec<super::UnnamedBox>, wait: bool, restart: bool, limit: usize) -> Result<super::Arranged> {
+    ///
+    /// `stacks_first`: every stack before any single face ([`crate::faces_arrange::Jobs::arrange`]).
+    pub fn arrange_unnamed(
+        s: &mut Session,
+        all: &mut Vec<super::UnnamedBox>,
+        wait: bool,
+        restart: bool,
+        limit: usize,
+        stacks_first: bool,
+    ) -> Result<super::Arranged> {
         let none = super::Arranged {
             suggested: false,
             look_alike: false,
@@ -1165,7 +1181,7 @@ mod imp {
         let ordering = !complete && s.faces.arrange.is_running();
         // (a run that could not be started is marked stopped for these inputs, so no run and no result is a stop)
         let stopped = !complete && !ordering;
-        let a = s.faces.arrange.arrange(&listed, limit);
+        let a = s.faces.arrange.arrange(&listed, limit, stacks_first);
         let mut by_place: Vec<Option<super::UnnamedBox>> = all.drain(..).map(Some).collect();
         let mut take = |i: &usize| by_place.get_mut(*i).and_then(Option::take);
         let entries: Vec<super::Entry> = a
@@ -1599,7 +1615,7 @@ mod imp {
         faces
     }
 
-    pub fn arrange_unnamed(_: &mut Session, _: &mut Vec<super::UnnamedBox>, _: bool, _: bool, _: usize) -> Result<super::Arranged> {
+    pub fn arrange_unnamed(_: &mut Session, _: &mut Vec<super::UnnamedBox>, _: bool, _: bool, _: usize, _: bool) -> Result<super::Arranged> {
         Ok(super::Arranged {
             suggested: false,
             look_alike: false,
@@ -1658,7 +1674,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Unnamed Faces",
             [],
             None,
-            "{limit?: 3000, scope?: \"visible\", wait?: true, restart?: false} → {total, stacks, stackBar, faces: [{photo, index, rect, view, suggestion: {name, score} | null, stack?: {count, faces: [[photo, index, x0, y0, x1, y1, viewX0, viewY0, viewX1, viewY1]]}}], ordered, lookAlike, ready, ordering, complete, stopped} — the faces nobody has named; with recognition running, in this order: first the stacks without a suggestion of at least 20 faces, the biggest first (they are always in the list, whatever its `limit`); then the faces the named ones recognise, the most confident suggestion first (names mixed, ties by photo then region), a stack of faces with a suggested name among them by its representative's score; then the smaller stacks without a suggestion, the biggest first; then the other faces without a suggestion, look-alikes next to each other (`lookAlike` says some are); then the faces not embedded yet, in photo order. A stack is one entry of `faces` for faces that are virtually certain to be the same person and share a suggestion (or all have none): its `stack.faces` are all its faces in scope, the most typical first, `stack.count` their number (at least two), and the entry's own `photo`, `index`, `rect`, `view` are its representative's (the first face); `suggestion` is the name every face of the stack is suggested (the representative's score), or null. Faces suggested different names never share a stack, and a face that rejected a name is never suggested it, so it is in no stack of it. To act on a stack use the commands that act on faces, with all `stack.faces`: `faces.nameFaces` names every face in one undo step (the tick: the stack's `suggestion` as `name`, or a name typed), `faces.reject` with the stack's suggestion as `name` rejects it for every face in one undo step (the cross); the faces then stack again for the name they are suggested next, or for none. The faces of a stack are listed nowhere else, and `total` counts faces, not entries; `stacks` is how many entries are stacks. Two faces stack only when each is at least as alike as the bar to every other face of the stack (the bar is the 99.9th percentile of the similarities between faces named as different people, plus 0.05, kept between 0.75 and 0.85, and 0.75 while there are fewer than 1,000 such pairs; `stackBar` is the bar in use, null until a run has finished; no chaining: A like B and B like C never puts A and C together), so naming a stack (`faces.nameFaces` with its faces, one undo step) puts no wrong name on a face; a stack with one face in scope is that face alone. Stacks are worked out in the same background run (and appear in the answer once it has finished; until then every face is its own entry), and recognition off or no model means none. Every embedded face is scored for the order, not only the ones listed, on a thread of its own (a `faceOrder` row in `activity.list`, which can be cancelled): a change (a naming, un-naming, rename, merge, rejected name, moved or removed box) scores again only the people whose named faces changed and the faces whose own box or rejections changed, with the result of scoring everything again. By default the call waits for the complete order. With `wait: false` it answers at once with the best order there is (faces keep the order and suggestions already worked out; a face whose box or rejections changed has no suggestion; faces not scored yet go with the faces that have none; a face just named is gone) and `ordering: true` says the rest is still being worked out; `faces.pump` takes the result in (its `arranged` count moves), and asking again then gives the order. `complete` is true when what is listed is the final order (the run was for these very faces and names, or there is nothing to score); with neither `ordering` nor `complete` the run was cancelled, died or could not be started: `stopped` is true, nothing starts it again until a face or a name changes, and `restart: true` starts it again (a cancelled run is not lost work: the order is worked out again when asked for) With `scope: \"visible\"` only the faces in the photos the People view shows are listed and counted in `total` (the source chosen in the sidebar with its subfolders, every filter, the person filter, a held view, collapsed stacks with all their photos, library photos only); suggestions still compare against every named face in the library. Without a scope the whole library. `view` is the box to show the face by. Name them with `faces.nameFaces`",
+            "{limit?: 3000, scope?: \"visible\", wait?: true, restart?: false, stacksFirst?: false} → {total, stacks, stackBar, stacksFirst, faces: [{photo, index, rect, view, suggestion: {name, score} | null, stack?: {count, faces: [[photo, index, x0, y0, x1, y1, viewX0, viewY0, viewX1, viewY1]]}}], ordered, lookAlike, ready, ordering, complete, stopped} — the faces nobody has named; with recognition running, in this order: first the stacks without a suggestion of at least 20 faces, the biggest first (they are always in the list, whatever its `limit`); then the faces the named ones recognise, the most confident suggestion first (names mixed, ties by photo then region), a stack of faces with a suggested name among them by its representative's score; then the smaller stacks without a suggestion, the biggest first; then the other faces without a suggestion, look-alikes next to each other (`lookAlike` says some are); then the faces not embedded yet, in photo order. With `stacksFirst: true` (the Unnamed faces' Stacks first switch; `stacksFirst` in the answer says which order is in use) every stack comes before any single face, with or without a suggestion: the biggest first, stacks of one size by the score of their suggestion, the best first, and those without one after them; then the single faces in the order above (suggested by score, then look-alikes, then the faces not embedded), so the stacks fill a list cut by `limit` first. A stack is one entry of `faces` for faces that are virtually certain to be the same person and share a suggestion (or all have none): its `stack.faces` are all its faces in scope, the most typical first, `stack.count` their number (at least two), and the entry's own `photo`, `index`, `rect`, `view` are its representative's (the first face); `suggestion` is the name every face of the stack is suggested (the representative's score), or null. Faces suggested different names never share a stack, and a face that rejected a name is never suggested it, so it is in no stack of it. To act on a stack use the commands that act on faces, with all `stack.faces`: `faces.nameFaces` names every face in one undo step (the tick: the stack's `suggestion` as `name`, or a name typed), `faces.reject` with the stack's suggestion as `name` rejects it for every face in one undo step (the cross); the faces then stack again for the name they are suggested next, or for none. The faces of a stack are listed nowhere else, and `total` counts faces, not entries; `stacks` is how many entries are stacks. Two faces stack only when each is at least as alike as the bar to every other face of the stack (the bar is the 99.9th percentile of the similarities between faces named as different people, plus 0.05, kept between 0.75 and 0.85, and 0.75 while there are fewer than 1,000 such pairs; `stackBar` is the bar in use, null until a run has finished; no chaining: A like B and B like C never puts A and C together), so naming a stack (`faces.nameFaces` with its faces, one undo step) puts no wrong name on a face; a stack with one face in scope is that face alone. Stacks are worked out in the same background run (and appear in the answer once it has finished; until then every face is its own entry), and recognition off or no model means none. Every embedded face is scored for the order, not only the ones listed, on a thread of its own (a `faceOrder` row in `activity.list`, which can be cancelled): a change (a naming, un-naming, rename, merge, rejected name, moved or removed box) scores again only the people whose named faces changed and the faces whose own box or rejections changed, with the result of scoring everything again. By default the call waits for the complete order. With `wait: false` it answers at once with the best order there is (faces keep the order and suggestions already worked out; a face whose box or rejections changed has no suggestion; faces not scored yet go with the faces that have none; a face just named is gone) and `ordering: true` says the rest is still being worked out; `faces.pump` takes the result in (its `arranged` count moves), and asking again then gives the order. `complete` is true when what is listed is the final order (the run was for these very faces and names, or there is nothing to score); with neither `ordering` nor `complete` the run was cancelled, died or could not be started: `stopped` is true, nothing starts it again until a face or a name changes, and `restart: true` starts it again (a cancelled run is not lost work: the order is worked out again when asked for) With `scope: \"visible\"` only the faces in the photos the People view shows are listed and counted in `total` (the source chosen in the sidebar with its subfolders, every filter, the person filter, a held view, collapsed stacks with all their photos, library photos only); suggestions still compare against every named face in the library. Without a scope the whole library. `view` is the box to show the face by. Name them with `faces.nameFaces`",
             super::always,
             unnamed
         ),

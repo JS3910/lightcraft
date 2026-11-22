@@ -174,6 +174,8 @@ pub struct UiState {
     /// holds one of them. Cleared with the rest of the view's positions.
     #[serde(skip)]
     pub unnamed_open: std::collections::HashSet<(u64, usize)>,
+    /// The Unnamed faces' Stacks first switch (`people.stacksFirst`): every stack before any single face. Saved.
+    pub unnamed_stacks_first: bool,
     /// The gallery the selection is in (`face_tile::Gallery`): a selection lives in one at a time.
     #[serde(skip)]
     pub face_gallery: Option<crate::panels::face_tile::Gallery>,
@@ -479,6 +481,7 @@ impl Default for UiState {
             unnamed_selected: Default::default(),
             unnamed_anchor: None,
             unnamed_open: Default::default(),
+            unnamed_stacks_first: false,
             face_gallery: None,
             unnamed_scroll: None,
             hidden_locations: Vec::new(),

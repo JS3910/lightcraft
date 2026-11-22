@@ -389,6 +389,14 @@ without a suggestion of at least 20 faces comes first of all**, the biggest firs
 in dozens of photos is the one most worth naming, and such a stack is always in the list (it makes the 3,000 entries before
 anything else does). The other stacks come after the faces with a suggestion, the biggest first, then the single faces in
 look-alike order, then the faces not embedded.
+**Stacks first.** The **Stacks first** switch at the top right of Unnamed faces, next to Select all, puts every stack before any
+single face, with or without a suggestion, so you can work through all the stacks before the single pictures: the biggest first,
+stacks of the same size by the score of their suggestion, the best first, and stacks without a suggestion after those with one.
+Then come the single faces in the usual order (suggested by score, then look-alikes, then the faces not embedded). The stacks fill
+the 3,000-entry list first, so no stack is cut while single faces are listed. The switch starts off and is remembered between
+sessions (in your preferences); turning it on or off sorts the list afresh, which may move tiles and closes open stacks, and afterwards the tiles on
+screen keep their places as usual. The subtitle says when stacks come first. For agents: `faces.unnamed` takes `stacksFirst: true`
+and says `stacksFirst` in its answer; the window's switch is the UI command `people.stacksFirst` (`{on?}`, without `on` it flips).
 A closed stack is a face tile: its name strip reads **?**; typing a name on it (or picking one) names every face in it, as one undo
 step (`faces.nameFaces` with its faces), and the stack leaves the grid. A closed stack **without a suggestion has no cross and no
 tick**, since a cross without a suggestion would remove the face boxes of many faces nobody looked at with one click; the Delete

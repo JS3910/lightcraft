@@ -264,6 +264,12 @@ pub(crate) fn follow_view(app: &mut LightcraftApp) {
 
 /// Another view than the People view is drawn: opening the People view again sorts the Unnamed faces afresh.
 pub(crate) fn left(app: &mut LightcraftApp) {
+    sort_unnamed_afresh(app);
+}
+
+/// The Unnamed faces are asked for again and sorted afresh, keeping no tile in its place (open stacks close): what opening the
+/// People view and changing the Stacks first switch do.
+pub(crate) fn sort_unnamed_afresh(app: &mut LightcraftApp) {
     app.ui.unnamed_open.clear();
     app.caches.unnamed = None;
     app.caches.unnamed_shown = None;

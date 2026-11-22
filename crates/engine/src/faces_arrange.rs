@@ -691,8 +691,11 @@ impl Jobs {
     /// after the look-alikes), then the others without a suggestion in look-alike order where the last run had them in it,
     /// then in photo order, then the faces not embedded.
     ///
+    /// With `stacks_first` every stack comes before any single face instead: the biggest first, stacks of one size by the score
+    /// of their suggestion, the best first, and those without one after them; then the single faces in the order above.
+    ///
     /// The names of the suggestions are copied for the first `limit` entries of the order only.
-    pub fn arrange(&self, listed: &[Listed], limit: usize) -> Arrangement {
+    pub fn arrange(&self, listed: &[Listed], limit: usize, stacks_first: bool) -> Arrangement {
         let last = self.last.as_ref();
         // the listed faces of each stack: (place in the stack, place in `listed`)
         let mut in_stack: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
@@ -706,7 +709,7 @@ impl Jobs {
             if let Some(s) = last.and_then(|l| l.stack_of.get(&key)).filter(|s| s.stamp == stamp) {
                 in_stack.entry(s.stack).or_default().push((s.place, place));
             } else if let Some((_, _, score)) = last.and_then(|l| l.suggestions.get(&key)).filter(|(was, _, _)| *was == stamp) {
-                slots.push(Slot { score: *score, ..Slot::new(Group::Suggested, place) });
+                slots.push(Slot::suggested(*score, place));
             } else if let Some(pos) = last.and_then(|l| l.chain.get(&key)) {
                 slots.push(Slot { chain: *pos, ..Slot::new(Group::LookAlike, place) });
             } else {
@@ -725,18 +728,27 @@ impl Jobs {
             match places.as_slice() {
                 // a stack with one face in scope is that face alone: where it goes with its suggestion, else after the look-alikes
                 [only] => match suggestion_at(*only) {
-                    Some(score) => slots.push(Slot { score, ..Slot::new(Group::Suggested, *only) }),
+                    Some(score) => slots.push(Slot::suggested(score, *only)),
                     None => slots.push(Slot { chain: ALONE, ..Slot::new(Group::LookAlike, *only) }),
                 },
-                // a stack with a suggestion (all its faces share it) sorts among the suggested faces by its representative's score
+                // a stack with a suggestion (all its faces share it) sorts among the suggested faces by its representative's score;
+                // with `stacks_first` every stack goes ahead of the single faces, the biggest first, then by that score
                 [first, ..] => {
-                    match suggestion_at(*first) {
-                        Some(score) => slots.push(Slot { score, ..Slot::new(Group::Suggested, *first) }),
-                        None => {
-                            let group = if places.len() >= BIG_STACK { Group::BigStack } else { Group::Stack };
-                            slots.push(Slot { size_order: usize::MAX - places.len(), ..Slot::new(group, *first) });
+                    let size_order = usize::MAX - places.len();
+                    let slot = match suggestion_at(*first) {
+                        Some(score) if stacks_first => {
+                            let mut slot = Slot::suggested(score, *first);
+                            (slot.group, slot.size_order) = (Group::BigStack, size_order);
+                            slot
                         }
-                    }
+                        Some(score) => Slot::suggested(score, *first),
+                        None => {
+                            let group = if stacks_first || places.len() >= BIG_STACK { Group::BigStack } else { Group::Stack };
+                            // (after the stacks of its size with a suggestion)
+                            Slot { size_order, score: f32::NEG_INFINITY, ..Slot::new(group, *first) }
+                        }
+                    };
+                    slots.push(slot);
                     stacks.insert(*first, places);
                 }
                 [] => {}
@@ -746,18 +758,14 @@ impl Jobs {
         slots.sort_by(Slot::order);
         let mut suggestions = HashMap::new();
         // (every face of a stack with a suggestion carries it, not only the one that shows it)
-        let suggested = slots
-            .iter()
-            .take(limit)
-            .filter(|s| s.group == Group::Suggested)
-            .flat_map(|s| stacks.get(&s.place).cloned().unwrap_or_else(|| vec![s.place]));
+        let suggested = slots.iter().take(limit).filter(|s| s.suggested).flat_map(|s| stacks.get(&s.place).cloned().unwrap_or_else(|| vec![s.place]));
         for face in suggested.filter_map(|place| listed.get(place)) {
             if let Some((_, name, score)) = last.and_then(|l| l.suggestions.get(&face.key())) {
                 suggestions.insert((face.photo, face.index), (name.clone(), *score));
             }
         }
         Arrangement {
-            suggested: slots.first().is_some_and(|s| s.group == Group::Suggested),
+            suggested: slots.first().is_some_and(|s| s.suggested),
             look_alike: slots.iter().filter(|s| s.group == Group::LookAlike && s.chain != ALONE).count() >= 2,
             stacks: slots.iter().filter(|s| stacks.contains_key(&s.place)).count(),
             bar: last.map(|_| self.bar),
@@ -777,7 +785,8 @@ impl Jobs {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Group {
     /// Stacks without a suggestion of at least [`BIG_STACK`] faces, the biggest first: a person in dozens of photos is the most
-    /// worth naming, and they go ahead of everything, so that they are in the list however many faces there are.
+    /// worth naming, and they go ahead of everything, so that they are in the list however many faces there are. With stacks
+    /// first: every stack, the biggest first, then by the score of its suggestion.
     BigStack,
     /// Faces and stacks with a suggestion, the likeliest first.
     Suggested,
@@ -800,10 +809,12 @@ const ALONE: usize = usize::MAX;
 /// Where one tile (a face, or a stack shown by its first face) goes in the order [`Jobs::arrange`] makes.
 struct Slot {
     group: Group,
-    /// Within [`Group::Stack`]: the bigger the stack the smaller this is.
+    /// Within [`Group::BigStack`] and [`Group::Stack`]: the bigger the stack the smaller this is.
     size_order: usize,
-    /// Within [`Group::Suggested`]: the score of the suggestion, the highest first.
+    /// The score of the suggestion, the highest first (negative infinity for a stack without one).
     score: f32,
+    /// The tile carries a suggestion.
+    suggested: bool,
     /// Within [`Group::LookAlike`]: the position in the look-alike order ([`ALONE`] for a face that has none).
     chain: usize,
     /// The place in the list that was asked about (the tile's first face): photo and region order, which settles the rest.
@@ -812,7 +823,12 @@ struct Slot {
 
 impl Slot {
     fn new(group: Group, place: usize) -> Slot {
-        Slot { group, size_order: 0, score: 0.0, chain: 0, place }
+        Slot { group, size_order: 0, score: 0.0, suggested: false, chain: 0, place }
+    }
+
+    /// A face or stack that carries a suggestion of `score`, among the suggested.
+    fn suggested(score: f32, place: usize) -> Slot {
+        Slot { score, suggested: true, ..Slot::new(Group::Suggested, place) }
     }
 
     /// The order of the tiles: group, then within the group as each says, then by place.
@@ -1026,7 +1042,7 @@ mod tests {
         let jobs = Jobs { last: Some(Last { sig: 0, suggestions: outcome.suggestions.clone(), chain, ..Last::default() }), ..Jobs::default() };
         let listed: Vec<Listed> =
             faces.iter().enumerate().map(|(i, f)| Listed { photo: f.photo, index: i, rect: f.rect, ord: f.ord, stamp: Some(f.stamp) }).collect();
-        jobs.arrange(&listed, usize::MAX)
+        jobs.arrange(&listed, usize::MAX, false)
             .order
             .into_iter()
             .flat_map(|i| match i {
@@ -1206,7 +1222,7 @@ mod tests {
             .enumerate()
             .map(|(i, f)| Listed { photo: f.photo, index: i, rect: f.rect, ord: f.ord, stamp: Some(f.stamp) })
             .collect();
-        let a = jobs.arrange(&listed, usize::MAX);
+        let a = jobs.arrange(&listed, usize::MAX, false);
         assert_eq!(a.order, vec![Item::Face(0), Item::Face(1)]);
         assert_eq!(a.suggestions.get(&(9, 0)).map(|s| s.0.as_str()), Some("Ann"));
         assert!(!a.suggestions.contains_key(&(9, 1)));

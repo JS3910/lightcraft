@@ -12,6 +12,10 @@
   appears in hundreds of photos but matches nobody named yet becomes one tile near the top of the faces without a suggestion
   (stacks come first there, the biggest first), where before their faces were scattered or out of sight. A stack of 20 faces or
   more with no suggestion goes first of all, ahead of the suggested faces, and is always in the list.
+- A **Stacks first** switch at the top right of Unnamed faces, next to Select all, puts every stack before any single face, with or
+  without a suggestion: the biggest first, and stacks of the same size by their suggestion, the best first. Then come the single
+  faces in the usual order. Work through all the stacks before the single pictures; the setting is remembered, and agents can ask
+  for this order with `stacksFirst: true` in `faces.unnamed`.
 - Typing a name on a stack names every face in it in one undo step, and the stack leaves the grid. A closed stack with no
   suggestion has no cross, so one click never removes the face boxes of many faces you have not looked at (Delete on it says why).
 - Only faces that are more alike than almost any two faces you named as different people stack (the bar is the 99.9th percentile

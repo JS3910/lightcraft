@@ -494,6 +494,73 @@ fn a_stack_with_a_suggestion_sorts_among_the_suggested_faces_by_the_score_of_its
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// Photo `b` of [`suggested`] holding, in this order: a pair suggested Ann at 0.75 (faces 0, 1), a pair with no suggestion (2, 3), a
+/// face suggested Ann at 0.7 (4), a trio with no suggestion (5, 6, 7), a lone face (8) and a pair suggested Ann at 0.95 (9, 10). No
+/// two groups are alike enough to stack.
+fn stacks_and_singles(name: &str) -> (Session, std::path::PathBuf, [PhotoId; 2]) {
+    suggested(
+        name,
+        &[
+            &[(0, 0.75), (12, 0.66), (13, 0.02)],
+            &[(0, 0.75), (12, 0.66), (13, -0.02)],
+            &[(40, 1.0), (41, 0.05)],
+            &[(40, 1.0), (41, -0.05)],
+            &[(0, 0.7), (50, 0.714)],
+            &[(30, 1.0), (31, 0.05)],
+            &[(30, 1.0), (31, -0.05)],
+            &[(30, 1.0), (32, 0.05)],
+            &[(60, 1.0)],
+            &[(0, 0.95), (10, 0.31), (11, 0.02)],
+            &[(0, 0.95), (10, 0.31), (11, -0.02)],
+        ],
+        &[],
+    )
+}
+
+/// The entries of an answer, each with its faces in photo order.
+fn sorted_entries(r: &Value) -> Vec<Vec<Key>> {
+    entries(r)
+        .into_iter()
+        .map(|mut e| {
+            e.sort_unstable();
+            e
+        })
+        .collect()
+}
+
+#[test]
+fn with_stacks_first_every_stack_comes_before_any_single_face_biggest_first_then_by_suggestion() {
+    let (mut s, d, [_, p]) = stacks_and_singles("stacks-first-order");
+    let k = |i: u64| (p.0, i);
+    let on = s.execute("faces.unnamed", &json!({"stacksFirst": true})).unwrap();
+    assert_eq!(on["complete"], true, "{on}");
+    assert_eq!(
+        sorted_entries(&on),
+        vec![vec![k(5), k(6), k(7)], vec![k(9), k(10)], vec![k(0), k(1)], vec![k(2), k(3)], vec![k(4)], vec![k(8)],],
+        "the trio; the pairs, the better suggestion first and the one without after them; then the single faces, the suggested first: {on}"
+    );
+    assert_eq!(on["stacksFirst"], true, "the answer says the order it is in: {on}");
+    let names: Vec<Option<&str>> = on["faces"].as_array().unwrap().iter().map(|f| f["suggestion"]["name"].as_str()).collect();
+    assert_eq!(names, [None, Some("Ann"), Some("Ann"), None, Some("Ann"), None], "the stacks ahead of the faces keep their suggestion: {on}");
+    // switched off, the order is the one without the switch: the suggested faces and stacks by score, then the stacks without one
+    let off = s.execute("faces.unnamed", &json!({"stacksFirst": false})).unwrap();
+    let plain = s.execute("faces.unnamed", &json!({})).unwrap();
+    assert_eq!(sorted_entries(&off), sorted_entries(&plain));
+    assert_eq!(off["stacksFirst"], false, "{off}");
+    assert_eq!(
+        sorted_entries(&off),
+        vec![vec![k(9), k(10)], vec![k(0), k(1)], vec![k(4)], vec![k(5), k(6), k(7)], vec![k(2), k(3)], vec![k(8)]],
+        "{off}"
+    );
+    // the stacks fill a short list first: none is cut while a single face is listed
+    let cut = s.execute("faces.unnamed", &json!({"stacksFirst": true, "limit": 4})).unwrap();
+    assert!(entries(&cut).iter().all(|e| e.len() > 1) && entries(&cut).len() == 4, "{cut}");
+    for odd in [json!("yes"), json!(1)] {
+        assert!(s.execute("faces.unnamed", &json!({"stacksFirst": odd})).is_err(), "{odd}");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn naming_a_stack_with_a_suggestion_is_one_undo_step_and_rejecting_its_suggestion_is_one_step_that_holds_for_every_face() {
     let same = |extra: f32| -> Vec<(usize, f32)> { vec![NEAR_ANN[0], NEAR_ANN[1], (20, extra)] };

@@ -82,6 +82,8 @@ pub struct Unnamed {
     pub complete: bool,
     /// The order is not final and nothing is working on it: the run was cancelled, died or could not be started.
     pub stopped: bool,
+    /// Every stack comes before any single face (the Stacks first switch).
+    pub stacks_first: bool,
 }
 
 impl Unnamed {
@@ -145,6 +147,7 @@ pub fn parse(v: &Value) -> Unnamed {
         stack_bar: v["stackBar"].as_f64().filter(|b| b.is_finite()).map(|b| b as f32),
         complete: v["complete"] == true,
         stopped: v["stopped"] == true,
+        stacks_first: v["stacksFirst"] == true,
     }
 }
 
@@ -154,19 +157,29 @@ pub fn waiting(list: &Unnamed) -> bool {
     !list.complete && list.faces.is_empty() && list.total > 0
 }
 
-/// The subtitle for a non-empty list: it names only the order the list is really in (the likeliest names first when any
-/// face carries a suggestion, look-alikes next to each other when some faces have none to go by), then how to use the tiles.
+/// The subtitle for a non-empty list: it names only the order the list is really in (stacks first when the switch is on and
+/// there are stacks, the likeliest names first when any face carries a suggestion (any single face, with stacks first),
+/// look-alikes next to each other when some faces have none to go by), then how to use the tiles.
 fn order_sentence(list: &Unnamed) -> String {
-    let suggested = list.faces.iter().any(|f| f.suggestion.is_some());
-    let lead = match (suggested, list.look_alike) {
-        (true, true) => crate::i18n::tr("The likeliest names come first, then faces that look alike are next to each other."),
-        (true, false) => crate::i18n::tr("The likeliest names come first."),
-        (false, true) => crate::i18n::tr("Faces that look alike are next to each other."),
-        (false, false) => "",
+    let stacks = list.faces.iter().any(UnnamedFace::is_stack);
+    let stacks_first = list.stacks_first && stacks;
+    // (with stacks first, what is said of the likeliest names is said of the single faces after the stacks)
+    let suggested = list.faces.iter().any(|f| f.suggestion.is_some() && !(stacks_first && f.is_stack()));
+    let lead = match (stacks_first, suggested, list.look_alike) {
+        (true, true, true) => crate::i18n::tr(
+            "Stacks come first, the biggest first; then single faces, the likeliest names first, then faces that look alike next to each other.",
+        ),
+        (true, true, false) => crate::i18n::tr("Stacks come first, the biggest first; then single faces, the likeliest names first."),
+        (true, false, true) => crate::i18n::tr("Stacks come first, the biggest first; then single faces, those that look alike next to each other."),
+        (true, false, false) => crate::i18n::tr("Stacks come first, the biggest first."),
+        (false, true, true) => crate::i18n::tr("The likeliest names come first, then faces that look alike are next to each other."),
+        (false, true, false) => crate::i18n::tr("The likeliest names come first."),
+        (false, false, true) => crate::i18n::tr("Faces that look alike are next to each other."),
+        (false, false, false) => "",
     };
     let hint = crate::i18n::tr("Click faces to select them, Shift-click for a range; click the name under a face to name it (or the selected ones).");
     let lead = if lead.is_empty() { String::new() } else { format!("{lead} ") };
-    if list.faces.iter().any(UnnamedFace::is_stack) {
+    if stacks {
         let stacks = crate::i18n::tr("A tile with a number is a stack of faces that are almost certainly the same person: naming it names them all.");
         format!("{lead}{stacks} {hint}")
     } else {
@@ -379,7 +392,10 @@ pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
     {
         return list.clone();
     }
-    let v = app.session.execute("faces.unnamed", &json!({"scope": "visible", "wait": false, "restart": restart})).unwrap_or(Value::Null);
+    let v = app
+        .session
+        .execute("faces.unnamed", &json!({"scope": "visible", "wait": false, "restart": restart, "stacksFirst": app.ui.unnamed_stacks_first}))
+        .unwrap_or(Value::Null);
     let old = app.caches.unnamed.as_ref().map(|(_, _, _, old)| old.as_ref());
     let asked = parse(&v);
     if asked.ordering {
@@ -468,7 +484,8 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
         let r = if list.faces.is_empty() {
             Rect::from_min_size(pos2(at.x, at.y + 38.0), vec2(150.0, 22.0))
         } else {
-            Rect::from_min_size(pos2(right - 290.0, at.y + 12.0), vec2(150.0, 22.0))
+            // (left of the Stacks first switch and Select all)
+            Rect::from_min_size(pos2(right - 430.0, at.y + 12.0), vec2(150.0, 22.0))
         };
         let b = ui.put(r, egui::Button::new(crate::i18n::tr("Put in order again")));
         register(ui, "unnamed:restart", b.rect);
@@ -496,6 +513,14 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
             } else {
                 face_tile::select_all(app, &Gallery::Unnamed, all_faces());
             }
+        }
+        // every stack before any single face: a deliberate re-sort (`people.stacksFirst`)
+        let mut on = app.ui.unnamed_stacks_first;
+        let r = Rect::from_min_size(pos2(right - 270.0, at.y + 12.0), vec2(130.0, 22.0));
+        let s = ui.put(r, egui::Checkbox::new(&mut on, crate::i18n::tr("Stacks first")));
+        register(ui, "unnamed:stacksFirst", s.rect);
+        if s.changed() {
+            let _ = app.run("people.stacksFirst", json!({"on": on}));
         }
     }
 }
@@ -729,6 +754,7 @@ mod tests {
             stack_bar: None,
             complete: true,
             stopped: false,
+            stacks_first: false,
         }
     }
 
@@ -1038,5 +1064,16 @@ mod tests {
         let without = Unnamed { faces: vec![face(3, 0, None)], ..with.clone() };
         assert!(subtitle(&with, 0).contains("stack of faces that are almost certainly the same person"), "{}", subtitle(&with, 0));
         assert!(!subtitle(&without, 0).contains("stack"));
+    }
+
+    #[test]
+    fn with_stacks_first_the_subtitle_says_the_likeliest_names_only_of_single_faces_that_have_one() {
+        let mut named = stack(&[1, 2]);
+        named.suggestion = Some("Ann".into());
+        let list = Unnamed { faces: vec![named, face(3, 0, None)], total: 3, ready: true, complete: true, stacks_first: true, ..Default::default() };
+        let only_the_stack = subtitle(&list, 0);
+        assert!(only_the_stack.starts_with("Stacks come first") && !only_the_stack.contains("likeliest"), "{only_the_stack}");
+        let single = Unnamed { faces: vec![list.faces[0].clone(), face(3, 0, Some("Bob"))], ..list.clone() };
+        assert!(subtitle(&single, 0).contains("then single faces, the likeliest names first"), "{}", subtitle(&single, 0));
     }
 }

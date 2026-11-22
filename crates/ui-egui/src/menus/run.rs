@@ -271,6 +271,15 @@ fn ui_commands_1(app: &mut LightcraftApp, ctx: &egui::Context, id: &str, p: &Val
             app.ui.second_window = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.second_window);
             Ok(json!({"show": app.ui.second_window}))
         }
+        // {on?}: every stack of the Unnamed faces before any single face; without `on` it flips. A change sorts the list afresh
+        "people.stacksFirst" => bool_param(id, p, "on").map(|on| {
+            let on = on.unwrap_or(!app.ui.unnamed_stacks_first);
+            if on != app.ui.unnamed_stacks_first {
+                app.ui.unnamed_stacks_first = on;
+                crate::panels::people::sort_unnamed_afresh(app);
+            }
+            json!({"stacksFirst": on})
+        }),
         "view.photoCounts" => {
             app.ui.show_counts = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.show_counts);
             Ok(json!({"show": app.ui.show_counts}))
