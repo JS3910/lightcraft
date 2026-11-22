@@ -309,14 +309,20 @@ pub fn keep_places_held(old: &Unnamed, new: Unnamed, shown: Shown, held: &dyn Fn
     for (n, ks) in old_keys.get(start..end).unwrap_or_default().iter().enumerate() {
         let was = old.faces.get(start + n);
         if let Some(was) = was.filter(|w| w.is_stack() && held(w)) {
-            let at: Vec<Option<usize>> = ks.iter().map(|k| holder.get(k).copied().filter(|i| !taken.contains(i))).collect();
-            let singles = at.iter().all(|i| i.is_some_and(|i| new.faces.get(i).is_some_and(|f| !f.is_stack())));
-            let distinct: std::collections::HashSet<_> = at.iter().flatten().collect();
-            if singles && distinct.len() == at.len() {
-                taken.extend(at.iter().flatten().copied());
-                let suggestion = at.first().copied().flatten().and_then(|i| new.faces.get(i)).and_then(|f| f.suggestion.clone());
-                kept.push(UnnamedFace { suggestion, ..was.clone() });
-                continue;
+            // the faces of the stack the new list still has (one that was named, or lost its box, is gone), each as a tile of its own
+            let alive: Vec<(usize, usize)> =
+                ks.iter().enumerate().filter_map(|(m, k)| Some((m, holder.get(k).copied().filter(|i| !taken.contains(i))?))).collect();
+            let singles = alive.iter().all(|(_, i)| new.faces.get(*i).is_some_and(|f| !f.is_stack()));
+            let distinct: std::collections::HashSet<_> = alive.iter().map(|(_, i)| i).collect();
+            if alive.len() >= 2 && singles && distinct.len() == alive.len() {
+                let faces: Vec<StackFace> = alive.iter().filter_map(|(m, _)| was.stack.get(*m).cloned()).collect();
+                // (shown by the first face left, with what the engine now says of it)
+                let head = alive.first().and_then(|(_, i)| new.faces.get(*i));
+                if let (Some(head), Some(first)) = (head, faces.first()) {
+                    taken.extend(alive.iter().map(|(_, i)| *i));
+                    kept.push(UnnamedFace { photo: first.photo, index: first.index, rect: first.rect, stack: faces.clone(), ..head.clone() });
+                    continue;
+                }
             }
         }
         // (an entry that held several faces stays the entry that holds most of them: a face taken out of a stack becomes a
@@ -889,6 +895,36 @@ mod tests {
             cells(&l, &open),
             [Cell::Entry(0), Cell::Entry(1), Cell::Member { entry: 1, at: 0 }, Cell::Member { entry: 1, at: 1 }, Cell::Entry(2)]
         );
+    }
+
+    #[test]
+    fn a_question_mark_stack_stays_one_stack_while_the_scan_adds_a_face_or_one_of_its_faces_goes() {
+        let old = Unnamed { faces: vec![face(1, 0, None), stack(&[3, 4, 5]), face(2, 0, None)], total: 5, ..list(&[]) };
+        let shown = Shown { above: 0, on_screen: 3 };
+        let held = |_: &UnnamedFace| true;
+        // the suggestion was rejected for all three: until the run stacks them again the engine lists them one by one, and the
+        // scan found a face (7) meanwhile
+        let singles = Unnamed {
+            faces: vec![face(1, 0, None), face(3, 0, None), face(4, 0, None), face(5, 0, None), face(7, 0, None), face(2, 0, None)],
+            total: 6,
+            ..list(&[])
+        };
+        let now = keep_places_held(&old, singles, shown, &held);
+        assert_eq!(entries_of(&now), [vec![1], vec![3, 4, 5], vec![2], vec![7]], "{:?}", entries_of(&now));
+        // one of the faces was named (or its box removed) meanwhile: the others are still the stack, in its place
+        let one_gone = Unnamed { faces: vec![face(1, 0, None), face(3, 0, None), face(5, 0, None), face(2, 0, None)], total: 4, ..list(&[]) };
+        let now = keep_places_held(&old, one_gone, shown, &held);
+        assert_eq!(entries_of(&now), [vec![1], vec![3, 5], vec![2]], "{:?}", entries_of(&now));
+        assert_eq!(now.faces[1].count(), 2);
+        // the stack's first face is the one that went: the stack is shown by the next one
+        let head_gone = Unnamed { faces: vec![face(1, 0, None), face(4, 0, None), face(5, 0, None), face(2, 0, None)], total: 4, ..list(&[]) };
+        let now = keep_places_held(&old, head_gone, shown, &held);
+        assert_eq!(entries_of(&now), [vec![1], vec![4, 5], vec![2]]);
+        assert_eq!((now.faces[1].photo, now.faces[1].is_stack()), (4, true), "the head is a face the stack still holds");
+        // the engine stacks all of them, with the new face, again: that stack is the one in place
+        let again = Unnamed { faces: vec![stack(&[3, 4, 5, 7]), face(1, 0, None), face(2, 0, None)], total: 5, ..list(&[]) };
+        let now = keep_places_held(&old, again, shown, &held);
+        assert_eq!(entries_of(&now), [vec![1], vec![3, 4, 5, 7], vec![2]]);
     }
 
     #[test]
