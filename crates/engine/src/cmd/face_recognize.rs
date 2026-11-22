@@ -262,14 +262,21 @@ struct Arranged {
     stacks: usize,
 }
 
-/// An unnamed face as `faces.unnamed` lists it: photo, region index and its own box.
-type Triple = (u64, usize, lightcraft_geom::Rect);
+/// An unnamed face as `faces.unnamed` lists it.
+#[derive(Clone, Copy)]
+struct UnnamedBox {
+    photo: u64,
+    /// Its region.
+    index: usize,
+    /// Its own box.
+    rect: lightcraft_geom::Rect,
+}
 
 /// One entry of the list `faces.unnamed` answers with.
 enum Entry {
-    Face(Triple),
+    Face(UnnamedBox),
     /// Faces that are virtually certain to be the same person (at least two), the most typical first.
-    Stack(Vec<Triple>),
+    Stack(Vec<UnnamedBox>),
 }
 
 /// `faces.unnamed {limit?: 3000, scope?, wait?: true, restart?: false}`: the faces nobody has named, to be named a group at a time. With recognition
@@ -281,17 +288,17 @@ enum Entry {
 /// `complete` says the order is final; neither: the run was stopped, `stopped`, and `restart: true` starts it again).
 fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
     let limit = p.get("limit").and_then(Value::as_u64).map_or(MAX_UNNAMED, |n| usize::try_from(n).unwrap_or(MAX_UNNAMED)).clamp(1, MAX_UNNAMED);
-    let mut all: Vec<(u64, usize, lightcraft_geom::Rect)> = Vec::new();
+    let mut all: Vec<UnnamedBox> = Vec::new();
     let scope: Option<std::collections::HashSet<lightcraft_catalog::PhotoId>> =
         wants_visible(p).then(|| s.people_view_photos().into_iter().collect());
     for ph in s.catalog.photos().filter(|ph| ph.in_library() && scope.as_ref().is_none_or(|v| v.contains(&ph.id))) {
         for (index, r) in ph.meta.regions.iter().enumerate() {
             if r.kind == lightcraft_meta::RegionKind::Face && r.name.is_none() {
-                all.push((ph.id.0, index, r.rect));
+                all.push(UnnamedBox { photo: ph.id.0, index, rect: r.rect });
             }
         }
     }
-    all.sort_by_key(|(photo, index, _)| (*photo, *index));
+    all.sort_by_key(|f| (f.photo, f.index));
     let total = all.len();
     // a caller that does not say otherwise gets the complete order, worked out on a thread of its own
     let wait = match p.get("wait") {
@@ -303,7 +310,7 @@ fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
     let arranged = imp::arrange_unnamed(s, &mut all, wait, restart, limit)?;
     let mut entries = arranged.entries.unwrap_or_else(|| std::mem::take(&mut all).into_iter().map(Entry::Face).collect());
     entries.truncate(limit);
-    let face = |(photo, index, rect): &Triple| {
+    let face = |UnnamedBox { photo, index, rect }: &UnnamedBox| {
         let view = s.face_view(lightcraft_catalog::PhotoId(*photo), *rect);
         let suggestion = arranged.suggestions.get(&(*photo, *index)).map(|(name, score)| json!({"name": name, "score": score}));
         json!({"photo": photo, "index": index, "rect": rect_json(rect), "view": rect_json(&view), "suggestion": suggestion})
@@ -318,7 +325,7 @@ fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
                 // (each with the box to show it by, as a single face has: a face looks the same in a stack and out of it)
                 let listed: Vec<Value> = members
                     .iter()
-                    .map(|(photo, index, rect)| {
+                    .map(|UnnamedBox { photo, index, rect }| {
                         let view = s.face_view(lightcraft_catalog::PhotoId(*photo), *rect);
                         json!({"photo": photo, "index": index, "rect": rect_json(rect), "view": rect_json(&view)})
                     })
@@ -1071,7 +1078,7 @@ mod imp {
     /// since), the faces not scored yet go with those that have none. With `wait` the run for these very faces is started
     /// if there is none and waited for, so the answer is complete; without it the run is started and the answer says
     /// (`ordering`) that it is not done, and `faces.pump` takes the result in.
-    pub fn arrange_unnamed(s: &mut Session, all: &mut Vec<(u64, usize, Rect)>, wait: bool, restart: bool, limit: usize) -> Result<super::Arranged> {
+    pub fn arrange_unnamed(s: &mut Session, all: &mut Vec<super::UnnamedBox>, wait: bool, restart: bool, limit: usize) -> Result<super::Arranged> {
         let none = super::Arranged {
             suggested: false,
             look_alike: false,
@@ -1093,7 +1100,7 @@ mod imp {
         let mut listed: Vec<Listed> = Vec::with_capacity(all.len());
         // which of a photo's faces with one very box each is (nearly always the only one)
         let mut same_box: std::collections::HashMap<(u64, [u64; 4]), u32> = std::collections::HashMap::new();
-        for (photo, index, rect) in all.iter() {
+        for super::UnnamedBox { photo, index, rect } in all.iter() {
             let ord = {
                 let n = same_box.entry((*photo, rect_bits(rect))).or_insert(0);
                 let ord = *n;
@@ -1108,7 +1115,7 @@ mod imp {
                 faces.push(face);
                 stamp
             });
-            listed.push((*photo, *index, rect_bits(rect), ord, stamp));
+            listed.push(Listed { photo: *photo, index: *index, rect: rect_bits(rect), ord, stamp });
         }
         let settings = Settings { model: fingerprint(&s.faces.index.tag), threshold, margin: DEFAULT_MARGIN };
         let people = named_people(s);
@@ -1152,7 +1159,7 @@ mod imp {
         // (a run that could not be started is marked stopped for these inputs, so no run and no result is a stop)
         let stopped = !complete && !ordering;
         let a = s.faces.arrange.arrange(&listed, limit);
-        let mut by_place: Vec<Option<(u64, usize, Rect)>> = all.drain(..).map(Some).collect();
+        let mut by_place: Vec<Option<super::UnnamedBox>> = all.drain(..).map(Some).collect();
         let mut take = |i: &usize| by_place.get_mut(*i).and_then(Option::take);
         let entries: Vec<super::Entry> = a
             .order
@@ -1584,7 +1591,7 @@ mod imp {
         faces
     }
 
-    pub fn arrange_unnamed(_: &mut Session, _: &mut Vec<(u64, usize, lightcraft_geom::Rect)>, _: bool, _: bool, _: usize) -> Result<super::Arranged> {
+    pub fn arrange_unnamed(_: &mut Session, _: &mut Vec<super::UnnamedBox>, _: bool, _: bool, _: usize) -> Result<super::Arranged> {
         Ok(super::Arranged {
             suggested: false,
             look_alike: false,
